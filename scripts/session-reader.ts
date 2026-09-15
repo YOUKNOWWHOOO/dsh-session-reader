@@ -21,7 +21,10 @@ import { loadCatalog, type SessionFormatCatalog } from "./lib/decode.ts";
 import {
   countLines,
   defaultLibRoot,
+  type IntegerRange,
+  parseIntegerRange,
   parseTimeArg,
+  type Result,
   randomOutputSuffix,
   resolveDshHome,
   resolveOutputFileName,
@@ -237,6 +240,34 @@ export const COMMANDS: readonly CommandSpec[] = [
         description: "文本截断字符数（0=不截断；仅 md）",
         defaultText: "0",
       },
+      {
+        name: "--turn",
+        kind: "value",
+        valueName: "<A-B|A>",
+        valueKind: "string",
+        description: "只呈现指定 turn 区间（含端点；仅 md）",
+      },
+      {
+        name: "--seq",
+        kind: "value",
+        valueName: "<A-B|A>",
+        valueKind: "string",
+        description: "只呈现指定 seq 区间（含端点；仅 md）",
+      },
+      {
+        name: "--head",
+        kind: "value",
+        valueName: "<N>",
+        valueKind: "integer",
+        description: "只呈现筛选结果的首 N 条事件（0=不限；仅 md）",
+      },
+      {
+        name: "--tail",
+        kind: "value",
+        valueName: "<N>",
+        valueKind: "integer",
+        description: "只呈现筛选结果的末 N 条事件（0=不限；仅 md）",
+      },
     ],
   },
   {
@@ -271,6 +302,13 @@ export const COMMANDS: readonly CommandSpec[] = [
         valueKind: "integer",
         description: "命中显示上限（0=不限；末行汇总始终为全量总命中数）",
         defaultText: "100",
+      },
+      {
+        name: "--session",
+        kind: "value",
+        valueName: "<会话标识>",
+        valueKind: "string",
+        description: "只检索该会话及其子代理子树（与 show 目标同语法）",
       },
       WORKSPACE_OPTION,
       SINCE_OPTION,
@@ -512,27 +550,48 @@ function optionInteger(parsed: ParsedCommand, name: string, fallback: number): n
   return value === undefined ? fallback : Number(value);
 }
 
+/**
+ * 读取区间选项；取值合法性已由 `validateCommandOptions` 前置校验，此处读取失败仅可能来自内部调用顺序错误，
+ * 因此返回 null（不筛选）并保持"不做二次猜测"的单一职责。
+ */
+function readRange(parsed: ParsedCommand, name: string, minimum: number): IntegerRange | null {
+  const raw = optionValue(parsed, name);
+  if (raw === undefined) return null;
+  const parsedRange = parseIntegerRange(raw, minimum, name);
+  return parsedRange.success ? parsedRange.data : null;
+}
+
 interface TimeBounds {
   readonly since: number | undefined;
   readonly until: number | undefined;
 }
 
-function readTimeBounds(parsed: ParsedCommand): TimeBounds | null {
+const TIME_FORMAT_HINT = "取值应为毫秒数或 ISO 时间（如 2026-09-15 或 2026-09-15T21:30:00Z）";
+
+/**
+ * 读取时间上/下界。
+ *
+ * 解析失败必须给出**哪个选项**与**合法格式**：`parseTimeArg` 的返回值是固定模板（只含"月份超出范围"
+ * 一类诊断，不含调用方数据），因此可安全外显；丢弃它会让调用方只看到裸的"参数无效"而无从修正。
+ */
+function readTimeBounds(parsed: ParsedCommand): Result<TimeBounds, string> {
   const sinceRaw = optionValue(parsed, "--since");
   const untilRaw = optionValue(parsed, "--until");
   let since: number | undefined;
   let until: number | undefined;
   if (sinceRaw !== undefined) {
     const parsedTime = parseTimeArg(sinceRaw);
-    if (!parsedTime.success) return null;
+    if (!parsedTime.success)
+      return { success: false, error: `--since ${parsedTime.error}；${TIME_FORMAT_HINT}` };
     since = parsedTime.data;
   }
   if (untilRaw !== undefined) {
     const parsedTime = parseTimeArg(untilRaw);
-    if (!parsedTime.success) return null;
+    if (!parsedTime.success)
+      return { success: false, error: `--until ${parsedTime.error}；${TIME_FORMAT_HINT}` };
     until = parsedTime.data;
   }
-  return { since, until };
+  return { success: true, data: { since, until } };
 }
 
 function readOrigin(parsed: ParsedCommand): "all" | "main" | "subagent" {
@@ -542,14 +601,17 @@ function readOrigin(parsed: ParsedCommand): "all" | "main" | "subagent" {
   return "all";
 }
 
-function readScopeFilters(parsed: ParsedCommand): ScopeFilters | null {
+function readScopeFilters(parsed: ParsedCommand): Result<ScopeFilters, string> {
   const bounds = readTimeBounds(parsed);
-  if (bounds === null) return null;
+  if (!bounds.success) return bounds;
   return {
-    workspace: optionValue(parsed, "--workspace"),
-    since: bounds.since,
-    until: bounds.until,
-    origin: readOrigin(parsed),
+    success: true,
+    data: {
+      workspace: optionValue(parsed, "--workspace"),
+      since: bounds.data.since,
+      until: bounds.data.until,
+      origin: readOrigin(parsed),
+    },
   };
 }
 
@@ -579,7 +641,18 @@ export function validateCommandOptions(parsed: ParsedCommand): RunFailure | null
   }
   if (parsed.command !== "show") return null;
   const format = optionValue(parsed, "--format") ?? "md";
-  const presentation = ["--role", "--thinking", "--tools", "--events", "--headers", "--truncate"];
+  const presentation = [
+    "--role",
+    "--thinking",
+    "--tools",
+    "--events",
+    "--headers",
+    "--truncate",
+    "--turn",
+    "--seq",
+    "--head",
+    "--tail",
+  ];
   const presentPresentation = presentation.filter((name) => parsed.options.has(name));
   if (format !== "md" && presentPresentation.length > 0) {
     return {
@@ -597,16 +670,56 @@ export function validateCommandOptions(parsed: ParsedCommand): RunFailure | null
       detail: `${presentScope.join("、")} 不能与 --format jsonl 同时使用；去掉 ${presentScope.join("、")}，或把 --format 改为 json`,
     };
   }
+  const rangeOptions = ["--turn", "--seq", "--head", "--tail"];
+  const presentRange = rangeOptions.filter((name) => parsed.options.has(name));
+  if (parsed.options.has("--head") && parsed.options.has("--tail")) {
+    return {
+      classification: "参数无效",
+      exitCode: 2,
+      detail: "--head 与 --tail 不能同时使用；只保留其中一个",
+    };
+  }
+  if (presentRange.length === 0) return null;
+  // --summary 呈现的是整会话轮次大纲，区间选择对其无意义：静默忽略会掩盖调用方意图，故显式拒绝。
+  if (parsed.options.has("--summary")) {
+    return {
+      classification: "参数无效",
+      exitCode: 2,
+      detail: `--summary 与 ${presentRange.join("、")} 不能同时使用；去掉 ${presentRange.join("、")}，或去掉 --summary`,
+    };
+  }
+  const turnRaw = optionValue(parsed, "--turn");
+  if (turnRaw !== undefined) {
+    const parsedTurn = parseIntegerRange(turnRaw, 1, "--turn");
+    if (!parsedTurn.success) {
+      return {
+        classification: "参数无效",
+        exitCode: 2,
+        detail: "--turn 取值应为 <A-B> 或 <A>（正整数，B 不小于 A）",
+      };
+    }
+  }
+  const seqRaw = optionValue(parsed, "--seq");
+  if (seqRaw !== undefined) {
+    const parsedSeq = parseIntegerRange(seqRaw, 0, "--seq");
+    if (!parsedSeq.success) {
+      return {
+        classification: "参数无效",
+        exitCode: 2,
+        detail: "--seq 取值应为 <A-B> 或 <A>（非负整数，B 不小于 A）",
+      };
+    }
+  }
   return null;
 }
 
 function renderList(parsed: ParsedCommand, ctx: StoreContext, format: "md" | "json"): RunOutcome {
   const bounds = readTimeBounds(parsed);
-  if (bounds === null) return failure("参数无效", 2);
+  if (!bounds.success) return failure("参数无效", 2, bounds.error);
   const filters: ListFilters = {
     workspace: optionValue(parsed, "--workspace"),
-    since: bounds.since,
-    until: bounds.until,
+    since: bounds.data.since,
+    until: bounds.data.until,
     title: optionValue(parsed, "--title"),
     origin: readOrigin(parsed),
     includeBlank: optionSwitch(parsed, "--include-blank"),
@@ -660,8 +773,8 @@ function renderShow(
   if (format === "json") {
     const eventCount = node.data.file.decoded.events.length;
     const summary = summaryFlag
-      ? `会话 ${resolved.data.id.slice(0, 12)}（摘要）`
-      : `会话 ${resolved.data.id.slice(0, 12)}；事件 ${eventCount} 个`;
+      ? `会话 ${resolved.data.id}（摘要）`
+      : `会话 ${resolved.data.id}；事件 ${eventCount} 个`;
     return {
       kind: "rendered",
       content: renderShowJson(node.data, { summary: summaryFlag }),
@@ -679,6 +792,10 @@ function renderShow(
     headers: optionSwitch(parsed, "--headers"),
     truncate: optionInteger(parsed, "--truncate", 0),
     subagents: includeSubagents,
+    turnRange: readRange(parsed, "--turn", 1),
+    seqRange: readRange(parsed, "--seq", 0),
+    head: optionInteger(parsed, "--head", 0),
+    tail: optionInteger(parsed, "--tail", 0),
   };
   const rendered = renderShowMd(node.data, showOptions);
   return { kind: "rendered", content: rendered.content, summary: rendered.summary, exitCode: 0 };
@@ -688,14 +805,20 @@ function renderSearch(parsed: ParsedCommand, ctx: StoreContext, format: "md" | "
   const keyword = parsed.positional[0];
   if (keyword === undefined || keyword.length === 0) return failure("参数无效", 2);
   const scopeFilters = readScopeFilters(parsed);
-  if (scopeFilters === null) return failure("参数无效", 2);
+  if (!scopeFilters.success) return failure("参数无效", 2, scopeFilters.error);
   const scopeValue = optionValue(parsed, "--scope");
-  const outcome = runSearch(ctx, keyword, scopeFilters, {
-    scope: scopeValue === "tools" || scopeValue === "all" ? scopeValue : "text",
-    caseSensitive: optionSwitch(parsed, "--case-sensitive"),
-    context: optionInteger(parsed, "--context", 60),
-    limit: optionInteger(parsed, "--limit", 100),
-  });
+  const outcome = runSearch(
+    ctx,
+    keyword,
+    scopeFilters.data,
+    {
+      scope: scopeValue === "tools" || scopeValue === "all" ? scopeValue : "text",
+      caseSensitive: optionSwitch(parsed, "--case-sensitive"),
+      context: optionInteger(parsed, "--context", 60),
+      limit: optionInteger(parsed, "--limit", 100),
+    },
+    optionValue(parsed, "--session"),
+  );
   if (!outcome.success) return { kind: "failure", failure: mapStoreError(outcome.error) };
   const summary = `命中 ${outcome.data.totalHits} 处，显示 ${outcome.data.hits.length} 处`;
   const content =
@@ -705,8 +828,8 @@ function renderSearch(parsed: ParsedCommand, ctx: StoreContext, format: "md" | "
 
 function renderStats(parsed: ParsedCommand, ctx: StoreContext, format: "md" | "json"): RunOutcome {
   const scopeFilters = readScopeFilters(parsed);
-  if (scopeFilters === null) return failure("参数无效", 2);
-  const outcome = runStats(ctx, parsed.positional[0], scopeFilters);
+  if (!scopeFilters.success) return failure("参数无效", 2, scopeFilters.error);
+  const outcome = runStats(ctx, parsed.positional[0], scopeFilters.data);
   if (!outcome.success) return { kind: "failure", failure: mapStoreError(outcome.error) };
   if (format === "json") {
     return {

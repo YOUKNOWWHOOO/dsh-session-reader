@@ -525,28 +525,43 @@ describe("CLI list", () => {
     const content = readFileSync(contract.path, "utf8");
     assert.equal(countLines(content), contract.fileLines);
     assert.equal(content.startsWith("# 会话列表\n\n"), true);
-    assert.equal(
-      content.includes("| 短 ID | 标题 | 工作区 | 最近活动 | 轮次 | 类型 | 大小 |"),
-      true,
-    );
-    assert.equal(content.includes("`session-fixt"), true);
+    assert.equal(content.includes("| ID | 标题 | 工作区 | 最近活动 | 轮次 | 类型 | 大小 |"), true);
+    // 显示值必须与可传值同源：产物中的 id 可直接交给 show（见下方"显示值即可传值"用例）。
+    assert.equal(content.includes("`session-fixture-main-01`"), true);
     assert.equal(content.includes("夹具会话 A"), true);
     assert.equal(content.includes("user_projects"), true);
     assert.equal(content.includes("session-fixture-blank-05"), false);
     assert.match(content, /合计：匹配 4 个会话，显示 4 个/u);
     assert.match(content, /已隐藏空会话 1 个（--include-blank 显示）/u);
+    // 覆盖声明描述"本次检查了哪些会话"（与 --limit 无关）：5 个可读会话全部纳入，无排除项。
+    assert.match(content, /扫描会话 5 个；纳入 5 个；排除 0 个/u);
     assert.equal(contract.summary, "匹配会话 4 个，显示 4 个");
     const leftover = readdirSync(OUT_DIR).filter((name) => name.endsWith(".tmp"));
     assert.deepEqual(leftover, []);
   });
 
-  it("--full 增加全 ID/cwd/令牌列；--include-blank 显示空会话", () => {
+  it("显示值即可传值：list 产物中的 id 直接交给 show 成功", () => {
+    const listResult = runCli(["list", ...baseArgs(HEALTHY_HOME), "--limit", "1"]);
+    assert.equal(listResult.status, 0);
+    const listContract = readContract(listResult.stdout);
+    const listed = readFileSync(listContract.path, "utf8");
+    const idMatch = /^\| `(session-[^`]+)` \|/mu.exec(listed);
+    assert.notEqual(idMatch, null, "list 表格首列应为完整 id");
+    if (idMatch === null) return;
+    const shown = runCli(["show", idMatch[1], ...baseArgs(HEALTHY_HOME), "--summary"]);
+    assert.equal(shown.status, 0, `显示值应可直接传值: ${idMatch[1]}`);
+    const shownContract = readContract(shown.stdout);
+    const shownContent = readFileSync(shownContract.path, "utf8");
+    assert.equal(shownContent.includes(`- ID：\`${idMatch[1]}\``), true);
+  });
+
+  it("--full 增加 cwd/令牌列；--include-blank 显示空会话", () => {
     const full = runCli(["list", ...baseArgs(HEALTHY_HOME), "--full", "--include-blank"]);
     assert.equal(full.status, 0);
     const contract = readContract(full.stdout);
     const content = readFileSync(contract.path, "utf8");
     assert.equal(content.includes("# 会话列表（完整）"), true);
-    assert.equal(content.includes("**全 ID**：`session-fixture-main-01`"), true);
+    assert.equal(content.includes("- `session-fixture-main-01`："), true);
     assert.equal(content.includes("**工作区**：`user_projects`"), true);
     assert.equal(content.includes("**最近活动**："), true);
     assert.equal(content.includes("**轮次**：2"), true);
@@ -774,9 +789,13 @@ describe("CLI search", () => {
     ]);
     const toolsDoc = JSON.parse(readFileSync(readContract(scopeTools.stdout).path, "utf8")) as {
       total: number;
+      scope: string;
+      totalIsExact: boolean;
       matches: Array<{ label: string }>;
     };
     assert.equal(toolsDoc.total >= 3, true);
+    assert.equal(toolsDoc.scope, "tools");
+    assert.equal(toolsDoc.totalIsExact, true);
     assert.equal(
       toolsDoc.matches.some((match) => match.label === "tool/call"),
       true,
@@ -795,8 +814,13 @@ describe("CLI search", () => {
       total: number;
       matches: Array<{ label: string }>;
     };
-    assert.equal(allDoc.total, 1);
-    assert.equal(allDoc.matches[0].label, "compaction/summary");
+    // all 档同时产出语义单元（compaction/summary）与整条事件载荷（label = 事件类型），
+    // 因此同一处文本会被两个单元各命中一次；关键是语义单元必须仍然可见。
+    assert.equal(allDoc.total >= 1, true);
+    assert.equal(
+      allDoc.matches.some((match) => match.label === "compaction/summary"),
+      true,
+    );
 
     const textScope = runCli(["search", "ZETA", ...baseArgs(HEALTHY_HOME), "--format", "json"]);
     assert.equal(
@@ -926,10 +950,28 @@ describe("CLI show 对异常数据", () => {
     assert.equal(result.stderr.includes("错误: 数据不可读"), true);
   });
 
-  it("结构损坏会话：list 因 header 不可读退出 3", () => {
+  it("结构损坏会话：list 容错跳过并逐条声明排除（退出 0）", () => {
     const result = runCli(["list", ...baseArgs(BROKEN_HOME)]);
-    assert.equal(result.status, 3);
-    assert.equal(result.stderr.includes("错误: 数据不可读"), true);
+    assert.equal(result.status, 0);
+    assert.equal(result.stderr, "");
+    const contract = readContract(result.stdout);
+    const content = readFileSync(contract.path, "utf8");
+    // 容错语义：单个 header 不可读的会话不再阻断对其余会话的浏览，但必须显式声明排除了谁、为什么。
+    assert.match(content, /扫描会话 3 个；纳入 2 个；排除 1 个/u);
+    assert.match(content, /排除会话：`session-broken-corrupt-08`（`帧魔数无效（偏移 0）`）/u);
+  });
+
+  it("header 不可读但目录存在：按前缀取目标报数据不可读（退出 3），与真不存在可区分", () => {
+    // P7 根因修复的独立验证：同一命令、同一前缀形态，存在的损坏会话与不存在的标识必须给出不同分类。
+    const unreadable = runCli(["show", "session-broken-corrupt-08", ...baseArgs(BROKEN_HOME)]);
+    assert.equal(unreadable.status, 3, `stderr=${unreadable.stderr}`);
+    assert.equal(unreadable.stderr, "错误: 数据不可读\n");
+    assert.equal(unreadable.stdout, "");
+
+    const missing = runCli(["show", "session-broken-nope-99", ...baseArgs(BROKEN_HOME)]);
+    assert.equal(missing.status, 1, `stderr=${missing.stderr}`);
+    assert.equal(missing.stderr, "错误: 目标不存在\n");
+    assert.equal(missing.stdout, "");
   });
 });
 

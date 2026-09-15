@@ -105,6 +105,20 @@ export interface FieldValue<T> {
   readonly unavailable: boolean;
 }
 
+/**
+ * 覆盖声明（对应"边界可自证"契约）：让调用方无需读源码即可判断结论强度。
+ * `excluded` 逐条列出被排除的会话与原因——排除是显式的，而不是静默漏读，
+ * 这是"检索 0 命中 ⇒ 不存在"这类全称断言能够成立的前提。
+ */
+export interface SessionCoverage {
+  /** 枚举到的会话目录数（不读 header，因此包含 header 不可读者）。 */
+  readonly scannedCount: number;
+  /** 实际纳入本次结论的会话数。 */
+  readonly includedCount: number;
+  /** 被排除的会话：id 为会话目录名（header 不可读时无从取得逻辑 id）。 */
+  readonly excluded: { readonly id: string; readonly reason: string }[];
+}
+
 /** 单会话元数据视图（projcache 派生）。 */
 export interface MetadataView {
   readonly available: boolean;
@@ -134,7 +148,6 @@ export interface ListFilters {
 /** 列表条目。 */
 export interface ListEntry {
   readonly id: string;
-  readonly shortId: string;
   readonly type: "main" | "subagent";
   readonly cwd: string | null;
   readonly workspaceTitle: string | null;
@@ -150,6 +163,7 @@ export interface ListOutcome {
   readonly matchedCount: number;
   readonly scannedCount: number;
   readonly hiddenBlankCount: number;
+  readonly coverage: SessionCoverage;
 }
 
 /** 一次完整解码的日志视图。 */
@@ -186,7 +200,6 @@ export interface ScopeFilters {
 /** 命中条目。 */
 export interface SearchHit {
   readonly sessionId: string;
-  readonly shortId: string;
   readonly seq: number | null;
   readonly time: number | null;
   readonly label: string;
@@ -199,6 +212,17 @@ export interface SearchOutcome {
   readonly totalHits: number;
   readonly scannedSessions: number;
   readonly truncated: boolean;
+  /** 实际参与检索的会话数（= `coverage.includedCount`）。 */
+  readonly searchedSessions: number;
+  readonly scope: "text" | "tools" | "all";
+  /**
+   * 命中总数是否为精确值。恒为 true 的证据链：① 检索阶段对纳入会话不做任何提前终止
+   * （`totalHits` 全量计数，`--limit` 只限制 `hits` 数组的收集）；② `scope=all` 时每个事件的
+   * 完整 JSON 载荷都是检索单元，任意事件的任意字符串必然可命中；③ 未纳入的会话逐条列入
+   * `coverage.excluded` 并给出原因，属于"显式排除"而非"未确定"。
+   */
+  readonly totalIsExact: boolean;
+  readonly coverage: SessionCoverage;
 }
 
 /** 统计结果。 */
@@ -216,6 +240,7 @@ export interface StatsOutcome {
   readonly unavailable: { readonly id: string; readonly reasons: string[] }[];
   /** 全局聚合中轮次或步数不可用（未计入总和）的会话数；单会话恒为 0。摘要行据此显式附注。 */
   readonly excludedMetricSessions: number;
+  readonly coverage: SessionCoverage;
   readonly single: SingleSessionStats | null;
 }
 
@@ -259,12 +284,12 @@ export interface CheckSessionResult {
 export interface CheckOutcome {
   readonly sessions: CheckSessionResult[];
   readonly anomalyCount: number;
+  readonly coverage: SessionCoverage;
 }
 
 const PROJCACHE_VERSION = 7;
 const GENERATION_FILE_PATTERN = /^session(?:\.v([1-9][0-9]*))?\.jsonl(\.zstd)?$/u;
 const HEADER_FRAME_INITIAL_BYTES = 65536;
-const SHORT_ID_LENGTH = 12;
 const MIN_PREFIX_LENGTH = 8;
 
 function errorMessage(error: unknown): string {
@@ -276,10 +301,6 @@ function storeFail(
   detail?: string,
 ): { success: false; error: StoreError } {
   return { success: false, error: detail === undefined ? { category } : { category, detail } };
-}
-
-function shortId(id: string): string {
-  return id.slice(0, SHORT_ID_LENGTH);
 }
 
 function entryCwdNormalized(entry: SessionEntry): string {
@@ -472,18 +493,16 @@ export function discoverReadableSessions(
   return { success: true, data: { entries, skipped } };
 }
 
-/** 发现全部会话（聚合类命令使用：任一 header 不可读即显式失败，不猜测）。 */
-export function discoverSessions(
-  dshHome: string,
-  catalog: SessionFormatCatalog,
-): Result<SessionEntry[], StoreError> {
-  const discovery = discoverReadableSessions(dshHome, catalog);
-  if (!discovery.success) return discovery;
-  const firstSkipped = discovery.data.skipped[0];
-  if (firstSkipped !== undefined) {
-    return storeFail("data-unreadable", `${firstSkipped.idFromDir}: ${firstSkipped.error}`);
-  }
-  return { success: true, data: discovery.data.entries };
+/** 从发现结果构造覆盖声明（excluded 逐条列出，禁止静默丢弃）。 */
+function coverageOf(discovery: TolerantDiscovery): SessionCoverage {
+  return {
+    scannedCount: discovery.entries.length + discovery.skipped.length,
+    includedCount: discovery.entries.length,
+    excluded: discovery.skipped.map((skipped) => ({
+      id: skipped.idFromDir,
+      reason: skipped.error,
+    })),
+  };
 }
 
 /** 加载 projcache（version + identity 校验；失败返回不可用原因）。 */
@@ -711,15 +730,24 @@ interface ScopeSelection {
   readonly views: SessionView[];
   readonly scannedCount: number;
   readonly hiddenBlankCount: number;
+  readonly coverage: SessionCoverage;
 }
 
-/** 收集会话视图并应用范围过滤（workspace/since/until/title/origin/空会话）。 */
+/**
+ * 收集会话视图并应用范围过滤（workspace/since/until/title/origin/空会话）。
+ *
+ * 容错语义（P7 根因修复）：单个会话 header 不可读时不再让整个聚合命令失败——那会让一份损坏的
+ * 日志永久阻断对其余会话的浏览与检索。改为跳过该会话并把"跳过了谁、为什么"写入 coverage，
+ * 由渲染层逐条列出。范围过滤后的结果集是"显式的子集"，不是"静默的漏读"。
+ */
 function collectSessionViews(
   ctx: StoreContext,
   filters: ListFilters,
 ): Result<ScopeSelection, StoreError> {
-  const discovery = discoverSessions(ctx.dshHome, ctx.catalog);
+  const discovery = discoverReadableSessions(ctx.dshHome, ctx.catalog);
   if (!discovery.success) return discovery;
+  const entries = discovery.data.entries;
+  const coverage = coverageOf(discovery.data);
   const workspaces = loadWorkspaceIndex(ctx.dshHome);
   const workspaceFilter = filters.workspace;
   let matchedWorkspaces: WorkspaceEntry[] = [];
@@ -731,9 +759,7 @@ function collectSessionViews(
         normalizePathForCompare(workspace.path) === normalizedFilter ||
         workspace.title.toLowerCase() === loweredFilter,
     );
-    const anyCwdMatch = discovery.data.some(
-      (entry) => entryCwdNormalized(entry) === normalizedFilter,
-    );
+    const anyCwdMatch = entries.some((entry) => entryCwdNormalized(entry) === normalizedFilter);
     if (!anyCwdMatch && matchedWorkspaces.length === 0) {
       return storeFail("target-missing", "工作区过滤值无匹配");
     }
@@ -748,7 +774,7 @@ function collectSessionViews(
   }
   const views: SessionView[] = [];
   let hiddenBlankCount = 0;
-  for (const entry of discovery.data) {
+  for (const entry of entries) {
     const cache = loadProjCache(ctx.dshHome, entry.id, entry.header);
     const metadata = buildMetadata(cache);
     const effectiveLastActivity = lastActivityAtOf(entry, metadata);
@@ -775,7 +801,10 @@ function collectSessionViews(
       cwdNormalized.length === 0 ? null : (workspaceTitleByPath.get(cwdNormalized) ?? null);
     views.push({ entry, metadata, lastActivityAt: effectiveLastActivity, workspaceTitle });
   }
-  return { success: true, data: { views, scannedCount: discovery.data.length, hiddenBlankCount } };
+  return {
+    success: true,
+    data: { views, scannedCount: coverage.scannedCount, hiddenBlankCount, coverage },
+  };
 }
 
 function compareViews(left: SessionView, right: SessionView, sort: ListFilters["sort"]): number {
@@ -811,7 +840,6 @@ export function buildList(
   const limited = filters.limit === 0 ? sorted : sorted.slice(0, filters.limit);
   const entries: ListEntry[] = limited.map((view) => ({
     id: view.entry.id,
-    shortId: shortId(view.entry.id),
     type: entryIsSubagent(view.entry) ? "subagent" : "main",
     cwd: readString(view.entry.header, "cwd") ?? null,
     workspaceTitle: view.workspaceTitle,
@@ -827,6 +855,10 @@ export function buildList(
       matchedCount: sorted.length,
       scannedCount: selection.data.scannedCount,
       hiddenBlankCount: selection.data.hiddenBlankCount,
+      // 覆盖声明描述"本次检查了哪些会话"，与 `--limit` 无关（`--limit` 只影响产物列出多少条，
+      // 由 `matchedCount` 与产物行数表达）。把 includedCount 绑到"列出条数"会让恒等式
+      // `scanned = included + excluded` 被 `--limit` 打破，调用方也就无法据此核对漏读。
+      coverage: selection.data.coverage,
     },
   };
 }
@@ -889,20 +921,23 @@ function idMatchesExact(id: string, loweredValue: string): boolean {
   return false;
 }
 
-/** 解析会话标识：last（主会话最近活动者）／完整 id／唯一前缀（≥8 字符，大小写不敏感）。 */
-export function resolveSessionTarget(
-  ctx: StoreContext,
+/**
+ * 在既有发现结果上解析会话标识（`resolveSessionTarget` 与 `runSearch --session` 的共用核心）。
+ * 提取为独立函数的原因：`runSearch` 已经持有发现结果，再调用 `resolveSessionTarget` 会重复扫描一次，
+ * 两次扫描之间的日志变化会让"子树展开"与"命中归属"基于不同快照。
+ */
+function resolveTargetWithin(
+  discovery: TolerantDiscovery,
   value: string,
+  dshHome: string,
 ): Result<SessionEntry, StoreError> {
-  const discovery = discoverReadableSessions(ctx.dshHome, ctx.catalog);
-  if (!discovery.success) return discovery;
-  const candidates = discovery.data.entries;
+  const candidates = discovery.entries;
   if (value === "last") {
     let best: SessionEntry | undefined;
     let bestKey = Number.NEGATIVE_INFINITY;
     for (const entry of candidates) {
       if (entryIsSubagent(entry)) continue;
-      const cache = loadProjCache(ctx.dshHome, entry.id, entry.header);
+      const cache = loadProjCache(dshHome, entry.id, entry.header);
       const metadata = buildMetadata(cache);
       const key = lastActivityAtOf(entry, metadata);
       if (key > bestKey || (key === bestKey && best !== undefined && entry.id < best.id)) {
@@ -923,11 +958,71 @@ export function resolveSessionTarget(
     return { success: false, error: { category: "ambiguous", candidates: exact.length } };
   }
   const prefixed = candidates.filter((entry) => idMatchesPrefix(entry.id, lowered));
-  if (prefixed.length === 0) return storeFail("target-missing", "没有匹配的会话");
+  if (prefixed.length === 0) {
+    const unreadable = discovery.skipped.filter((skipped) =>
+      idMatchesPrefix(skipped.idFromDir, lowered),
+    );
+    if (unreadable.length > 0) return storeFail("data-unreadable", "匹配的会话 header 不可读");
+    return storeFail("target-missing", "没有匹配的会话");
+  }
   if (prefixed.length > 1) {
     return { success: false, error: { category: "ambiguous", candidates: prefixed.length } };
   }
   return { success: true, data: prefixed[0] };
+}
+
+/**
+ * 解析会话标识：last（主会话最近活动者）／完整 id／唯一前缀（≥8 字符，大小写不敏感）。
+ *
+ * P7 根因修复——"目标不存在"必须与"目标存在但不可读"可区分：
+ * 解析在发现阶段（`discoverReadableSessions`）之上进行，而发现阶段会跳过 header 不可读的会话目录
+ * （日志正在被写入导致撕裂、格式分类为 malformed/unsupported、header 缺 id 等）。这些会话确实存在于
+ * 磁盘上，只是此刻读不到。因此：
+ * - 有多个匹配 → `ambiguous`（CLI 渲染为"目标不存在（候选 N 个）"，退出 1）；
+ * - 无匹配、但被跳过的目录名与给定值前缀匹配 → `data-unreadable`（退出 3），调用方据此区分
+ *   "确实不存在"与"存在但读不到"，而不是把两者都当成不存在；
+ * - 其余无匹配 → `target-missing`（退出 1）。
+ *
+ * 被跳过目录的匹配必须按目录名（`idFromDir`）判定：header 不可读时无从取得逻辑 id，目录名是唯一可用标识。
+ */
+export function resolveSessionTarget(
+  ctx: StoreContext,
+  value: string,
+): Result<SessionEntry, StoreError> {
+  const discovery = discoverReadableSessions(ctx.dshHome, ctx.catalog);
+  if (!discovery.success) return discovery;
+  return resolveTargetWithin(discovery.data, value, ctx.dshHome);
+}
+
+/**
+ * 展开会话子树（含自身）：按 `header.parentSession` 递归，`visited` 防环。
+ *
+ * 与 `buildSessionNode` 共用同一父子判定口径（`parentSession` 相等），避免 `search --session`
+ * 与 `show --subagents` 对"谁是子代理"给出不同答案。
+ */
+export function collectSubtreeEntries(
+  root: SessionEntry,
+  allEntries: readonly SessionEntry[],
+): SessionEntry[] {
+  const collected: SessionEntry[] = [];
+  const visited = new Set<string>();
+  const queue: SessionEntry[] = [root];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (current === undefined) break;
+    if (visited.has(current.id)) continue;
+    visited.add(current.id);
+    collected.push(current);
+    const children = allEntries
+      .filter((candidate) => readString(candidate.header, "parentSession") === current.id)
+      .sort(
+        (left, right) =>
+          (readNumber(left.header, "createdAt") ?? 0) -
+          (readNumber(right.header, "createdAt") ?? 0),
+      );
+    for (const child of children) queue.push(child);
+  }
+  return collected;
 }
 
 /** 递归构建会话节点（含子代理；visited 防环）。 */
@@ -970,7 +1065,19 @@ function messageContent(event: EventRecord): unknown {
   return message === undefined ? undefined : message.content;
 }
 
-/** 收集单个事件的可检索文本单元（scope：text=用户/助手正文；tools=另含工具参数与结果；all=另含推理/系统/压缩/命令/标题请求/web 请求/交付物）。 */
+/**
+ * 收集单个事件的可检索文本单元。
+ *
+ * 三档语义（单调包含）：
+ * - `text`：用户/助手正文；
+ * - `tools`：另含工具调用参数与工具结果；
+ * - `all`：另含推理、系统消息、压缩摘要、命令、标题请求、web 检索请求、交付物、待办、代理信箱，
+ *   **以及整条事件记录的完整 JSON 载荷**（label 取事件类型）。
+ *
+ * `all` 档的穷尽性是"检索 0 命中 ⇒ 不存在"这一推断成立的前提：按类型枚举字段必然有遗漏
+ * （实测 `assistant/attempt` 与 `llm/retry` 的 `data.failure` 内嵌上游错误体，此前任何 scope 都检索不到），
+ * 只有把整条记录纳入检索才能保证任意事件的任意字符串都可命中。
+ */
 function collectSearchUnits(event: EventRecord, scope: "text" | "tools" | "all"): SearchUnit[] {
   const type = eventType(event);
   const units: SearchUnit[] = [];
@@ -980,10 +1087,6 @@ function collectSearchUnits(event: EventRecord, scope: "text" | "tools" | "all")
   } else if (type === "assistant/message") {
     const text = textFromBlocks(messageContent(event));
     if (text.length > 0) units.push({ label: "assistant", text });
-    if (scope === "all") {
-      const reasoning = reasoningFromBlocks(messageContent(event));
-      if (reasoning.length > 0) units.push({ label: "assistant/reasoning", text: reasoning });
-    }
   } else if (scope !== "text" && type === "tool/call") {
     const argumentsText = readString(asRecord(event.data) ?? {}, "arguments");
     if (argumentsText !== undefined && argumentsText.length > 0) {
@@ -992,8 +1095,12 @@ function collectSearchUnits(event: EventRecord, scope: "text" | "tools" | "all")
   } else if (scope !== "text" && type === "tool/result") {
     const text = toolResultText(event);
     if (text.length > 0) units.push({ label: "tool/result", text });
-  } else if (scope === "all") {
-    if (type === "system/message") {
+  }
+  if (scope === "all") {
+    if (type === "assistant/message") {
+      const reasoning = reasoningFromBlocks(messageContent(event));
+      if (reasoning.length > 0) units.push({ label: "assistant/reasoning", text: reasoning });
+    } else if (type === "system/message") {
       const text = textFromBlocks(messageContent(event));
       if (text.length > 0) units.push({ label: "system", text });
     } else if (type === "compaction/summary") {
@@ -1040,18 +1147,82 @@ function collectSearchUnits(event: EventRecord, scope: "text" | "tools" | "all")
       }
       const text = joinTextParts(parts);
       if (text.length > 0) units.push({ label: "deliverables", text });
+    } else if (type === "todo/write") {
+      const todos = asArray(asRecord(event.data)?.todos) ?? [];
+      const parts: string[] = [];
+      for (const todo of todos) {
+        const record = asRecord(todo);
+        if (record === undefined) continue;
+        const content = readString(record, "content");
+        const status = readString(record, "status");
+        if (content !== undefined) parts.push(content);
+        if (status !== undefined) parts.push(status);
+      }
+      const text = joinTextParts(parts);
+      if (text.length > 0) units.push({ label: "todo", text });
+    } else if (type === "agent/inbox/spliced") {
+      const inserted = asArray(asRecord(event.data)?.inserted) ?? [];
+      const parts: string[] = [];
+      for (const message of inserted) {
+        const record = asRecord(message);
+        if (record === undefined) continue;
+        parts.push(textFromBlocks(record.content));
+      }
+      const text = joinTextParts(parts);
+      if (text.length > 0) units.push({ label: "agent/inbox", text });
     }
+    // 穷尽兜底：把整条事件记录的完整 JSON 载荷作为检索单元。
+    // 这是"检索 0 命中 ⇒ 不存在"能够成立的前提——上面按类型枚举的字段必然有遗漏
+    // （实测遗漏的类型包括 assistant/attempt 与 llm/retry，其 data.failure 里内嵌了上游错误体），
+    // 只有覆盖整条记录才能保证任意事件的任意字符串都可被检索到。label 取事件类型本身，便于定位。
+    const raw = eventPayloadJson(event);
+    if (raw.length > 0) units.push({ label: type.length === 0 ? "(未知类型)" : type, text: raw });
   }
   return units;
 }
 
-/** search 命令数据：按范围过滤会话，逐会话解码并按 scope 检索；limit 只限制显示条数，总数始终为全量扫描结果。 */
+/**
+ * 事件记录的完整 JSON 序列化载荷。
+ * 循环引用等无法序列化的记录返回空串（该事件由按类型枚举的单元覆盖），不抛错也不伪造占位文本。
+ */
+function eventPayloadJson(event: EventRecord): string {
+  try {
+    return JSON.stringify(event);
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * search 命令数据：按范围过滤会话，逐会话解码并按 scope 检索。
+ *
+ * 两条关键契约：
+ * 1. `--limit` 只限制 `hits` 数组的收集上限，`totalHits` 对纳入会话全量计数且不做任何提前终止，
+ *    因此"命中总数"不是显示条数的副产品（`totalIsExact` 恒为 true，证据见该字段注释）。
+ * 2. 单个会话解码失败不会让整次检索失败，而是记入 `coverage.excluded`（原因="解码失败"）并继续。
+ *    这是"未被列出者即为已覆盖"这一推断成立的前提——静默跳过或整体失败都会让调用方无法判断
+ *    "0 命中"到底是"不存在"还是"没读到"。
+ */
 export function runSearch(
   ctx: StoreContext,
   keyword: string,
   scopeFilters: ScopeFilters,
   options: SearchOptions,
+  sessionTarget?: string,
 ): Result<SearchOutcome, StoreError> {
+  const discovery = discoverReadableSessions(ctx.dshHome, ctx.catalog);
+  if (!discovery.success) return discovery;
+  const discoveryCoverage = coverageOf(discovery.data);
+
+  // `--session` 的子树展开与目标解析共用同一次发现结果，避免重复扫描造成两次读取之间的一致性漂移。
+  let sessionIds: Set<string> | null = null;
+  if (sessionTarget !== undefined) {
+    const resolved = resolveTargetWithin(discovery.data, sessionTarget, ctx.dshHome);
+    if (!resolved.success) return resolved;
+    const subtree = collectSubtreeEntries(resolved.data, discovery.data.entries);
+    sessionIds = new Set(subtree.map((entry) => entry.id));
+  }
+
   const selection = collectSessionViews(ctx, {
     workspace: scopeFilters.workspace,
     since: scopeFilters.since,
@@ -1062,12 +1233,21 @@ export function runSearch(
     sort: "time",
   });
   if (!selection.success) return selection;
+  const views =
+    sessionIds === null
+      ? selection.data.views
+      : selection.data.views.filter((view) => sessionIds.has(view.entry.id));
+
   const needle = options.caseSensitive ? keyword : keyword.toLowerCase();
   const hits: SearchHit[] = [];
   let totalHits = 0;
-  for (const view of selection.data.views) {
+  const decodeFailures: { id: string; reason: string }[] = [];
+  for (const view of views) {
     const file = readSessionFile(view.entry, ctx.catalog);
-    if (!file.success) return file;
+    if (!file.success) {
+      decodeFailures.push({ id: view.entry.id, reason: "解码失败" });
+      continue;
+    }
     for (const event of file.data.decoded.events) {
       for (const unit of collectSearchUnits(event, options.scope)) {
         const haystack = options.caseSensitive ? unit.text : unit.text.toLowerCase();
@@ -1088,7 +1268,6 @@ export function runSearch(
             const excerpt = `${startPoint > 0 ? "…" : ""}${points.slice(startPoint, endPoint).join("")}${endPoint < points.length ? "…" : ""}`;
             hits.push({
               sessionId: view.entry.id,
-              shortId: shortId(view.entry.id),
               seq: eventSeq(event) ?? null,
               time: eventTime(event) ?? null,
               label: unit.label,
@@ -1102,13 +1281,24 @@ export function runSearch(
     }
   }
   const shown = hits.length;
+  const excluded = [...discoveryCoverage.excluded, ...decodeFailures];
   return {
     success: true,
     data: {
       hits,
       totalHits,
-      scannedSessions: selection.data.views.length,
+      scannedSessions: views.length,
       truncated: totalHits > shown,
+      searchedSessions: views.length,
+      scope: options.scope,
+      totalIsExact: true,
+      // 恒等式 `scannedCount = includedCount + excluded.length` 必须成立：纳入数是本次实际检索的
+      // 会话数，排除项是发现阶段跳过与解码阶段失败两类，调用方据此核对是否存在未列出的漏读。
+      coverage: {
+        scannedCount: views.length + excluded.length,
+        includedCount: views.length,
+        excluded,
+      },
     },
   };
 }
@@ -1190,6 +1380,7 @@ export function runStats(
             ? []
             : [{ id: entry.id, reasons: metadata.reasons }],
         excludedMetricSessions: 0,
+        coverage: { scannedCount: 1, includedCount: 1, excluded: [] },
         single,
       },
     };
@@ -1205,9 +1396,13 @@ export function runStats(
   });
   if (!selection.success) return selection;
   let toolCalls = 0;
+  const decodeFailures: { id: string; reason: string }[] = [];
   for (const view of selection.data.views) {
     const file = readSessionFile(view.entry, ctx.catalog);
-    if (!file.success) return file;
+    if (!file.success) {
+      decodeFailures.push({ id: view.entry.id, reason: "解码失败" });
+      continue;
+    }
     toolCalls += countToolCalls(file.data);
   }
   let blankCount = 0;
@@ -1240,6 +1435,7 @@ export function runStats(
     turns += view.metadata.turns.value ?? 0;
     steps += view.metadata.steps.value ?? 0;
   }
+  const excluded = [...selection.data.coverage.excluded, ...decodeFailures];
   return {
     success: true,
     data: {
@@ -1255,6 +1451,11 @@ export function runStats(
       totalSizeBytes,
       unavailable,
       excludedMetricSessions,
+      coverage: {
+        scannedCount: selection.data.views.length + excluded.length,
+        includedCount: selection.data.views.length,
+        excluded,
+      },
       single: null,
     },
   };
@@ -1384,5 +1585,14 @@ export function runCheck(
   }
   const sessions = refs.map((ref) => checkOneSession(ref, ctx.catalog));
   const anomalyCount = sessions.reduce((sum, session) => sum + session.anomalies.length, 0);
-  return { success: true, data: { sessions, anomalyCount } };
+  // check 走不读 header 的枚举，因此没有"因 header 不可读而被排除的会话"——它们恰恰是本命令的
+  // 诊断对象，全部纳入。覆盖声明据此恒为"扫描数 = 纳入数、无排除"。
+  return {
+    success: true,
+    data: {
+      sessions,
+      anomalyCount,
+      coverage: { scannedCount: sessions.length, includedCount: sessions.length, excluded: [] },
+    },
+  };
 }

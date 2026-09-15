@@ -13,7 +13,6 @@ import {
   buildMetadata,
   buildSessionNode,
   discoverReadableSessions,
-  discoverSessions,
   enumerateSessionFiles,
   type ListFilters,
   loadProjCache,
@@ -413,7 +412,7 @@ before(() => {
   writeFixtureHome(BROKEN_HOME, brokenSpec());
 });
 
-describe("enumerateSessionFiles / discoverSessions", () => {
+describe("enumerateSessionFiles / discoverReadableSessions", () => {
   it("枚举全部 canonical generation 文件（多代取最高版本、明文标记）", () => {
     const refs = enumerateSessionFiles(HEALTHY_HOME);
     assert.equal(refs.success, true);
@@ -426,35 +425,41 @@ describe("enumerateSessionFiles / discoverSessions", () => {
     assert.equal(plain?.logCompressed, false);
   });
 
-  it("发现会话并读取 header（id/cwd/大小）", () => {
-    const result = discoverSessions(HEALTHY_HOME, fakeCatalog);
+  it("发现会话并读取 header（id/cwd/大小），不跳过任何会话", () => {
+    const result = discoverReadableSessions(HEALTHY_HOME, fakeCatalog);
     assert.equal(result.success, true);
     if (!result.success) return;
-    assert.equal(result.data.length, 9);
-    const main = findEntry(result.data, "session-fixture-main-01");
+    assert.equal(result.data.entries.length, 9);
+    assert.deepEqual(result.data.skipped, []);
+    const main = findEntry(result.data.entries, "session-fixture-main-01");
     assert.equal(main.header.cwd, MAIN_CWD);
     assert.equal(main.sizeBytes > 0, true);
   });
 
   it("sessions 根缺失报目标不存在", () => {
-    const result = discoverSessions(join(TEMP_ROOT, "no-such-home"), fakeCatalog);
+    const result = discoverReadableSessions(join(TEMP_ROOT, "no-such-home"), fakeCatalog);
     assert.equal(result.success, false);
     if (!result.success) assert.equal(result.error.category, "target-missing");
   });
 
-  it("header 不可读（结构损坏）报数据不可读", () => {
-    const result = discoverSessions(BROKEN_HOME, fakeCatalog);
-    assert.equal(result.success, false);
-    if (!result.success) assert.equal(result.error.category, "data-unreadable");
+  it("header 不可读的会话记入 skipped 而非整体失败（容错语义）", () => {
+    const result = discoverReadableSessions(BROKEN_HOME, fakeCatalog);
+    assert.equal(result.success, true);
+    if (!result.success) return;
+    // 夹具中只有 corrupt 会话的 header 帧被破坏；tornTail 只截断末帧、gap 只缺 seq，二者 header 仍可读。
+    assert.equal(result.data.entries.length, 2);
+    assert.equal(result.data.skipped.length, 1);
+    assert.equal(result.data.skipped[0].idFromDir, "session-broken-corrupt-08");
   });
 });
 
 describe("loadProjCache / buildMetadata", () => {
   it("有效 projcache：identity 校验通过、行值可读", () => {
-    const entries = discoverSessions(HEALTHY_HOME, fakeCatalog);
+    const entries = discoverReadableSessions(HEALTHY_HOME, fakeCatalog);
     assert.equal(entries.success, true);
     if (!entries.success) return;
-    const main = findEntry(entries.data, "session-fixture-main-01");
+    assert.deepEqual(entries.data.skipped, []);
+    const main = findEntry(entries.data.entries, "session-fixture-main-01");
     const cache = loadProjCache(HEALTHY_HOME, main.id, main.header);
     assert.equal(cache.available, true);
     const metadata = buildMetadata(cache);
@@ -467,16 +472,17 @@ describe("loadProjCache / buildMetadata", () => {
   });
 
   it("projcache 缺失/版本不符/identity 不符 → 元数据不可用并给出原因", () => {
-    const entries = discoverSessions(HEALTHY_HOME, fakeCatalog);
+    const entries = discoverReadableSessions(HEALTHY_HOME, fakeCatalog);
     assert.equal(entries.success, true);
     if (!entries.success) return;
+    assert.deepEqual(entries.data.skipped, []);
     const cases: Array<[string, RegExp]> = [
       ["session-fixture-nocache-09", /缺失/u],
       ["session-fixture-version-08", /版本不匹配/u],
       ["session-fixture-identity-07", /identity 不匹配/u],
     ];
     for (const [id, pattern] of cases) {
-      const entry = findEntry(entries.data, id);
+      const entry = findEntry(entries.data.entries, id);
       const cache = loadProjCache(HEALTHY_HOME, entry.id, entry.header);
       const metadata = buildMetadata(cache);
       assert.equal(metadata.available, false);
@@ -490,10 +496,11 @@ describe("loadProjCache / buildMetadata", () => {
   });
 
   it("projcache 部分行缺失：缺失行标注不可用、其它行可用", () => {
-    const entries = discoverSessions(HEALTHY_HOME, fakeCatalog);
+    const entries = discoverReadableSessions(HEALTHY_HOME, fakeCatalog);
     assert.equal(entries.success, true);
     if (!entries.success) return;
-    const entry = findEntry(entries.data, "session-fixture-partial-06");
+    assert.deepEqual(entries.data.skipped, []);
+    const entry = findEntry(entries.data.entries, "session-fixture-partial-06");
     const cache = loadProjCache(HEALTHY_HOME, entry.id, entry.header);
     const metadata = buildMetadata(cache);
     assert.equal(metadata.available, true);
@@ -707,10 +714,11 @@ describe("resolveSessionTarget", () => {
 
 describe("readSessionFile / buildSessionNode", () => {
   it("读取完整解码日志（事件数/帧数）", () => {
-    const entries = discoverSessions(HEALTHY_HOME, fakeCatalog);
+    const entries = discoverReadableSessions(HEALTHY_HOME, fakeCatalog);
     assert.equal(entries.success, true);
     if (!entries.success) return;
-    const entry = findEntry(entries.data, "session-fixture-main-01");
+    assert.deepEqual(entries.data.skipped, []);
+    const entry = findEntry(entries.data.entries, "session-fixture-main-01");
     const file = readSessionFile(entry, fakeCatalog);
     assert.equal(file.success, true);
     if (!file.success) return;
@@ -749,11 +757,12 @@ describe("readSessionFile / buildSessionNode", () => {
   });
 
   it("子代理树递归构建", () => {
-    const entries = discoverSessions(HEALTHY_HOME, fakeCatalog);
+    const entries = discoverReadableSessions(HEALTHY_HOME, fakeCatalog);
     assert.equal(entries.success, true);
     if (!entries.success) return;
-    const main = findEntry(entries.data, "session-fixture-main-01");
-    const node = buildSessionNode(contextOf(HEALTHY_HOME), main, entries.data, new Set());
+    assert.deepEqual(entries.data.skipped, []);
+    const main = findEntry(entries.data.entries, "session-fixture-main-01");
+    const node = buildSessionNode(contextOf(HEALTHY_HOME), main, entries.data.entries, new Set());
     assert.equal(node.success, true);
     if (!node.success) return;
     assert.equal(node.data.children.length, 1);
@@ -960,8 +969,11 @@ describe("边界与分支", () => {
       "session.v3.jsonl.zstd",
     );
     writeFileSync(emptyLog, Buffer.alloc(0));
-    const empty = discoverSessions(emptyHome, fakeCatalog);
-    assert.equal(empty.success, false);
+    const empty = discoverReadableSessions(emptyHome, fakeCatalog);
+    assert.equal(empty.success, true);
+    if (!empty.success) return;
+    assert.equal(empty.data.entries.length, 0);
+    assert.equal(empty.data.skipped.length, 1);
 
     const tornHome = join(TEMP_ROOT, "edge-torn");
     writeFixtureHome(tornHome, {
@@ -989,8 +1001,11 @@ describe("边界与分支", () => {
       ),
     );
     writeFileSync(tornLog, fullFrame.subarray(0, 12));
-    const torn = discoverSessions(tornHome, fakeCatalog);
-    assert.equal(torn.success, false);
+    const torn = discoverReadableSessions(tornHome, fakeCatalog);
+    assert.equal(torn.success, true);
+    if (!torn.success) return;
+    assert.equal(torn.data.entries.length, 0);
+    assert.equal(torn.data.skipped.length, 1);
   });
 
   it("buildMetadata 行结构异常 → 字段级不可用并给原因", () => {

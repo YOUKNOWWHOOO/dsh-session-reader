@@ -1,8 +1,8 @@
-// 渲染层：Markdown（lint-safe）/JSON/JSONL 输出、可见性控制（推理/工具/事件）、截断、摘要文案。
+// 渲染层：Markdown（lint-safe）/JSON/JSONL 输出、可见性控制（推理/工具/事件）、范围筛选、截断、覆盖声明、摘要文案。
 // 输出格式为"实现与测试的单一真值源"（方案 v2 §3.9 / f2 报告 §4 R1–R5 为规则终稿）：
 // - md：GFM 子集、结构骨架只用固定词表与工具生成值；任意文本只经两种载体承载——
 //   多行文本 → 动态长度围栏（反引号 + `text` 语言）；单行文本 → 行内代码跨度（动态反引号）；
-//   三条极小归一化：制表符 → 4 空格（MD010）、行内值首尾空白去除（MD038）、全 `$` 载荷
+//   三条极小归一化：CR/CRLF → LF 与制表符 → 4 空格（MD010）、行内值首尾空白去除（MD038）、全 `$` 载荷
 //   末尾追加一行单个空格（MD014）；正文以外的结构纪律见 assembleDocument 与各渲染函数注释。
 // - json：JSON.stringify(value, null, 2) + 换行；
 // - jsonl：首行逻辑 header，其后每行一个已解码事件（键序稳定）。
@@ -19,7 +19,7 @@ import {
   textFromBlocks,
   toolResultText,
 } from "./decode.ts";
-import { formatLocalIso } from "./paths.ts";
+import { formatLocalIso, type IntegerRange } from "./paths.ts";
 import type {
   CheckOutcome,
   DecodedSessionFile,
@@ -28,6 +28,7 @@ import type {
   ListOutcome,
   ModelView,
   SearchOutcome,
+  SessionCoverage,
   SessionNode,
   SingleSessionStats,
   StatsOutcome,
@@ -35,15 +36,9 @@ import type {
 } from "./store.ts";
 
 const TURN_SUMMARY_LIMIT = 200;
-const EVENT_DATA_LIMIT = 200;
 const METADATA_UNAVAILABLE_TEXT = "元数据不可用";
 const EMPTY_VALUE = "-";
-const SHORT_ID_LENGTH = 12;
 const TAB_WIDTH = 4;
-
-function shortSessionId(id: string): string {
-  return id.slice(0, SHORT_ID_LENGTH);
-}
 
 /** 渲染结果：文件内容 + stdout 用的命令级摘要。 */
 export interface RenderedOutput {
@@ -61,6 +56,14 @@ export interface ShowMdOptions {
   readonly headers: boolean;
   readonly truncate: number;
   readonly subagents: boolean;
+  /** turn 区间（含端点）；null 表示不筛选。 */
+  readonly turnRange: IntegerRange | null;
+  /** seq 区间（含端点）；null 表示不筛选。 */
+  readonly seqRange: IntegerRange | null;
+  /** 只呈现筛选结果的首 N 条（0=不限）。 */
+  readonly head: number;
+  /** 只呈现筛选结果的末 N 条（0=不限）。 */
+  readonly tail: number;
 }
 
 /** 渲染工具函数：字节大小人读格式（1024 进制）。 */
@@ -101,9 +104,16 @@ function maxBacktickRun(text: string): number {
   return max;
 }
 
-/** 归一化 1：制表符 → 4 空格（MD010 覆盖围栏与行内代码；f2 R3-1）。 */
+/**
+ * 归一化 1：制表符 → 4 空格（MD010 覆盖围栏与行内代码；f2 R3-1）。
+ *
+ * 同一步骤内把 CRLF 与孤立 CR 一律折叠为 LF：输出契约要求产物为"UTF-8 无 BOM、LF"，
+ * 而会话正文本身可能含 CR 字节（实测 907 个 lint 门禁产物中有 5 个因正文含 CR 而混入 CR 字节）。
+ * 内嵌 CR 不会被 markdownlint 判为违规，因此它是**契约层面的静默破坏**而非 lint 问题——
+ * 必须在载体归一化阶段消除，否则"LF"这一契约无法成立。
+ */
 export function normalizeTabs(text: string): string {
-  return text.replace(/\t/gu, " ".repeat(TAB_WIDTH));
+  return text.replace(/\r\n|\r/gu, "\n").replace(/\t/gu, " ".repeat(TAB_WIDTH));
 }
 
 /** MD014 触发判定：所有非空行均以「可选空白 + $ + 空白」开头（f2 R3-3）。 */
@@ -155,6 +165,25 @@ function assembleDocument(sections: readonly string[]): string {
   return `${normalized.join("\n\n")}\n`;
 }
 
+// ------------------------- 覆盖声明（P2/P3/P7） -------------------------
+
+/**
+ * 覆盖声明的 md 片段。
+ *
+ * 契约：`扫描会话 N 个；纳入 M 个；排除 K 个`，随后逐条 `排除会话：<完整 id>（<原因>）`。
+ * 恒等式 `N = M + K` 必须成立——调用方据此核对是否存在未列出的漏读；这是"未被列出者即为已覆盖"
+ * 这一推断的唯一依据，因此排除项必须逐条列出，禁止合并成计数。
+ */
+export function coverageSections(coverage: SessionCoverage): string[] {
+  const sections = [
+    `扫描会话 ${coverage.scannedCount} 个；纳入 ${coverage.includedCount} 个；排除 ${coverage.excluded.length} 个`,
+  ];
+  for (const excluded of coverage.excluded) {
+    sections.push(`排除会话：${inlineValue(excluded.id)}（${inlineValue(excluded.reason)}）`);
+  }
+  return sections;
+}
+
 // ------------------------- list -------------------------
 
 /** list Markdown：表格式精简列；--full 使用记录列表（含两空格缩进的续行；f2 R1-6/R2-4）。 */
@@ -173,7 +202,8 @@ export function renderListMd(
           : tableCellValue(entry.metadata.title.value);
     const rows = outcome.entries.map((entry) => {
       const cells = [
-        tableCellValue(entry.shortId),
+        // 显示值必须与可传值同源：输出完整 id，调用方可直接交给 show/stats/check/--session。
+        tableCellValue(entry.id),
         titleCell(entry),
         entry.workspaceTitle === null ? EMPTY_VALUE : tableCellValue(entry.workspaceTitle),
         formatLocalIso(entry.lastActivityAt),
@@ -185,7 +215,7 @@ export function renderListMd(
     });
     sections.push(
       [
-        "| 短 ID | 标题 | 工作区 | 最近活动 | 轮次 | 类型 | 大小 |",
+        "| ID | 标题 | 工作区 | 最近活动 | 轮次 | 类型 | 大小 |",
         "| --- | --- | --- | --- | --- | --- | --- |",
         ...rows,
       ].join("\n"),
@@ -198,9 +228,8 @@ export function renderListMd(
         : entry.metadata.title.value === null
           ? EMPTY_VALUE
           : inlineValue(entry.metadata.title.value);
-      const firstLine = `- ${inlineValue(entry.shortId)}：${title}（${entry.type === "subagent" ? "子" : "主"}）`;
+      const firstLine = `- ${inlineValue(entry.id)}：${title}（${entry.type === "subagent" ? "子" : "主"}）`;
       const detailLines = [
-        `  **全 ID**：${inlineValue(entry.id)}`,
         `  **工作区**：${entry.workspaceTitle === null ? EMPTY_VALUE : inlineValue(entry.workspaceTitle)}`,
         `  **最近活动**：${formatLocalIso(entry.lastActivityAt)}`,
         `  **轮次**：${fieldValueText(entry.metadata.turns, String)}`,
@@ -236,6 +265,7 @@ export function renderListMd(
       );
     }
   }
+  sections.push(...coverageSections(outcome.coverage));
   return {
     content: assembleDocument(sections),
     summary: `匹配会话 ${outcome.matchedCount} 个，显示 ${outcome.entries.length} 个`,
@@ -245,7 +275,6 @@ export function renderListMd(
 function entryToJson(entry: ListEntry): Record<string, unknown> {
   return {
     id: entry.id,
-    shortId: entry.shortId,
     type: entry.type,
     title: entry.metadata.title.value,
     cwd: entry.cwd,
@@ -264,9 +293,9 @@ function entryToJson(entry: ListEntry): Record<string, unknown> {
   };
 }
 
-/** list JSON：{ sessions: [...] }，每项含全部列字段与元数据可用性标记。 */
+/** list JSON：{ sessions, coverage }，每项含全部列字段与元数据可用性标记。 */
 export function renderListJson(outcome: ListOutcome): string {
-  return `${JSON.stringify({ sessions: outcome.entries.map(entryToJson) }, null, 2)}\n`;
+  return `${JSON.stringify({ sessions: outcome.entries.map(entryToJson), coverage: outcome.coverage }, null, 2)}\n`;
 }
 
 // ------------------------- show -------------------------
@@ -427,93 +456,197 @@ function fencedItem(
   return [labelLine(base, event, options.headers), fenceBlock(payloadRaw)];
 }
 
-function renderTimelineMd(
-  node: SessionNode,
+/**
+ * 事件所属轮次：优先取 `data.turn`；缺失时沿用"当前轮次"，由 `turn/start` 推进
+ * （缺失 `data.turn` 的 `turn/start` 以计数 +1 推进）。与 `computeTurns` 同口径，
+ * 避免同一事件在时间线与轮次大纲里归属不同轮次。
+ * 首个 `turn/start` 之前的事件（权限、会话标题等）不归属任何轮次，返回 undefined。
+ */
+function eventTurnOf(
+  event: EventRecord,
+  currentTurn: number,
+  previousTurnStarts: number,
+): number | undefined {
+  const explicit = readNumber(asRecord(event.data) ?? {}, "turn");
+  if (explicit !== undefined) return explicit;
+  if (isTurnStart(event)) return previousTurnStarts + 1;
+  return currentTurn === 0 ? undefined : currentTurn;
+}
+
+function isTurnStart(event: EventRecord): boolean {
+  return eventType(event) === "turn/start";
+}
+
+/**
+ * 依 `--turn`／`--seq` 筛选事件序列（交集语义，区间含端点）。
+ *
+ * 语义分层的理由：范围选择只改变"呈现哪些事件"，不改变会话统计——KV 块与轮次大纲仍描述整会话，
+ * 并由 `filterSummaryMd` 显式给出"显示 M 条事件（共 N 个事件）"，避免调用方把局部读成整体。
+ */
+export function selectEvents(
+  events: readonly EventRecord[],
   options: ShowMdOptions,
-): { sections: string[]; hidden: HiddenCounts } {
-  const sections: string[] = [];
-  const hidden: HiddenCounts = { reasoning: 0, tools: 0, events: 0 };
-  for (const event of node.file.decoded.events) {
-    const type = eventType(event);
-    const data = asRecord(event.data) ?? {};
-    if (type === "user/message") {
-      if (options.role === "assistant") continue;
-      const text = textFromBlocks(data.content);
-      if (text.length > 0) {
-        sections.push(
-          ...fencedItem("**用户**", event, options, truncateText(text, options.truncate)),
-        );
-      }
-    } else if (type === "assistant/message") {
-      if (options.role === "user") continue;
-      const content = asRecord(data.message)?.content;
-      const text = textFromBlocks(content);
-      if (text.length > 0) {
-        sections.push(
-          ...fencedItem("**助手**", event, options, truncateText(text, options.truncate)),
-        );
-      }
-      const reasoning = reasoningFromBlocks(content);
-      if (reasoning.length > 0) {
-        if (options.thinking) {
-          sections.push(
-            ...fencedItem("**推理**", event, options, truncateText(reasoning, options.truncate)),
-          );
-        } else {
-          hidden.reasoning += 1;
-        }
-      }
-    } else if (type === "tool/call") {
-      if (options.tools) {
-        const name = readString(data, "name") ?? EMPTY_VALUE;
-        const argumentsText = readString(data, "arguments") ?? "";
-        sections.push(
-          ...fencedItem(
-            `**工具调用**（${inlineValue(name)}）`,
-            event,
-            options,
-            truncateText(argumentsText, options.truncate),
-          ),
-        );
-      } else {
-        hidden.tools += 1;
-      }
-    } else if (type === "tool/result") {
-      if (options.tools) {
-        const isError = asRecord(data.error) !== undefined;
-        sections.push(
-          ...fencedItem(
-            `**工具结果**${isError ? "（错误）" : ""}`,
-            event,
-            options,
-            truncateText(toolResultText(event), options.truncate),
-          ),
-        );
-      } else {
-        hidden.tools += 1;
-      }
-    } else if (type === "system/message") {
-      if (options.events) {
-        sections.push(
-          ...fencedItem(
-            "**系统消息**",
-            event,
-            options,
-            truncateText(textFromBlocks(asRecord(data.message)?.content), options.truncate),
-          ),
-        );
-      } else {
-        hidden.events += 1;
-      }
-    } else if (options.events) {
-      const payload = truncateText(eventDataJson(event), EVENT_DATA_LIMIT);
-      sections.push(
-        `${labelLine("**事件**", event, options.headers)}${inlineValue(type)} ${inlineValue(payload)}`,
-      );
-    } else {
-      hidden.events += 1;
+): EventRecord[] {
+  const turnRange = options.turnRange;
+  const seqRange = options.seqRange;
+  if (turnRange === null && seqRange === null) return [...events];
+  const selected: EventRecord[] = [];
+  let currentTurn = 0;
+  let turnStarts = 0;
+  for (const event of events) {
+    const turnStart = isTurnStart(event);
+    const turn = eventTurnOf(event, currentTurn, turnStarts);
+    if (turnStart) turnStarts += 1;
+    if (turn !== undefined) currentTurn = turn;
+    if (turnRange !== null) {
+      if (turn === undefined || turn < turnRange.from || turn > turnRange.to) continue;
     }
+    if (seqRange !== null) {
+      const seq = eventSeq(event);
+      if (seq === undefined || seq < seqRange.from || seq > seqRange.to) continue;
+    }
+    selected.push(event);
   }
+  return selected;
+}
+
+/**
+ * 筛选说明行：仅在筛选生效时输出。三个数字必须同时给出，调用方才能区分
+ * "筛选后的事件数"与"最终显示的时间线条目数"，不会把局部读成整体：
+ * - `displayed`：最终写入产物的时间线条目数（已受 head/tail 影响）；
+ * - `selected`：范围筛选（turn/seq）后的事件数；
+ * - `total`：整会话事件数。
+ */
+function filterSummaryMd(
+  options: ShowMdOptions,
+  displayed: number,
+  selected: number,
+  total: number,
+): string | null {
+  const parts: string[] = [];
+  if (options.turnRange !== null) {
+    parts.push(`turn ${options.turnRange.from}-${options.turnRange.to}`);
+  }
+  if (options.seqRange !== null) parts.push(`seq ${options.seqRange.from}-${options.seqRange.to}`);
+  if (options.head > 0) parts.push(`首 ${options.head} 条`);
+  if (options.tail > 0) parts.push(`末 ${options.tail} 条`);
+  if (parts.length === 0) return null;
+  return `筛选：${parts.join("；")}；显示 ${displayed} 条时间线条目（区间内事件 ${selected} 个，共 ${total} 个事件）`;
+}
+
+/**
+ * 渲染一条时间线条目（标签行 ＋ 正文载体），或计入隐藏计数。
+ *
+ * 拆分动机：`--head`/`--tail` 按"呈现条目数"截取，而不是按"事件数"截取——`turn/start`、
+ * `turn/end`、`session/title` 等事件不产生条目，若先按事件截取会出现"要 5 条却一条都没显示"。
+ */
+function timelineItem(
+  event: EventRecord,
+  options: ShowMdOptions,
+  hidden: HiddenCounts,
+): string[] | null {
+  const type = eventType(event);
+  const data = asRecord(event.data) ?? {};
+  if (type === "user/message") {
+    if (options.role === "assistant") return null;
+    const text = textFromBlocks(data.content);
+    if (text.length === 0) return null;
+    return fencedItem("**用户**", event, options, truncateText(text, options.truncate));
+  }
+  if (type === "assistant/message") {
+    if (options.role === "user") return null;
+    const content = asRecord(data.message)?.content;
+    const items: string[] = [];
+    const text = textFromBlocks(content);
+    if (text.length > 0) {
+      items.push(...fencedItem("**助手**", event, options, truncateText(text, options.truncate)));
+    }
+    const reasoning = reasoningFromBlocks(content);
+    if (reasoning.length > 0) {
+      if (options.thinking) {
+        items.push(
+          ...fencedItem("**推理**", event, options, truncateText(reasoning, options.truncate)),
+        );
+      } else {
+        hidden.reasoning += 1;
+      }
+    }
+    return items.length > 0 ? items : null;
+  }
+  if (type === "tool/call") {
+    if (!options.tools) {
+      hidden.tools += 1;
+      return null;
+    }
+    const name = readString(data, "name") ?? EMPTY_VALUE;
+    const argumentsText = readString(data, "arguments") ?? "";
+    return fencedItem(
+      `**工具调用**（${inlineValue(name)}）`,
+      event,
+      options,
+      truncateText(argumentsText, options.truncate),
+    );
+  }
+  if (type === "tool/result") {
+    if (!options.tools) {
+      hidden.tools += 1;
+      return null;
+    }
+    const isError = asRecord(data.error) !== undefined;
+    return fencedItem(
+      `**工具结果**${isError ? "（错误）" : ""}`,
+      event,
+      options,
+      truncateText(toolResultText(event), options.truncate),
+    );
+  }
+  if (type === "system/message") {
+    if (!options.events) {
+      hidden.events += 1;
+      return null;
+    }
+    return fencedItem(
+      "**系统消息**",
+      event,
+      options,
+      truncateText(textFromBlocks(asRecord(data.message)?.content), options.truncate),
+    );
+  }
+  if (!options.events) {
+    hidden.events += 1;
+    return null;
+  }
+  // 事件载荷的截断口径与其它文本一致：由 `--truncate` 单独决定，`0` 即不截断。
+  // 此前固定截到 200 字符且不读 `--truncate`，使"默认不截断"的契约在事件视图下静默失效。
+  const payload = truncateText(eventDataJson(event), options.truncate);
+  return [
+    `${labelLine("**事件**", event, options.headers)}${inlineValue(type)} ${inlineValue(payload)}`,
+  ];
+}
+
+/**
+ * 渲染时间线：按事件顺序产出条目；`limitItems` 为真时按 `head`/`tail` 对**条目序列**做首尾截取。
+ * `sections.length` 是最终显示的条目数，供筛选说明行如实标注。
+ * `head` 与 `tail` 互斥由 CLI 校验保证，此处按 head 优先处理，不做静默合并。
+ */
+function renderTimelineMd(
+  options: ShowMdOptions,
+  events: readonly EventRecord[],
+  limitItems: boolean,
+): { sections: string[]; hidden: HiddenCounts } {
+  const hidden: HiddenCounts = { reasoning: 0, tools: 0, events: 0 };
+  const items: string[] = [];
+  for (const event of events) {
+    const item = timelineItem(event, options, hidden);
+    if (item !== null) items.push(...item);
+  }
+  if (!limitItems) return { sections: items, hidden };
+  const sections =
+    options.head > 0
+      ? items.slice(0, options.head)
+      : options.tail > 0
+        ? items.slice(Math.max(0, items.length - options.tail))
+        : items;
   return { sections, hidden };
 }
 
@@ -553,12 +686,17 @@ function outlineSections(node: SessionNode, options: ShowMdOptions): string[] {
 /**
  * 单节点渲染：KV 块 →（摘要模式）轮次大纲 /（默认）时间线 → 子代理块（H2 序列、路径编号唯一）。
  * 主节点区块为 H2，子节点内容为各自 H2 下的 H3（MD024 同级唯一由路径编号保证）。
+ *
+ * 范围语义：`--turn`/`--seq` 作用于每个节点（含子代理，各自以自身事件流计轮次）；
+ * `--head`/`--tail` 只作用于根节点——子代理被 `--subagents` 显式要求导出，静默截掉它们会让
+ * "导出了全部子代理"这一预期落空，且产物中无从察觉。该不对称由 SKILL.md 显式声明。
  */
 function renderNodeSections(
   node: SessionNode,
   options: ShowMdOptions,
   level: number,
   childPath: string,
+  isRoot: boolean,
 ): string[] {
   const sections: string[] = [nodeKvBlock(node)];
   if (options.summary) {
@@ -566,8 +704,16 @@ function renderNodeSections(
     sections.push(...outlineSections(node, options));
   } else {
     sections.push(`${"#".repeat(level)} 时间线`);
-    const timeline = renderTimelineMd(node, options);
+    const ranged = selectEvents(node.file.decoded.events, options);
+    const timeline = renderTimelineMd(options, ranged, isRoot);
     sections.push(...timeline.sections);
+    const filterText = filterSummaryMd(
+      options,
+      timeline.sections.length,
+      ranged.length,
+      node.file.decoded.events.length,
+    );
+    if (filterText !== null) sections.push(filterText);
     const summaryText = hiddenSummaryMd(timeline.hidden, options);
     if (summaryText.length > 0) sections.push(summaryText);
   }
@@ -575,7 +721,7 @@ function renderNodeSections(
     node.children.forEach((child, index) => {
       const path = childPath.length === 0 ? String(index + 1) : `${childPath}.${index + 1}`;
       sections.push(`## 子代理 ${path}`);
-      sections.push(...renderNodeSections(child, options, 3, path));
+      sections.push(...renderNodeSections(child, options, 3, path, false));
     });
   }
   return sections;
@@ -583,11 +729,11 @@ function renderNodeSections(
 
 /** show Markdown：头部 KV + 时间线/轮次大纲；子代理可选追加。 */
 export function renderShowMd(node: SessionNode, options: ShowMdOptions): RenderedOutput {
-  const sections = ["# 会话记录", ...renderNodeSections(node, options, 2, "")];
+  const sections = ["# 会话记录", ...renderNodeSections(node, options, 2, "", true)];
   const stats = computeEventStats(node.file);
   const summary = options.summary
-    ? `会话 ${shortSessionId(node.entry.id)}（摘要）；轮次 ${stats.turns} 个`
-    : `会话 ${shortSessionId(node.entry.id)}；事件 ${node.file.decoded.events.length} 个` +
+    ? `会话 ${node.entry.id}（摘要）；轮次 ${stats.turns} 个`
+    : `会话 ${node.entry.id}；事件 ${node.file.decoded.events.length} 个` +
       (options.subagents ? `；子代理 ${countNodes(node) - 1} 个` : "");
   return { content: assembleDocument(sections), summary };
 }
@@ -734,30 +880,47 @@ export function renderShowJsonl(node: SessionNode): RenderedOutput {
   }
   return {
     content: `${lines.join("\n")}\n`,
-    summary: `会话 ${shortSessionId(node.entry.id)}；事件 ${node.file.decoded.events.length} 个`,
+    summary: `会话 ${node.entry.id}；事件 ${node.file.decoded.events.length} 个`,
   };
 }
 
 // ------------------------- search -------------------------
 
-/** search Markdown：命中列表（单行载体）+ 全量总命中数（截断时标注）。 */
+/** 检索范围的覆盖面描述（使"0 命中"不被误读为"不存在"：只有 all 档才覆盖任意事件记录）。 */
+const SCOPE_COVERAGE_TEXT: Record<SearchOutcome["scope"], string> = {
+  text: "仅用户/助手正文",
+  tools: "另含工具参数与结果",
+  all: "穷尽（另含推理/系统/压缩/命令/标题请求/web 请求/交付物/待办/代理信箱与每条事件载荷）",
+};
+
+/**
+ * search Markdown：命中列表（单行载体）+ 统计口径 + 覆盖声明。
+ * 统计口径含 `--scope` 取值、其覆盖面描述与"命中总数是否为精确值"，
+ * 使调用方无需读源码即可判断"0 命中"能否当作"不存在"。
+ */
 export function renderSearchMd(outcome: SearchOutcome): RenderedOutput {
   const sections = ["# 检索结果"];
   for (const hit of outcome.hits) {
     const seqText = hit.seq === null ? EMPTY_VALUE : String(hit.seq);
     sections.push(
-      `- ${inlineValue(hit.shortId)}（seq ${seqText}）${inlineValue(hit.label)}：${inlineValue(hit.excerpt)}`,
+      `- ${inlineValue(hit.sessionId)}（seq ${seqText}）${inlineValue(hit.label)}：${inlineValue(hit.excerpt)}`,
     );
   }
-  const truncatedNote = outcome.truncated ? `；已截断显示 ${outcome.hits.length} 条` : "";
+  const truncatedNote = outcome.truncated
+    ? `；已截断显示 ${outcome.hits.length} 条（--limit 0 显示全部）`
+    : "";
   sections.push(`命中总数：${outcome.totalHits}${truncatedNote}`);
+  sections.push(
+    `检索范围：${outcome.scope}（${SCOPE_COVERAGE_TEXT[outcome.scope]}）；命中总数 ${outcome.totalHits} 为${outcome.totalIsExact ? "精确值" : "下界"}`,
+  );
+  sections.push(...coverageSections(outcome.coverage));
   return {
     content: assembleDocument(sections),
     summary: `命中 ${outcome.totalHits} 处，显示 ${outcome.hits.length} 处`,
   };
 }
 
-/** search JSON：{ matches, total, truncated }。 */
+/** search JSON：{ matches, total, truncated, scope, totalIsExact, coverage }。 */
 export function renderSearchJson(outcome: SearchOutcome): string {
   const document = {
     matches: outcome.hits.map((hit) => ({
@@ -769,6 +932,9 @@ export function renderSearchJson(outcome: SearchOutcome): string {
     })),
     total: outcome.totalHits,
     truncated: outcome.truncated,
+    scope: outcome.scope,
+    totalIsExact: outcome.totalIsExact,
+    coverage: outcome.coverage,
   };
   return `${JSON.stringify(document, null, 2)}\n`;
 }
@@ -788,7 +954,7 @@ export function formatStatsSummary(outcome: StatsOutcome): string {
       : single.turns.value === null
         ? EMPTY_VALUE
         : String(single.turns.value);
-    return `会话 ${shortSessionId(single.id)}；轮次 ${turns}；工具调用 ${single.toolCalls}`;
+    return `会话 ${single.id}；轮次 ${turns}；工具调用 ${single.toolCalls}`;
   }
   const excluded =
     outcome.excludedMetricSessions > 0
@@ -824,6 +990,7 @@ export function renderStatsMd(outcome: StatsOutcome): RenderedOutput {
         `元数据不可用：${single.metadataReasons.map((reason) => inlineValue(reason)).join("；")}`,
       );
     }
+    sections.push(...coverageSections(outcome.coverage));
     return {
       content: assembleDocument(sections),
       summary: formatStatsSummary(outcome),
@@ -855,6 +1022,7 @@ export function renderStatsMd(outcome: StatsOutcome): RenderedOutput {
         .join("；")}）`,
     );
   }
+  sections.push(...coverageSections(outcome.coverage));
   return {
     content: assembleDocument(sections),
     summary: formatStatsSummary(outcome),
@@ -885,6 +1053,7 @@ export function renderStatsJson(outcome: StatsOutcome): string {
         sizeBytes: single.sizeBytes,
         metadata: { available: single.metadataAvailable, reasons: single.metadataReasons },
       },
+      coverage: outcome.coverage,
     };
     return `${JSON.stringify(document, null, 2)}\n`;
   }
@@ -900,6 +1069,7 @@ export function renderStatsJson(outcome: StatsOutcome): string {
     latestActivityAt: outcome.latestActivityAt,
     totalSizeBytes: outcome.totalSizeBytes,
     unavailable: outcome.unavailable,
+    coverage: outcome.coverage,
   };
   return `${JSON.stringify(document, null, 2)}\n`;
 }
@@ -930,13 +1100,14 @@ export function renderCheckMd(outcome: CheckOutcome): RenderedOutput {
   sections.push(
     outcome.anomalyCount === 0 ? "结论：无异常" : `结论：发现 ${outcome.anomalyCount} 项异常`,
   );
+  sections.push(...coverageSections(outcome.coverage));
   return {
     content: assembleDocument(sections),
     summary: `会话 ${outcome.sessions.length} 个；异常 ${outcome.anomalyCount} 项`,
   };
 }
 
-/** check JSON：{ sessions, anomalyCount }。 */
+/** check JSON：{ sessions, anomalyCount, coverage }。 */
 export function renderCheckJson(outcome: CheckOutcome): string {
   const document = {
     sessions: outcome.sessions.map((session) => ({
@@ -953,6 +1124,7 @@ export function renderCheckJson(outcome: CheckOutcome): string {
       anomalies: session.anomalies,
     })),
     anomalyCount: outcome.anomalyCount,
+    coverage: outcome.coverage,
   };
   return `${JSON.stringify(document, null, 2)}\n`;
 }

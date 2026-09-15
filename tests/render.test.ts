@@ -33,6 +33,7 @@ import type {
   MetadataView,
   ModelView,
   SearchOutcome,
+  SessionCoverage,
   SessionEntry,
   SessionNode,
   SingleSessionStats,
@@ -72,7 +73,6 @@ function listEntry(
 ): ListEntry {
   return {
     id,
-    shortId: id.slice(0, 12),
     type: "main",
     cwd: "C:\\Users\\ZHANG\\user_projects",
     workspaceTitle: "user_projects",
@@ -81,6 +81,17 @@ function listEntry(
     sizeBytes: 2048,
     metadata: meta,
     ...overrides,
+  };
+}
+
+/** 覆盖声明：默认"扫描=纳入、无排除"；测试按需注入排除项。 */
+function coverage(overrides: Partial<SessionCoverage> = {}): SessionCoverage {
+  const includedCount = overrides.includedCount ?? 0;
+  const excluded = overrides.excluded ?? [];
+  return {
+    scannedCount: overrides.scannedCount ?? includedCount + excluded.length,
+    includedCount,
+    excluded,
   };
 }
 
@@ -197,6 +208,10 @@ function showOptions(overrides: Partial<ShowMdOptions> = {}): ShowMdOptions {
     headers: false,
     truncate: 0,
     subagents: false,
+    turnRange: null,
+    seqRange: null,
+    head: 0,
+    tail: 0,
     ...overrides,
   };
 }
@@ -274,7 +289,7 @@ describe("lint-safe 载体与归一化", () => {
 });
 
 describe("renderListMd / renderListJson", () => {
-  it("精简列：表头/分隔行/数据行 + 页脚（含隐藏空会话与元数据不可用说明）", () => {
+  it("精简列：表头/分隔行/数据行 + 页脚（含隐藏空会话、元数据不可用与覆盖声明）", () => {
     const outcome: ListOutcome = {
       entries: [
         listEntry("session-aaa-01"),
@@ -291,22 +306,33 @@ describe("renderListMd / renderListJson", () => {
       matchedCount: 2,
       scannedCount: 3,
       hiddenBlankCount: 1,
+      coverage: coverage({
+        includedCount: 2,
+        excluded: [{ id: "session-ccc-03", reason: "header 分类 malformed" }],
+      }),
     };
     const rendered = renderListMd(outcome, { full: false });
     assertDocumentShape(rendered.content);
     assert.equal(rendered.content.startsWith("# 会话列表\n\n"), true);
     assert.equal(
       rendered.content.includes(
-        "| 短 ID | 标题 | 工作区 | 最近活动 | 轮次 | 类型 | 大小 |\n| --- | --- | --- | --- | --- | --- | --- |",
+        "| ID | 标题 | 工作区 | 最近活动 | 轮次 | 类型 | 大小 |\n| --- | --- | --- | --- | --- | --- | --- |",
       ),
       true,
     );
-    assert.equal(rendered.content.includes("`session-aaa-`"), true);
+    // 显示值必须与可传值同源：输出完整 id（此前输出 12 字符截断值，子代理 id 会因此歧义）。
+    assert.equal(rendered.content.includes("| `session-aaa-01` |"), true);
+    assert.equal(rendered.content.includes("| `session-bbb-02` |"), true);
     assert.equal(rendered.content.includes("`测试标题`"), true);
     assert.equal(rendered.content.includes("合计：匹配 2 个会话，显示 2 个（共扫描 3 个）"), true);
     assert.equal(rendered.content.includes("已隐藏空会话 1 个（--include-blank 显示）"), true);
     assert.equal(
       rendered.content.includes("元数据不可用：`session-bbb-02`（`projcache 记录缺失`）"),
+      true,
+    );
+    assert.equal(rendered.content.includes("扫描会话 3 个；纳入 2 个；排除 1 个"), true);
+    assert.equal(
+      rendered.content.includes("排除会话：`session-ccc-03`（`header 分类 malformed`）"),
       true,
     );
     assert.equal(rendered.summary, "匹配会话 2 个，显示 2 个");
@@ -318,6 +344,7 @@ describe("renderListMd / renderListJson", () => {
       matchedCount: 1,
       scannedCount: 1,
       hiddenBlankCount: 0,
+      coverage: coverage({ includedCount: 1 }),
     };
     assert.equal(renderListMd(piped, { full: false }).content.includes("`a\\|b`"), true);
 
@@ -326,10 +353,12 @@ describe("renderListMd / renderListJson", () => {
       matchedCount: 0,
       scannedCount: 0,
       hiddenBlankCount: 0,
+      coverage: coverage(),
     };
     const rendered = renderListMd(empty, { full: false });
     assertDocumentShape(rendered.content);
     assert.equal(rendered.content.includes("合计：匹配 0 个会话，显示 0 个（共扫描 0 个）"), true);
+    assert.equal(rendered.content.includes("扫描会话 0 个；纳入 0 个；排除 0 个"), true);
   });
 
   it("--full：列表形态（首行 + 两空格缩进续行）", () => {
@@ -338,12 +367,12 @@ describe("renderListMd / renderListJson", () => {
       matchedCount: 1,
       scannedCount: 1,
       hiddenBlankCount: 0,
+      coverage: coverage({ includedCount: 1 }),
     };
     const rendered = renderListMd(outcome, { full: true });
     assertDocumentShape(rendered.content);
     assert.equal(rendered.content.includes("# 会话列表（完整）"), true);
-    assert.equal(rendered.content.includes("- `session-aaa-`：`测试标题`（主）"), true);
-    assert.equal(rendered.content.includes("  **全 ID**：`session-aaa-01`"), true);
+    assert.equal(rendered.content.includes("- `session-aaa-01`：`测试标题`（主）"), true);
     assert.equal(rendered.content.includes("  **工作区**：`user_projects`"), true);
     assert.match(rendered.content, /^ {2}\*\*最近活动\*\*：\d{4}-\d{2}-\d{2}T/mu);
     assert.equal(rendered.content.includes("  **轮次**：3"), true);
@@ -353,19 +382,24 @@ describe("renderListMd / renderListJson", () => {
     assert.equal(rendered.content.includes("  **元数据**：projcache"), true);
   });
 
-  it("JSON 含全部列字段与可用性标记", () => {
+  it("JSON 含全部列字段、可用性标记与覆盖声明", () => {
     const outcome: ListOutcome = {
       entries: [listEntry("session-aaa-01")],
       matchedCount: 1,
       scannedCount: 1,
       hiddenBlankCount: 0,
+      coverage: coverage({ includedCount: 1 }),
     };
     const document = JSON.parse(renderListJson(outcome)) as {
       sessions: Array<Record<string, unknown>>;
+      coverage: SessionCoverage;
     };
     assert.equal(document.sessions.length, 1);
+    assert.equal(document.sessions[0].id, "session-aaa-01");
+    assert.equal("shortId" in document.sessions[0], false);
     assert.equal(document.sessions[0].title, "测试标题");
     assert.deepEqual(document.sessions[0].metadata, { available: true, reasons: [] });
+    assert.deepEqual(document.coverage, { scannedCount: 1, includedCount: 1, excluded: [] });
   });
 });
 
@@ -539,7 +573,6 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
       hits: [
         {
           sessionId: "session-aaa-01",
-          shortId: "session-aaa-",
           seq: 3,
           time: 10,
           label: "user",
@@ -549,16 +582,52 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
       totalHits: 4,
       scannedSessions: 2,
       truncated: true,
+      searchedSessions: 2,
+      scope: "all",
+      totalIsExact: true,
+      coverage: coverage({ includedCount: 2 }),
     };
     const md = renderSearchMd(outcome);
     assertDocumentShape(md.content);
     assert.equal(md.content.startsWith("# 检索结果\n\n"), true);
-    assert.equal(md.content.includes("- `session-aaa-`（seq 3）`user`：`…命中片段…`"), true);
-    assert.equal(md.content.includes("命中总数：4；已截断显示 1 条"), true);
+    assert.equal(md.content.includes("- `session-aaa-01`（seq 3）`user`：`…命中片段…`"), true);
+    assert.equal(md.content.includes("命中总数：4；已截断显示 1 条（--limit 0 显示全部）"), true);
+    assert.equal(
+      md.content.includes(
+        "检索范围：all（穷尽（另含推理/系统/压缩/命令/标题请求/web 请求/交付物/待办/代理信箱与每条事件载荷））；命中总数 4 为精确值",
+      ),
+      true,
+    );
+    assert.equal(md.content.includes("扫描会话 2 个；纳入 2 个；排除 0 个"), true);
     assert.equal(md.summary, "命中 4 处，显示 1 处");
     const document = JSON.parse(renderSearchJson(outcome)) as Record<string, unknown>;
     assert.equal(document.total, 4);
     assert.equal(document.truncated, true);
+    assert.equal(document.scope, "all");
+    assert.equal(document.totalIsExact, true);
+    assert.deepEqual(document.coverage, { scannedCount: 2, includedCount: 2, excluded: [] });
+  });
+
+  it("search 未截断时无截断标注，且排除项逐条列出", () => {
+    const outcome: SearchOutcome = {
+      hits: [],
+      totalHits: 0,
+      scannedSessions: 1,
+      truncated: false,
+      searchedSessions: 1,
+      scope: "text",
+      totalIsExact: true,
+      coverage: coverage({
+        includedCount: 1,
+        excluded: [{ id: "session-bad-09", reason: "解码失败" }],
+      }),
+    };
+    const md = renderSearchMd(outcome);
+    assertDocumentShape(md.content);
+    assert.equal(md.content.includes("命中总数：0\n"), true);
+    assert.equal(md.content.includes("已截断显示"), false);
+    assert.equal(md.content.includes("扫描会话 2 个；纳入 1 个；排除 1 个"), true);
+    assert.equal(md.content.includes("排除会话：`session-bad-09`（`解码失败`）"), true);
   });
 
   it("stats 全局/单会话 md 与 JSON", () => {
@@ -580,6 +649,7 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
       totalSizeBytes: 2048,
       unavailable: [{ id: "session-bbb-02", reasons: ["projcache 记录缺失"] }],
       excludedMetricSessions: 0,
+      coverage: coverage({ includedCount: 3 }),
       single: null,
     };
     const md = renderStatsMd(global);
@@ -632,7 +702,7 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
     const singleMd = renderStatsMd(single);
     assertDocumentShape(singleMd.content);
     assert.equal(singleMd.content.includes("- 标题：`单会话标题`"), true);
-    assert.equal(singleMd.summary, "会话 session-aaa-；轮次 2；工具调用 1");
+    assert.equal(singleMd.summary, "会话 session-aaa-01；轮次 2；工具调用 1");
     const singleJson = JSON.parse(renderStatsJson(single)) as { session: Record<string, unknown> };
     assert.equal(singleJson.session.id, "session-aaa-01");
   });
@@ -670,11 +740,12 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
       totalSizeBytes: 0,
       unavailable: [],
       excludedMetricSessions: 0,
+      coverage: coverage({ includedCount: 1 }),
       single: singleStats,
     };
     const unavailableMd = renderStatsMd(base);
     assert.equal(unavailableMd.content.includes("- 空会话：元数据不可用"), true);
-    assert.equal(unavailableMd.summary, "会话 session-aaa-；轮次 元数据不可用；工具调用 0");
+    assert.equal(unavailableMd.summary, "会话 session-aaa-01；轮次 元数据不可用；工具调用 0");
 
     const nullStats: SingleSessionStats = {
       ...singleStats,
@@ -683,7 +754,7 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
     };
     const nullMd = renderStatsMd({ ...base, single: nullStats });
     assert.equal(nullMd.content.includes("- 空会话：-"), true);
-    assert.equal(nullMd.summary, "会话 session-aaa-；轮次 -；工具调用 0");
+    assert.equal(nullMd.summary, "会话 session-aaa-01；轮次 -；工具调用 0");
   });
 
   it("check md 与 JSON（含异常展开与结论行）", () => {
@@ -717,6 +788,7 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
         },
       ],
       anomalyCount: 1,
+      coverage: coverage({ includedCount: 2 }),
     };
     const md = renderCheckMd(outcome);
     assertDocumentShape(md.content);
@@ -729,11 +801,16 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
     );
     assert.equal(md.content.includes("异常详情：`结构损坏: 帧魔数无效`"), true);
     assert.equal(md.content.includes("结论：发现 1 项异常"), true);
+    assert.equal(md.content.includes("扫描会话 2 个；纳入 2 个；排除 0 个"), true);
     assert.equal(md.summary, "会话 2 个；异常 1 项");
-    const json = JSON.parse(renderCheckJson(outcome)) as { anomalyCount: number };
+    const json = JSON.parse(renderCheckJson(outcome)) as {
+      anomalyCount: number;
+      coverage: SessionCoverage;
+    };
     assert.equal(json.anomalyCount, 1);
+    assert.deepEqual(json.coverage, { scannedCount: 2, includedCount: 2, excluded: [] });
 
-    const clean = renderCheckMd({ sessions: [], anomalyCount: 0 });
+    const clean = renderCheckMd({ sessions: [], anomalyCount: 0, coverage: coverage() });
     assert.equal(clean.content.includes("结论：无异常"), true);
   });
 });
@@ -779,6 +856,7 @@ describe("render 边界与分支", () => {
       matchedCount: 1,
       scannedCount: 1,
       hiddenBlankCount: 0,
+      coverage: coverage({ includedCount: 1 }),
     };
     const rendered = renderListMd(outcome, { full: true });
     assert.equal(rendered.content.includes("元数据不可用"), true);
@@ -799,6 +877,7 @@ describe("render 边界与分支", () => {
       totalSizeBytes: 0,
       unavailable: [],
       excludedMetricSessions: 0,
+      coverage: coverage({ includedCount: 1 }),
       single: {
         id: "session-aaa-01",
         title: field<string>(null, true),
@@ -838,7 +917,6 @@ describe("render 边界与分支", () => {
       hits: [
         {
           sessionId: "session-aaa-01",
-          shortId: "session-aaa-",
           seq: 1,
           time: 10,
           label: "user",
@@ -848,6 +926,10 @@ describe("render 边界与分支", () => {
       totalHits: 1,
       scannedSessions: 1,
       truncated: false,
+      searchedSessions: 1,
+      scope: "text",
+      totalIsExact: true,
+      coverage: coverage({ includedCount: 1 }),
     };
     const md = renderSearchMd(outcome);
     assert.equal(md.content.includes("已截断"), false);
@@ -862,11 +944,131 @@ describe("render 边界与分支", () => {
       matchedCount: 1,
       scannedCount: 1,
       hiddenBlankCount: 0,
+      coverage: coverage({ includedCount: 1 }),
     };
     const rendered = renderListMd(outcome, { full: false });
     assert.equal(
       rendered.content.includes("元数据不可用：`session-ccc-03`（`identity 不符`）"),
       true,
     );
+  });
+
+  it("show 范围筛选：turn/seq 区间、首尾截取与筛选说明行", () => {
+    const events: Record<string, unknown>[] = [
+      { type: "turn/start", seq: 0, time: 10, data: { turn: 1 } },
+      {
+        type: "user/message",
+        seq: 1,
+        time: 11,
+        data: { role: "user", content: [{ type: "text", text: "T1-PROMPT" }] },
+      },
+      { type: "turn/end", seq: 2, time: 12, data: { turn: 1 } },
+      { type: "turn/start", seq: 3, time: 13, data: { turn: 2 } },
+      {
+        type: "user/message",
+        seq: 4,
+        time: 14,
+        data: { role: "user", content: [{ type: "text", text: "T2-PROMPT" }] },
+      },
+      { type: "turn/end", seq: 5, time: 15, data: { turn: 2 } },
+    ];
+    const turnFiltered = renderShowMd(
+      node([], events),
+      showOptions({ turnRange: { from: 2, to: 2 } }),
+    );
+    assertDocumentShape(turnFiltered.content);
+    assert.equal(turnFiltered.content.includes("T2-PROMPT"), true);
+    assert.equal(turnFiltered.content.includes("T1-PROMPT"), false);
+    // 条目数按"已写入产物的 md 行/段"计（标签行 + 围栏 + 载荷），因此一条消息对应 3 条条目。
+    assert.equal(
+      turnFiltered.content.includes(
+        "筛选：turn 2-2；显示 2 条时间线条目（区间内事件 3 个，共 6 个事件）",
+      ),
+      true,
+    );
+
+    const seqFiltered = renderShowMd(
+      node([], events),
+      showOptions({ seqRange: { from: 1, to: 4 } }),
+    );
+    assert.equal(seqFiltered.content.includes("T1-PROMPT"), true);
+    assert.equal(seqFiltered.content.includes("T2-PROMPT"), true);
+    assert.equal(
+      seqFiltered.content.includes(
+        "筛选：seq 1-4；显示 4 条时间线条目（区间内事件 4 个，共 6 个事件）",
+      ),
+      true,
+    );
+
+    const seqNarrow = renderShowMd(node([], events), showOptions({ seqRange: { from: 0, to: 1 } }));
+    assert.equal(seqNarrow.content.includes("T1-PROMPT"), true);
+    assert.equal(seqNarrow.content.includes("T2-PROMPT"), false);
+    assert.equal(
+      seqNarrow.content.includes(
+        "筛选：seq 0-1；显示 2 条时间线条目（区间内事件 2 个，共 6 个事件）",
+      ),
+      true,
+    );
+
+    const headFiltered = renderShowMd(node([], events), showOptions({ head: 1 }));
+    assert.equal(headFiltered.content.includes("T1-PROMPT"), false);
+    assert.equal(headFiltered.content.includes("**用户**："), true);
+    assert.equal(
+      headFiltered.content.includes(
+        "筛选：首 1 条；显示 1 条时间线条目（区间内事件 6 个，共 6 个事件）",
+      ),
+      true,
+    );
+
+    const tailFiltered = renderShowMd(node([], events), showOptions({ tail: 1 }));
+    // 末 1 条 = 最后一个条目（围栏块本身），因此只保留 T2 的正文载荷，标签行被截掉。
+    assert.equal(tailFiltered.content.includes("T2-PROMPT"), true);
+    assert.equal(tailFiltered.content.includes("T1-PROMPT"), false);
+    assert.equal(
+      tailFiltered.content.includes(
+        "筛选：末 1 条；显示 1 条时间线条目（区间内事件 6 个，共 6 个事件）",
+      ),
+      true,
+    );
+
+    const both = renderShowMd(
+      node([], events),
+      showOptions({ turnRange: { from: 1, to: 2 }, seqRange: { from: 4, to: 5 } }),
+    );
+    assert.equal(both.content.includes("T2-PROMPT"), true);
+    assert.equal(both.content.includes("T1-PROMPT"), false);
+  });
+
+  it("show 未筛选时不输出筛选说明行", () => {
+    const plain = renderShowMd(node(), showOptions());
+    assert.equal(plain.content.includes("筛选："), false);
+  });
+
+  it("事件载荷截断由 --truncate 决定：0 即不截断", () => {
+    const payload = "X".repeat(400);
+    const events: Record<string, unknown>[] = [
+      { type: "custom/unknown", seq: 0, time: 10, data: { blob: payload } },
+    ];
+    const unlimited = renderShowMd(node([], events), showOptions({ events: true }));
+    assert.equal(unlimited.content.includes(payload), true);
+    const limited = renderShowMd(node([], events), showOptions({ events: true, truncate: 10 }));
+    assert.equal(limited.content.includes(payload), false);
+    assert.equal(limited.content.includes("…"), true);
+  });
+
+  it("CR/CRLF 归一化为 LF（输出契约要求 LF-only）", () => {
+    assert.equal(normalizeTabs("a\r\nb"), "a\nb");
+    assert.equal(normalizeTabs("a\rb"), "a\nb");
+    const events: Record<string, unknown>[] = [
+      {
+        type: "user/message",
+        seq: 0,
+        time: 10,
+        data: { role: "user", content: [{ type: "text", text: "line1\r\nline2\rline3" }] },
+      },
+    ];
+    const rendered = renderShowMd(node([], events), showOptions());
+    assert.equal(rendered.content.includes("\r"), false);
+    assert.equal(rendered.content.includes("line1\nline2\nline3"), true);
   });
 });
