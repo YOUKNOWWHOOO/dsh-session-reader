@@ -866,7 +866,10 @@ describe("CLI stats", () => {
     ]) {
       const result = runCli(["stats", "fixture-main-01", ...baseArgs(HEALTHY_HOME), ...extra]);
       assert.equal(result.status, 2, `期望拒绝: ${extra.join(" ")}`);
-      assert.equal(result.stderr, `错误: 参数无效（单会话统计不接受范围过滤选项: ${extra[0]}）\n`);
+      assert.equal(
+        result.stderr,
+        `错误: 参数无效（单会话统计不接受范围过滤选项 ${extra[0]}；去掉 ${extra[0]}，或去掉会话目标改用全局聚合）\n`,
+      );
       assert.equal(result.stdout, "");
     }
     const globalFiltered = runCli(["stats", ...baseArgs(HEALTHY_HOME), "--origin", "main"]);
@@ -966,11 +969,11 @@ describe("默认参数组合（默认调用）", () => {
 describe("输出策略", () => {
   it("writeOutputFile：原子创建、拒绝覆盖、无临时残留", () => {
     const dir = join(TEMP_ROOT, "writer");
-    const first = writeOutputFile(dir, "sample.txt", "第一行\n第二行\n");
+    const first = writeOutputFile(dir, "sample.txt", "第一行\n第二行\n", false);
     assert.equal(first.ok, true);
     if (!first.ok) return;
     assert.equal(first.value.lines, 2);
-    const second = writeOutputFile(dir, "sample.txt", "覆盖尝试\n");
+    const second = writeOutputFile(dir, "sample.txt", "覆盖尝试\n", false);
     assert.equal(second.ok, false);
     if (second.ok) return;
     assert.equal(second.failure.classification, "输出文件已存在");
@@ -980,9 +983,23 @@ describe("输出策略", () => {
     assert.deepEqual(leftovers, []);
   });
 
+  it("writeOutputFile：overwrite=true 原子替换同名产物且无临时残留", () => {
+    const dir = join(TEMP_ROOT, "writer-overwrite");
+    const first = writeOutputFile(dir, "sample.txt", "第一版\n", true);
+    assert.equal(first.ok, true);
+    if (!first.ok) return;
+    const second = writeOutputFile(dir, "sample.txt", "第二版\n", true);
+    assert.equal(second.ok, true);
+    if (!second.ok) return;
+    assert.equal(second.value.path, first.value.path);
+    assert.equal(readFileSync(second.value.path, "utf8"), "第二版\n");
+    const leftovers = readdirSync(dir).filter((name) => name.endsWith(".tmp"));
+    assert.deepEqual(leftovers, []);
+  });
+
   it("writeOutputFile：输出目录不存在时递归创建", () => {
     const nested = join(TEMP_ROOT, "writer-nested", "a", "b");
-    const result = writeOutputFile(nested, "sample.txt", "内容\n");
+    const result = writeOutputFile(nested, "sample.txt", "内容\n", false);
     assert.equal(result.ok, true);
     if (!result.ok) return;
     assert.equal(existsSync(result.value.path), true);

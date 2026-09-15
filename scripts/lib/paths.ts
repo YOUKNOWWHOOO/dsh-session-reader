@@ -1,4 +1,5 @@
-// 路径、时间与输出命名工具：DSH_HOME 解析、sessions 根、lib 锚点、时间解析/格式化、路径归一化、输出文件名。
+// 路径、时间与输出命名工具：DSH_HOME 解析、sessions 根、lib 锚点、时间解析/格式化、路径归一化、
+// 输出文件名（时间戳命名与调用方指定的 basename）、`--name` 与区间参数校验。
 // 本模块不依赖其它 lib 模块（最底层），Result 类型在此定义并被其它模块复用。
 import { randomInt } from "node:crypto";
 import { join } from "node:path";
@@ -137,6 +138,119 @@ export function outputFileName(
   suffix: string,
 ): string {
   return `session-reader-${command}-${formatUtcStamp(date)}-${suffix}.${extensionForFormat(format)}`;
+}
+
+/** `--name` 允许的字符集：ASCII 字母数字、下划线、连字符、CJK 统一表意文字（含扩展 A 与兼容区）。 */
+const OUTPUT_NAME_PATTERN = /^[A-Za-z0-9_\-\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+$/u;
+
+/** Windows 保留设备名（不区分大小写；写入这些名字会被系统重定向到设备）。 */
+const RESERVED_DEVICE_NAMES = new Set([
+  "CON",
+  "PRN",
+  "AUX",
+  "NUL",
+  "COM1",
+  "COM2",
+  "COM3",
+  "COM4",
+  "COM5",
+  "COM6",
+  "COM7",
+  "COM8",
+  "COM9",
+  "LPT1",
+  "LPT2",
+  "LPT3",
+  "LPT4",
+  "LPT5",
+  "LPT6",
+  "LPT7",
+  "LPT8",
+  "LPT9",
+]);
+
+const OUTPUT_NAME_MAX_LENGTH = 64;
+
+/**
+ * 校验 `--name`（产物 basename，不含扩展名）。
+ *
+ * 设计约束：产物路径必须恒为 `--output-dir` 的直接子文件。因此字符集是白名单而非黑名单——
+ * `.` 被排除（否则 `a.md` 与 `--format` 派生的扩展名形成双重歧义，且 `..` 可越出输出目录），
+ * 路径分隔符与 `:` 被排除（否则可写到输出目录之外或落到 NTFS 备用数据流）。
+ * 保留设备名单独拒绝：它们不含非法字符，但会被 Windows 重定向到设备而静默丢失产物。
+ *
+ * @param value 调用方给出的 basename。
+ * @returns 合法返回 null，否则返回可在 stderr 括号说明中回显的错误文本（只含选项名与规则，不含调用方数据）。
+ */
+export function validateOutputName(value: string): string | null {
+  if (value.length === 0) return "--name 不能为空";
+  if (value.length > OUTPUT_NAME_MAX_LENGTH) {
+    return `--name 最长 ${OUTPUT_NAME_MAX_LENGTH} 个字符`;
+  }
+  if (!OUTPUT_NAME_PATTERN.test(value)) {
+    return "--name 只允许字母、数字、下划线、连字符与中文；产物名固定为 <name>.<扩展名>，扩展名由 --format 决定";
+  }
+  if (RESERVED_DEVICE_NAMES.has(value.toUpperCase())) {
+    return `--name 不得使用 Windows 保留设备名 ${value.toUpperCase()}；请换一个名字`;
+  }
+  return null;
+}
+
+/**
+ * 生成产物文件名：给出 `--name` 时返回 `<name>.<ext>`；未给出时回落时间戳命名。
+ *
+ * @param command 子命令名（仅时间戳命名使用）。
+ * @param format 输出格式（决定扩展名）。
+ * @param name 调用方指定的 basename；undefined 表示未指定。
+ * @param date 当前时间（仅时间戳命名使用）。
+ * @param suffix 随机后缀（仅时间戳命名使用）。
+ * @returns 产物文件名（不含目录）。
+ */
+export function resolveOutputFileName(
+  command: string,
+  format: "md" | "json" | "jsonl",
+  name: string | undefined,
+  date: Date,
+  suffix: string,
+): string {
+  if (name === undefined) return outputFileName(command, format, date, suffix);
+  return `${name}.${extensionForFormat(format)}`;
+}
+
+/** 整数区间（含两端）。 */
+export interface IntegerRange {
+  readonly from: number;
+  readonly to: number;
+}
+
+const RANGE_PATTERN = /^(\d+)(?:-(\d+))?$/u;
+
+/**
+ * 解析区间参数 `<A-B>` 或 `<A>`（单值等价于 `[A,A]`）。
+ *
+ * 约束：只接受十进制非负整数；`A >= minimum`；`B >= A`。不做"空区间自动放宽"，
+ * 越界即报错，避免调用方以为筛选生效而实际读到全部内容。
+ *
+ * @param value 调用方给出的原始 token。
+ * @param minimum 下界允许的最小值（turn 为 1，seq 为 0）。
+ * @param optionName 出错时回显的选项名（只回显选项名，不回显选项值）。
+ * @returns 合法返回区间，否则返回错误文本。
+ */
+export function parseIntegerRange(
+  value: string,
+  minimum: number,
+  optionName: string,
+): Result<IntegerRange, string> {
+  const match = RANGE_PATTERN.exec(value);
+  if (match === null) return { success: false, error: `${optionName} 格式应为 <A-B> 或 <A>` };
+  const from = Number(match[1]);
+  const to = match[2] === undefined ? from : Number(match[2]);
+  if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to)) {
+    return { success: false, error: `${optionName} 数值超出安全整数范围` };
+  }
+  if (from < minimum) return { success: false, error: `${optionName} 下界不得小于 ${minimum}` };
+  if (to < from) return { success: false, error: `${optionName} 上界不得小于下界` };
+  return { success: true, data: { from, to } };
 }
 
 /** 统计内容行数（末尾换行不计入空行）。 */

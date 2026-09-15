@@ -9,10 +9,13 @@ import {
   formatUtcStamp,
   normalizePathForCompare,
   outputFileName,
+  parseIntegerRange,
   parseTimeArg,
   randomOutputSuffix,
   resolveDshHome,
+  resolveOutputFileName,
   sessionsRoot,
+  validateOutputName,
 } from "../scripts/lib/paths.ts";
 
 describe("resolveDshHome", () => {
@@ -174,5 +177,106 @@ describe("outputFileName / randomOutputSuffix / countLines", () => {
     assert.equal(countLines("a\n"), 1);
     assert.equal(countLines("a\nb"), 2);
     assert.equal(countLines("a\nb\n"), 2);
+  });
+});
+
+describe("validateOutputName", () => {
+  it("接受字母数字下划线连字符与中文", () => {
+    for (const value of ["probe", "probe-2", "probe_2", "调查报告", "报告-2026_a"]) {
+      assert.equal(validateOutputName(value), null, `期望合法: ${value}`);
+    }
+  });
+
+  it("拒绝空值与超长值", () => {
+    assert.equal(validateOutputName(""), "--name 不能为空");
+    assert.notEqual(validateOutputName("a".repeat(65)), null);
+    assert.equal(validateOutputName("a".repeat(64)), null);
+  });
+
+  it("拒绝路径穿越与双重扩展名相关字符", () => {
+    for (const value of ["a.b", "..", "../x", "a/b", "a\\b", "a:b", "a b", "a*b", "a?b"]) {
+      assert.notEqual(validateOutputName(value), null, `期望非法: ${value}`);
+    }
+    assert.match(String(validateOutputName("a.b")), /扩展名由 --format 决定/u);
+  });
+
+  it("拒绝控制字符与零宽字符", () => {
+    for (const value of ["a\u0000b", "a\tb", "a\u200Bb", "a\nb"]) {
+      assert.notEqual(validateOutputName(value), null, `期望非法: ${JSON.stringify(value)}`);
+    }
+  });
+
+  it("拒绝 Windows 保留设备名（含大小写变体）", () => {
+    for (const value of ["CON", "con", "Nul", "COM1", "lpt9", "AUX", "PRN"]) {
+      assert.notEqual(validateOutputName(value), null, `期望非法: ${value}`);
+    }
+    assert.equal(validateOutputName("CONS"), null);
+    assert.equal(validateOutputName("COM10"), null);
+  });
+});
+
+describe("resolveOutputFileName", () => {
+  it("未指定 --name 时回落时间戳命名", () => {
+    assert.equal(
+      resolveOutputFileName("list", "md", undefined, new Date(0), "abc123"),
+      "session-reader-list-19700101T000000000Z-abc123.md",
+    );
+  });
+
+  it("指定 --name 时按格式派生扩展名", () => {
+    assert.equal(resolveOutputFileName("list", "md", "probe", new Date(0), "abc123"), "probe.md");
+    assert.equal(
+      resolveOutputFileName("show", "json", "probe", new Date(0), "abc123"),
+      "probe.json",
+    );
+    assert.equal(
+      resolveOutputFileName("show", "jsonl", "probe", new Date(0), "abc123"),
+      "probe.jsonl",
+    );
+  });
+});
+
+describe("parseIntegerRange", () => {
+  it("单值等价于 [A,A]", () => {
+    assert.deepEqual(parseIntegerRange("7", 0, "--seq"), {
+      success: true,
+      data: { from: 7, to: 7 },
+    });
+    assert.deepEqual(parseIntegerRange("2", 1, "--turn"), {
+      success: true,
+      data: { from: 2, to: 2 },
+    });
+  });
+
+  it("区间形式两端含端点", () => {
+    assert.deepEqual(parseIntegerRange("2-5", 1, "--turn"), {
+      success: true,
+      data: { from: 2, to: 5 },
+    });
+    assert.deepEqual(parseIntegerRange("0-0", 0, "--seq"), {
+      success: true,
+      data: { from: 0, to: 0 },
+    });
+  });
+
+  it("拒绝格式错误", () => {
+    for (const value of ["", "a", "1-", "-1", "1-2-3", "1 ", " 1", "1.5", "0x10"]) {
+      const parsed = parseIntegerRange(value, 0, "--seq");
+      assert.equal(parsed.success, false, `期望非法: ${JSON.stringify(value)}`);
+    }
+  });
+
+  it("拒绝下界越界与上界小于下界", () => {
+    const tooSmall = parseIntegerRange("0", 1, "--turn");
+    assert.equal(tooSmall.success, false);
+    if (!tooSmall.success) assert.equal(tooSmall.error, "--turn 下界不得小于 1");
+    const inverted = parseIntegerRange("5-2", 0, "--seq");
+    assert.equal(inverted.success, false);
+    if (!inverted.success) assert.equal(inverted.error, "--seq 上界不得小于下界");
+  });
+
+  it("拒绝超出安全整数范围的值", () => {
+    const parsed = parseIntegerRange("99999999999999999999", 0, "--seq");
+    assert.equal(parsed.success, false);
   });
 });

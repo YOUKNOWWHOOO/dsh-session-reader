@@ -252,7 +252,7 @@ describe("writeOutputFile 失败路径", () => {
   it("输出目录创建失败（目录路径被文件占据）→ 输出目录创建失败", () => {
     const blocker = join(TEMP_ROOT, "blocker");
     writeFileSync(blocker, "occupied", "utf8");
-    const result = writeOutputFile(join(blocker, "sub"), "sample.txt", "内容\n");
+    const result = writeOutputFile(join(blocker, "sub"), "sample.txt", "内容\n", false);
     assert.equal(result.ok, false);
     if (result.ok) return;
     assert.equal(result.failure.classification, "输出目录创建失败");
