@@ -21,10 +21,11 @@ import { loadCatalog, type SessionFormatCatalog } from "./lib/decode.ts";
 import {
   countLines,
   defaultLibRoot,
-  outputFileName,
   parseTimeArg,
   randomOutputSuffix,
   resolveDshHome,
+  resolveOutputFileName,
+  validateOutputName,
 } from "./lib/paths.ts";
 import {
   formatStatsSummary,
@@ -108,6 +109,13 @@ function commonOptions(formatValues: readonly string[]): OptionSpec[] {
       valueName: "<目录>",
       valueKind: "string",
       description: "输出目录（必填；完全由使用方填写，工具不做校验）",
+    },
+    {
+      name: "--name",
+      kind: "value",
+      valueName: "<basename>",
+      valueKind: "string",
+      description: "产物 basename（不含扩展名；给出时覆盖同名产物）",
     },
     {
       name: "--format",
@@ -545,8 +553,18 @@ function readScopeFilters(parsed: ParsedCommand): ScopeFilters | null {
   };
 }
 
-/** 校验命令级选项组合（呈现类开关仅 md；内容范围开关 jsonl 禁止；stats 单会话不接受范围过滤）。 */
+/**
+ * 校验命令级选项组合：`--name` 取值；呈现类开关仅 md；内容范围开关 jsonl 禁止；stats 单会话不接受范围过滤。
+ * 所有 detail 都必须给出合法替代写法（调用方只有一次调用机会，禁止只报冲突不报出路）。
+ */
 export function validateCommandOptions(parsed: ParsedCommand): RunFailure | null {
+  const outputName = optionValue(parsed, "--name");
+  if (outputName !== undefined) {
+    const nameError = validateOutputName(outputName);
+    if (nameError !== null) {
+      return { classification: "参数无效", exitCode: 2, detail: nameError };
+    }
+  }
   if (parsed.command === "stats") {
     const rangeFilters = ["--workspace", "--since", "--until", "--origin"];
     const present = rangeFilters.filter((name) => parsed.options.has(name));
@@ -554,7 +572,7 @@ export function validateCommandOptions(parsed: ParsedCommand): RunFailure | null
       return {
         classification: "参数无效",
         exitCode: 2,
-        detail: `单会话统计不接受范围过滤选项: ${present.join("、")}`,
+        detail: `单会话统计不接受范围过滤选项 ${present.join("、")}；去掉 ${present.join("、")}，或去掉会话目标改用全局聚合`,
       };
     }
     return null;
@@ -567,7 +585,7 @@ export function validateCommandOptions(parsed: ParsedCommand): RunFailure | null
     return {
       classification: "参数无效",
       exitCode: 2,
-      detail: `--format ${format} 与呈现类开关 ${presentPresentation.join("、")} 不能同时使用`,
+      detail: `呈现类开关 ${presentPresentation.join("、")} 仅 md 可用；去掉 ${presentPresentation.join("、")}，或把 --format 改为 md`,
     };
   }
   const scopeSwitches = ["--summary", "--subagents"];
@@ -576,7 +594,7 @@ export function validateCommandOptions(parsed: ParsedCommand): RunFailure | null
     return {
       classification: "参数无效",
       exitCode: 2,
-      detail: `--format jsonl 与 ${presentScope.join("、")} 不能同时使用`,
+      detail: `${presentScope.join("、")} 不能与 --format jsonl 同时使用；去掉 ${presentScope.join("、")}，或把 --format 改为 json`,
     };
   }
   return null;
@@ -743,14 +761,23 @@ function removeFileIfExists(path: string): boolean {
 }
 
 /**
- * 输出协议：目录不存在则创建；目标文件必须不存在（拒绝覆盖）；写入唯一临时文件后同卷原子移动。
+ * 输出协议：目录不存在则创建；写入唯一临时文件后同卷原子移动。
+ *
+ * 覆盖语义由 `overwrite` 决定，二者都不是"竞争窗口内的侥幸"，而是明确的契约：
+ * - `overwrite=false`（未给 `--name`）：目标文件必须不存在，已存在即拒绝（退出 2）且不得改动原文件。
+ *   命名唯一性（UTC 毫秒时间戳 + 随机 6 位后缀）使该拒绝在实践中只可能由调用方手工放同名文件触发。
+ * - `overwrite=true`（给出 `--name`）：允许替换调用方自己指定的那一个路径。
+ *   Windows 的 `renameSync` 走 `MOVEFILE_REPLACE_EXISTING`，替换是原子的：任何时刻目标文件要么是
+ *   旧内容、要么是新内容，不会出现半截文件。覆盖范围严格限于 `<output-dir>/<name>.<ext>`。
+ *
  * 失败返回错误分类（输出文件已存在→2；目录创建/写入/移动失败→3）。
- * 导出以便测试直接覆盖"已存在拒绝/原子提交"路径。
+ * 导出以便测试直接覆盖"已存在拒绝/原子提交/覆盖提交"路径。
  */
 export function writeOutputFile(
   outputDir: string,
   fileName: string,
   content: string,
+  overwrite: boolean,
 ):
   | { readonly ok: true; readonly value: WriteSuccess }
   | { readonly ok: false; readonly failure: RunFailure } {
@@ -760,7 +787,7 @@ export function writeOutputFile(
     return { ok: false, failure: { classification: "输出目录创建失败", exitCode: 3 } };
   }
   const targetPath = resolve(outputDir, fileName);
-  if (existsSync(targetPath)) {
+  if (!overwrite && existsSync(targetPath)) {
     return { ok: false, failure: { classification: "输出文件已存在", exitCode: 2 } };
   }
   const tempPath = resolve(outputDir, `.${fileName}.${randomOutputSuffix()}.tmp`);
@@ -816,8 +843,20 @@ async function runParsedCommand(parsed: ParsedCommand): Promise<RunOutcome> {
   const format = formatRaw === "json" ? "json" : formatRaw === "jsonl" ? "jsonl" : "md";
   const outcome = dispatchCommand(parsed, ctx, format);
   if (outcome.kind === "failure") return outcome;
-  const fileName = outputFileName(parsed.command, format, new Date(), randomOutputSuffix());
-  const writeResult = writeOutputFile(outputDir, fileName, outcome.content);
+  const outputName = optionValue(parsed, "--name");
+  const fileName = resolveOutputFileName(
+    parsed.command,
+    format,
+    outputName,
+    new Date(),
+    randomOutputSuffix(),
+  );
+  const writeResult = writeOutputFile(
+    outputDir,
+    fileName,
+    outcome.content,
+    outputName !== undefined,
+  );
   if (!writeResult.ok) return { kind: "failure", failure: writeResult.failure };
   process.stdout.write(`完整输出已保存到: ${writeResult.value.path}\n`);
   process.stdout.write(`${outcome.summary}；输出文件共 ${writeResult.value.lines} 行\n`);
