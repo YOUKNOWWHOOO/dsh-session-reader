@@ -751,7 +751,7 @@ describe("CLI search", () => {
   it("`--` 选项终止符：以 - 开头的关键词可表达", () => {
     const withoutTerminator = runCli(["search", "- item", ...baseArgs(HEALTHY_HOME)]);
     assert.equal(withoutTerminator.status, 2);
-    assert.equal(withoutTerminator.stderr, "错误: 参数无效\n");
+    assert.equal(withoutTerminator.stderr, "错误: 参数无效（未知选项: - item）\n");
     const result = runCli(["search", "--scope", "all", ...baseArgs(HEALTHY_HOME), "--", "- item"]);
     assert.equal(result.status, 0);
     const content = readFileSync(readContract(result.stdout).path, "utf8");
@@ -866,7 +866,7 @@ describe("CLI stats", () => {
     ]) {
       const result = runCli(["stats", "fixture-main-01", ...baseArgs(HEALTHY_HOME), ...extra]);
       assert.equal(result.status, 2, `期望拒绝: ${extra.join(" ")}`);
-      assert.equal(result.stderr, "错误: 参数无效\n");
+      assert.equal(result.stderr, `错误: 参数无效（单会话统计不接受范围过滤选项: ${extra[0]}）\n`);
       assert.equal(result.stdout, "");
     }
     const globalFiltered = runCli(["stats", ...baseArgs(HEALTHY_HOME), "--origin", "main"]);

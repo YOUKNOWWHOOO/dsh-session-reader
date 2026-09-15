@@ -913,7 +913,9 @@ export function resolveSessionTarget(
     if (best === undefined) return storeFail("target-missing", "没有主会话");
     return { success: true, data: best };
   }
-  if (value.length < MIN_PREFIX_LENGTH) return storeFail("argument-invalid", "前缀过短");
+  if (value.length < MIN_PREFIX_LENGTH) {
+    return storeFail("argument-invalid", `会话前缀至少 ${MIN_PREFIX_LENGTH} 个字符`);
+  }
   const lowered = value.toLowerCase();
   const exact = candidates.filter((entry) => idMatchesExact(entry.id, lowered));
   if (exact.length === 1) return { success: true, data: exact[0] };

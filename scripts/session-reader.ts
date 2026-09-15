@@ -453,7 +453,10 @@ export function parseCommandLine(argv: readonly string[]): ParseResult {
 interface RunFailure {
   readonly classification: string;
   readonly exitCode: number;
+  /** 歧义目标的候选数（与 detail 互斥；优先渲染）。 */
   readonly candidates?: number;
+  /** 分类后的括号说明：冲突选项名、缺失的必填选项，或调用方自身提供的子命令位/选项位 token。 */
+  readonly detail?: string;
 }
 
 type RunOutcome =
@@ -465,14 +468,20 @@ type RunOutcome =
     }
   | { readonly kind: "failure"; readonly failure: RunFailure };
 
-function failure(classification: string, exitCode: number, candidates?: number): RunOutcome {
-  return candidates === undefined
+function failure(classification: string, exitCode: number, detail?: string): RunOutcome {
+  return detail === undefined
     ? { kind: "failure", failure: { classification, exitCode } }
-    : { kind: "failure", failure: { classification, exitCode, candidates } };
+    : { kind: "failure", failure: { classification, exitCode, detail } };
 }
 
 function mapStoreError(error: StoreError): RunFailure {
-  if (error.category === "argument-invalid") return { classification: "参数无效", exitCode: 2 };
+  // 只有 argument-invalid 的 detail 是固定模板（无路径、无会话 ID、无用户名），可安全外显；
+  // target-missing/data-unreadable 的 detail 含会话目录名或绝对路径，按 CLI 契约不得进入 stderr。
+  if (error.category === "argument-invalid") {
+    return error.detail === undefined
+      ? { classification: "参数无效", exitCode: 2 }
+      : { classification: "参数无效", exitCode: 2, detail: error.detail };
+  }
   if (error.category === "target-missing") return { classification: "目标不存在", exitCode: 1 };
   if (error.category === "ambiguous") {
     return { classification: "目标不存在", exitCode: 1, candidates: error.candidates ?? 0 };
@@ -540,22 +549,35 @@ function readScopeFilters(parsed: ParsedCommand): ScopeFilters | null {
 export function validateCommandOptions(parsed: ParsedCommand): RunFailure | null {
   if (parsed.command === "stats") {
     const rangeFilters = ["--workspace", "--since", "--until", "--origin"];
-    if (parsed.positional.length > 0 && rangeFilters.some((name) => parsed.options.has(name))) {
-      return { classification: "参数无效", exitCode: 2 };
+    const present = rangeFilters.filter((name) => parsed.options.has(name));
+    if (parsed.positional.length > 0 && present.length > 0) {
+      return {
+        classification: "参数无效",
+        exitCode: 2,
+        detail: `单会话统计不接受范围过滤选项: ${present.join("、")}`,
+      };
     }
     return null;
   }
   if (parsed.command !== "show") return null;
   const format = optionValue(parsed, "--format") ?? "md";
   const presentation = ["--role", "--thinking", "--tools", "--events", "--headers", "--truncate"];
-  if (format !== "md" && presentation.some((name) => parsed.options.has(name))) {
-    return { classification: "参数无效", exitCode: 2 };
+  const presentPresentation = presentation.filter((name) => parsed.options.has(name));
+  if (format !== "md" && presentPresentation.length > 0) {
+    return {
+      classification: "参数无效",
+      exitCode: 2,
+      detail: `--format ${format} 与呈现类开关 ${presentPresentation.join("、")} 不能同时使用`,
+    };
   }
-  if (
-    format === "jsonl" &&
-    (parsed.options.has("--summary") || parsed.options.has("--subagents"))
-  ) {
-    return { classification: "参数无效", exitCode: 2 };
+  const scopeSwitches = ["--summary", "--subagents"];
+  const presentScope = scopeSwitches.filter((name) => parsed.options.has(name));
+  if (format === "jsonl" && presentScope.length > 0) {
+    return {
+      classification: "参数无效",
+      exitCode: 2,
+      detail: `--format jsonl 与 ${presentScope.join("、")} 不能同时使用`,
+    };
   }
   return null;
 }
@@ -768,7 +790,11 @@ export function writeOutputFile(
 
 function printFailure(failureValue: RunFailure): void {
   const suffix =
-    failureValue.candidates === undefined ? "" : `（候选 ${failureValue.candidates} 个）`;
+    failureValue.candidates !== undefined
+      ? `（候选 ${failureValue.candidates} 个）`
+      : failureValue.detail === undefined
+        ? ""
+        : `（${failureValue.detail}）`;
   process.stderr.write(`错误: ${failureValue.classification}${suffix}\n`);
 }
 
@@ -778,7 +804,7 @@ async function runParsedCommand(parsed: ParsedCommand): Promise<RunOutcome> {
   const combinationFailure = validateCommandOptions(parsed);
   if (combinationFailure !== null) return { kind: "failure", failure: combinationFailure };
   const outputDir = optionValue(parsed, "--output-dir");
-  if (outputDir === undefined) return failure("参数无效", 2);
+  if (outputDir === undefined) return failure("参数无效", 2, "缺少 --output-dir");
   const dshHome = resolveDshHome(optionValue(parsed, "--dsh-home"), process.env, homedir());
   if (!existsSync(dshHome)) return failure("目标不存在", 1);
   const libRoot = optionValue(parsed, "--lib-root") ?? defaultLibRoot(dshHome);
@@ -806,7 +832,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     return 0;
   }
   if (parsed.kind === "error") {
-    printFailure({ classification: "参数无效", exitCode: 2 });
+    printFailure({ classification: "参数无效", exitCode: 2, detail: parsed.message });
     return 2;
   }
   try {

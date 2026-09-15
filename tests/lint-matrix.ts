@@ -676,14 +676,14 @@ function listCases(): MatrixCase[] {
   }
   cases.push(
     mcase("err-list-jsonl", ["list", ...healthyBase(), "--format", "jsonl"], "none", null, 2, {
-      expectStderr: "错误: 参数无效\n",
+      expectStderr: "错误: 参数无效（选项值无效: --format）\n",
     }),
     mcase("err-list-text", ["list", ...healthyBase(), "--format", "text"], "none", null, 2, {
-      expectStderr: "错误: 参数无效\n",
+      expectStderr: "错误: 参数无效（选项值无效: --format）\n",
     }),
     mcase("err-list-no-output-dir", ["list", "--dsh-home", "HEALTHY"], "none", null, 2, {
       omitOutputDir: true,
-      expectStderr: "错误: 参数无效\n",
+      expectStderr: "错误: 参数无效（缺少 --output-dir）\n",
     }),
     mcase(
       "err-list-missing-home",
@@ -800,7 +800,7 @@ function showCases(): MatrixCase[] {
       "none",
       null,
       2,
-      { expectStderr: "错误: 参数无效\n" },
+      { expectStderr: "错误: 参数无效（--format json 与呈现类开关 --thinking 不能同时使用）\n" },
     ),
     mcase(
       "err-show-jsonl-summary",
@@ -808,7 +808,7 @@ function showCases(): MatrixCase[] {
       "none",
       null,
       2,
-      { expectStderr: "错误: 参数无效\n" },
+      { expectStderr: "错误: 参数无效（--format jsonl 与 --summary 不能同时使用）\n" },
     ),
     mcase(
       "err-show-jsonl-subagents",
@@ -816,13 +816,13 @@ function showCases(): MatrixCase[] {
       "none",
       null,
       2,
-      { expectStderr: "错误: 参数无效\n" },
+      { expectStderr: "错误: 参数无效（--format jsonl 与 --subagents 不能同时使用）\n" },
     ),
     mcase("err-show-missing-target", ["show", "zzzzzzzz", ...healthyBase()], "none", null, 1, {
       expectStderr: "错误: 目标不存在\n",
     }),
     mcase("err-show-short-prefix", ["show", "adv", ...healthyBase()], "none", null, 2, {
-      expectStderr: "错误: 参数无效\n",
+      expectStderr: "错误: 参数无效（会话前缀至少 8 个字符）\n",
     }),
     mcase(
       "err-show-ambiguous-prefix",
@@ -907,7 +907,7 @@ function searchCases(): MatrixCase[] {
   }
   cases.push(
     mcase("err-search-missing-keyword", ["search", ...healthyBase()], "none", null, 2, {
-      expectStderr: "错误: 参数无效\n",
+      expectStderr: "错误: 参数无效（缺少位置参数: <关键词>）\n",
     }),
     mcase(
       "err-search-bad-scope",
@@ -915,7 +915,7 @@ function searchCases(): MatrixCase[] {
       "none",
       null,
       2,
-      { expectStderr: "错误: 参数无效\n" },
+      { expectStderr: "错误: 参数无效（选项值无效: --scope）\n" },
     ),
     mcase(
       "err-search-dash-without-terminator",
@@ -923,7 +923,7 @@ function searchCases(): MatrixCase[] {
       "none",
       null,
       2,
-      { expectStderr: "错误: 参数无效\n" },
+      { expectStderr: "错误: 参数无效（未知选项: - item）\n" },
     ),
     mcase(
       "err-search-unknown-target",
@@ -1017,7 +1017,7 @@ function statsCases(): MatrixCase[] {
       "none",
       null,
       2,
-      { expectStderr: "错误: 参数无效\n" },
+      { expectStderr: "错误: 参数无效（单会话统计不接受范围过滤选项: --since）\n" },
     ),
     mcase(
       "err-stats-single-filter-origin",
@@ -1025,7 +1025,7 @@ function statsCases(): MatrixCase[] {
       "none",
       null,
       2,
-      { expectStderr: "错误: 参数无效\n" },
+      { expectStderr: "错误: 参数无效（单会话统计不接受范围过滤选项: --origin）\n" },
     ),
     mcase(
       "err-stats-single-filter-workspace",
@@ -1033,7 +1033,7 @@ function statsCases(): MatrixCase[] {
       "none",
       null,
       2,
-      { expectStderr: "错误: 参数无效\n" },
+      { expectStderr: "错误: 参数无效（单会话统计不接受范围过滤选项: --workspace）\n" },
     ),
   );
   return cases;
