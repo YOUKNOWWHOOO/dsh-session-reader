@@ -751,6 +751,76 @@ describe("CLI show", () => {
     };
     assert.equal(lastDoc.session.id, "session-fixture-main-01");
   });
+
+  it("--probe：只落规模摘要，预计字节数与完整导出一致", () => {
+    const probed = runCli([
+      "show",
+      "session-fixture-main-01",
+      ...baseArgs(HEALTHY_HOME),
+      "--probe",
+    ]);
+    assert.equal(probed.status, 0);
+    const probedContract = readContract(probed.stdout);
+    const probedContent = readFileSync(probedContract.path, "utf8");
+    assert.equal(probedContent.includes("## 时间线"), false);
+    assert.equal(probedContent.includes("用户内容"), false);
+    const estimate = Number(/- 预计字节数：(\d+)（/u.exec(probedContent)?.[1] ?? "-1");
+    assert.equal(estimate > 0, true);
+    assert.match(probedContract.summary, /（规模探测）；事件 \d+ 个；预计正文 \d+ 字节$/u);
+    assert.equal(probedContent.includes(`- 预计字节数：${estimate}（`), true);
+
+    // 同一目标、同一选项做完整导出：其正文字节数必须等于探测给出的预计字节数。
+    const full = runCli(["show", "session-fixture-main-01", ...baseArgs(HEALTHY_HOME)]);
+    assert.equal(full.status, 0);
+    const fullPath = readContract(full.stdout).path;
+    assert.equal(readFileSync(fullPath).length, estimate);
+  });
+
+  it("--probe 与 --subagents 同用即拒绝（退出 2，附替代写法）", () => {
+    const result = runCli([
+      "show",
+      "session-fixture-main-01",
+      ...baseArgs(HEALTHY_HOME),
+      "--probe",
+      "--subagents",
+    ]);
+    assert.equal(result.status, 2);
+    assert.equal(
+      result.stderr,
+      "错误: 参数无效（--probe 只给规模摘要，与 --subagents 不能同时使用；去掉 --subagents，或去掉 --probe）\n",
+    );
+    assert.equal(result.stdout, "");
+  });
+
+  it("--probe 可与呈现类开关同用：预计字节数随开关变化并等于同选项的完整导出", () => {
+    const probed = runCli([
+      "show",
+      "session-fixture-main-01",
+      ...baseArgs(HEALTHY_HOME),
+      "--probe",
+      "--tools",
+      "--events",
+      "--truncate",
+      "20",
+    ]);
+    assert.equal(probed.status, 0);
+    const probedContent = readFileSync(readContract(probed.stdout).path, "utf8");
+    assert.equal(probedContent.includes("## 时间线"), false);
+    const estimate = Number(/- 预计字节数：(\d+)（/u.exec(probedContent)?.[1] ?? "-1");
+    assert.equal(estimate > 0, true);
+
+    const full = runCli([
+      "show",
+      "session-fixture-main-01",
+      ...baseArgs(HEALTHY_HOME),
+      "--tools",
+      "--events",
+      "--truncate",
+      "20",
+    ]);
+    assert.equal(full.status, 0);
+    assert.equal(readFileSync(readContract(full.stdout).path).length, estimate);
+  });
 });
 
 describe("CLI search", () => {
@@ -851,6 +921,59 @@ describe("CLI search", () => {
     assert.equal(document.matches.length, 1);
     assert.equal(document.total >= 2, true);
     assert.equal(document.truncated, true);
+  });
+
+  it("扫描摘要与每会话命中分布进入产物（0 命中也有分母）", () => {
+    const result = runCli(["search", "zzznomatch", ...baseArgs(HEALTHY_HOME), "--scope", "all"]);
+    assert.equal(result.status, 0);
+    const content = readFileSync(readContract(result.stdout).path, "utf8");
+    assert.match(
+      content,
+      /扫描明细：解码日志 \d+ 份；读到事件 \d+ 个；解码失败 \d+ 份；帧解压失败 \d+ 帧/u,
+    );
+    assert.match(content, /事件时间范围：\d{4}-\d{2}-\d{2}T/u);
+    assert.match(content, /## 每会话命中分布/u);
+    // 0 命中的纳入会话也必须出现在分布表中，否则"没搜到"会被当成"不存在"。
+    assert.match(content, /\| `session-fixture-main-01` \| 主 \| `夹具会话 A` \| 0 \|/u);
+  });
+
+  it("--exclude-session 剔除指定会话及其子代理子树", () => {
+    // 默认 text 档下 "ALPHA" 只出现在主会话的用户消息里（scope=all 会因事件载荷重复计数），
+    // 因此排除主会话后命中必然为 0（而非仅"变少"）。
+    const scope = ["--scope", "text"] as const;
+    const all = runCli(["search", "ALPHA", ...baseArgs(HEALTHY_HOME), ...scope]);
+    const allContent = readFileSync(readContract(all.stdout).path, "utf8");
+    assert.equal(Number(/^命中总数：(\d+)/mu.exec(allContent)?.[1] ?? "-1"), 1);
+
+    const excluded = runCli([
+      "search",
+      "ALPHA",
+      ...baseArgs(HEALTHY_HOME),
+      ...scope,
+      "--exclude-session",
+      "session-fixture-main-01",
+    ]);
+    assert.equal(excluded.status, 0);
+    const excludedContent = readFileSync(readContract(excluded.stdout).path, "utf8");
+    assert.equal(Number(/^命中总数：(\d+)/mu.exec(excludedContent)?.[1] ?? "-1"), 0);
+    // 被排除的会话自身与它的子代理都不应再出现在分布表中（子树语义）。
+    assert.equal(excludedContent.includes("`session-fixture-main-01`"), false);
+    assert.equal(excludedContent.includes("`cafe1111-2222-3333-4444-555566667777`"), false);
+    // 覆盖声明仍成立，且纳入数已扣掉整棵子树。
+    assert.match(excludedContent, /扫描会话 \d+ 个；纳入 \d+ 个；排除 \d+ 个/u);
+  });
+
+  it("--exclude-session 目标不存在时退出 1（不静默忽略）", () => {
+    const result = runCli([
+      "search",
+      "needle",
+      ...baseArgs(HEALTHY_HOME),
+      "--exclude-session",
+      "zzzzzzzz",
+    ]);
+    assert.equal(result.status, 1);
+    assert.equal(result.stderr, "错误: 目标不存在\n");
+    assert.equal(result.stdout, "");
   });
 });
 

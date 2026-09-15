@@ -27,9 +27,11 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 
 每个命令的产物都自带覆盖声明与统计口径，调用方可据此判断结论强度，不需要读源码：
 
-- `扫描会话 N 个；纳入 M 个；排除 K 个`：N 是枚举到的会话数，M 是实际进入本次结论的会话数，K 是被排除的会话数；`N = M + K` 恒成立。
+- `扫描会话 N 个；纳入 M 个；排除 K 个`：N 是枚举到的会话数，M 是实际进入本次结论的会话数，K 是被排除的会话数；`N = M + K` 恒成立。M 与 `--limit` 无关（`--limit` 只决定产物列出多少条，由摘要行的 `匹配 N 个，显示 M 个` 表达）。
 - `排除会话：<完整 id>（<原因>）`：每个被排除的会话独占一行，原因是可诊断的具体文本（如 `帧魔数无效（偏移 0）`、`解码失败`）。**排除是显式的**——header 不可读的会话不会让整条命令失败，也不会静默消失。
-- `检索范围：<scope>；命中总数 X 为精确值`：仅 `search` 输出。`--limit` 只限制产物中列出的命中条数，**不截断命中总数**；`--scope all` 时命中总数为精确值，此时"0 命中"可作为"不存在"的证据。
+- `扫描明细：解码日志 X 份；读到事件 Y 个；解码失败 Z 份；帧解压失败 W 帧` 与 `事件时间范围：<下界> ~ <上界>`：`search` 与 `stats` 输出，给出"0 命中"的分母——扫了哪些日志、读到多少事件、有没有读失败、覆盖到什么时间。时间范围来自**事件自带的 `time` 字段**（不是会话的最近活动时间）；无事件时显示 `-`。
+- `检索范围：<scope>（<覆盖面描述>）；命中总数 X 为精确值`：仅 `search` 输出。`--limit` 只限制产物中列出的命中条数，**不截断命中总数**；`--scope all` 时命中总数为精确值，此时"0 命中"可作为"不存在"的证据。
+- `## 每会话命中分布`（仅 `search`）：逐会话给出命中数（含 0 命中的纳入会话），按命中数降序。用于把**调用方自己的语料**从结论里剔除——检索在全库上做，发起检索的会话与它派出的子代理会话也在库里，调查笔记、复述过的错误串、贴过的代码片段都会被命中；只给一个总数会把这种污染藏起来。自动化剔除用 `--exclude-session <标识>`。
 - `筛选：…；显示 X 条时间线条目（区间内事件 Y 个，共 Z 个事件）`：仅 `show` 在范围选择生效时输出，同时给出最终显示条目数、区间内事件数与整会话事件数。
 
 ## 输出格式（md）
@@ -53,11 +55,11 @@ node scripts/session-reader.ts list   --output-dir <project_tmp> [--name <basena
 node scripts/session-reader.ts show   <id|唯一前缀|last> --output-dir <project_tmp> [--name <basename>] [--summary]
                                       [--role user|assistant] [--thinking] [--tools] [--events] [--subagents]
                                       [--headers] [--truncate N] [--turn <A-B|A>] [--seq <A-B|A>]
-                                      [--head N] [--tail N] [--format md|json|jsonl]
+                                      [--head N] [--tail N] [--probe] [--format md|json|jsonl]
 node scripts/session-reader.ts search <关键词> --output-dir <project_tmp> [--name <basename>] [--scope text|tools|all]
                                       [--case-sensitive] [--context N] [--limit N] [--session <会话标识>]
-                                      [--workspace <路径|标题>] [--since <时间>] [--until <时间>]
-                                      [--origin all|main|subagent] [--format md|json]
+                                      [--exclude-session <会话标识>] [--workspace <路径|标题>]
+                                      [--since <时间>] [--until <时间>] [--origin all|main|subagent] [--format md|json]
 node scripts/session-reader.ts stats  [<id|唯一前缀|last>] --output-dir <project_tmp> [--name <basename>]
                                       [--workspace/--since/--until/--origin；仅全局聚合（缺省目标）可用] [--format md|json]
 node scripts/session-reader.ts check  [<id|唯一前缀|last>] --output-dir <project_tmp> [--name <basename>] [--format md|json]
@@ -73,10 +75,11 @@ node scripts/session-reader.ts check  [<id|唯一前缀|last>] --output-dir <pro
 
 选项互斥（违者退出 2）：
 
-- `--format json|jsonl` 下禁止一切**呈现类开关**（`--role`、`--thinking`、`--tools`、`--events`、`--headers`、`--truncate`、`--turn`、`--seq`、`--head`、`--tail`）——这十个开关仅 `md` 可用。
+- `--format json|jsonl` 下禁止一切**呈现类开关**（`--role`、`--thinking`、`--tools`、`--events`、`--headers`、`--truncate`、`--turn`、`--seq`、`--head`、`--tail`、`--probe`）——这十一个开关仅 `md` 可用。
 - `--format jsonl` 下另禁止**内容范围开关** `--summary` 与 `--subagents`；`--format json` 允许这两个开关。
 - `--head` 与 `--tail` 互斥。
 - `--summary` 与 `--turn`/`--seq`/`--head`/`--tail` 互斥（`--summary` 呈现整会话轮次大纲，范围选择对其无意义）。
+- `--probe` 与 `--subagents` 互斥（探测的意义是"读之前先问规模"，而 `--subagents` 会把产物扩展到整棵子代理树）。`--probe` **可以**与其它呈现类开关同用：它会按同一组开关渲染一份副本并据实报告字节数，因此 `--probe --events --truncate 500` 正是量出"带这些选项的完整导出有多大"的用法。
 - `stats` 指定目标（单会话）时禁止范围过滤选项 `--workspace`/`--since`/`--until`/`--origin`（不做静默忽略）。
 - 所有互斥与取值错误都会在 stderr 括号说明中给出**合法替代写法**（形如 `去掉 --events，或把 --format 改为 md`）。
 
@@ -90,8 +93,10 @@ node scripts/session-reader.ts show 39b27999 --output-dir <project_tmp> --thinki
 node scripts/session-reader.ts show last --output-dir <project_tmp> --subagents --format json
 node scripts/session-reader.ts show last --output-dir <project_tmp> --turn 3-5
 node scripts/session-reader.ts show last --output-dir <project_tmp> --head 20 --events
+node scripts/session-reader.ts show last --output-dir <project_tmp> --probe
 node scripts/session-reader.ts search compact --output-dir <project_tmp> --scope all
 node scripts/session-reader.ts search data_inspection_failed --output-dir <project_tmp> --scope all --session 77707026
+node scripts/session-reader.ts search write-failed --output-dir <project_tmp> --scope all --exclude-session last
 ```
 
 ## 默认参数组合（默认调用）
@@ -125,7 +130,9 @@ node scripts/session-reader.ts check                     --output-dir <project_t
 
 - `show` 的目标可写完整 id、唯一前缀（大小写不敏感，最短 8 字符，可省略 `session-`）或 `last`；歧义时按候选数改用更长前缀。`list`/`search` 产物中给出的完整 id 必然可直接使用。
 - 范围选择：`--turn A-B`（turn 区间，含端点）、`--seq A-B`（seq 区间）、`--head N`（首个 N 条时间线条目）、`--tail N`（末 N 条）。`--turn` 与 `--seq` 可同时使用（交集）；`--head`/`--tail` 作用于筛选后的条目序列且只作用于主会话块（子代理块始终完整导出）。范围选择只改变呈现，不改变覆盖声明与统计。
-- `search --session <识别>` 只检索该会话及其子代理子树（按 `parentSession` 递归），与 `--workspace`/`--since`/`--until`/`--origin` 以交集生效。
+- 先探测规模再决定是否读取：`show <目标> --probe` 只落一份规模摘要（头部 KV ＋ `- 预计字节数：N` ＋ `- 消息数：X 用户 / Y 助手`），不含任何会话正文。预计字节数等于"以同一组选项做完整导出"的字节数，因此 `--probe --events --truncate 500` 可以先量出带这些选项的导出有多大，再决定要不要真的导出。
+- 检索时剔除调用方自己的语料：先看产物中的 `## 每会话命中分布` 定位哪些命中来自自己的会话与子代理，再用 `--exclude-session <标识>` 把它们整棵子树排除；`--session` 与其互为反向。
+- `search --session <标识>` 只检索该会话及其子代理子树（按 `parentSession` 递归），`search --exclude-session <标识>` 排除同一棵树；两者都与 `--workspace`/`--since`/`--until`/`--origin` 以交集生效，目标不存在时退出 1（不静默忽略）。
 - 推理、工具调用/结果与生命周期事件默认隐藏，分别用 `--thinking`、`--tools`、`--events` 显示；正文尾部摘要行会提示实际隐藏原因。
 - 尾部截断、坏行等异常会在输出中显式标注；解码失败以退出码 3 报错。`check` 用不读 header 的枚举路径，因此结构损坏的会话本身也在其诊断范围内。
 - `list`/`stats` 的元数据来自官方投影缓存；不可用时相关列显式标注"元数据不可用"并给出原因。

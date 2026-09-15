@@ -49,6 +49,8 @@ export interface StoreError {
     | "internal";
   readonly detail?: string;
   readonly candidates?: number;
+  /** 帧解压失败的帧数（仅 data-unreadable 路径可能携带；供扫描摘要累加）。 */
+  readonly frameFailures?: number;
 }
 
 /** 已发现的会话条目（header 已通过官方库分类为 current/migration-required）。 */
@@ -119,6 +121,76 @@ export interface SessionCoverage {
   readonly excluded: { readonly id: string; readonly reason: string }[];
 }
 
+/**
+ * 扫描摘要（对应"0 命中没有分母"的缺陷）：给出"读了什么、读了多少、有没有读失败、覆盖到什么时间"。
+ * 与 `SessionCoverage` 的分工：覆盖声明回答"哪些会话进了结论"，扫描摘要回答"这些会话的日志被读到了什么程度"。
+ * 两者合起来才使"0 命中"可自证——只有会话集合与日志读取都完整，0 才等价于不存在。
+ *
+ * 时间范围的来源是**事件自带的 `time` 字段**（读日志时顺带得到，不需要额外 I/O），
+ * 不是会话的"最近活动时间"（后者来自 projcache，语义不同，混用会让调用方误判覆盖区间）。
+ */
+export interface ScanSummary {
+  /** 成功解压并解码日志的份数。 */
+  readonly logsDecoded: number;
+  /** 解码得到的逻辑事件总数。 */
+  readonly eventsRead: number;
+  /** 解码失败的日志份数（逐条列在 `coverage.excluded` 中，原因="解码失败"）。 */
+  readonly decodeFailures: number;
+  /** 帧解压失败的帧数累计（帧级失败会让整份日志按解码失败处理）。 */
+  readonly frameFailures: number;
+  /** 观测到的事件时间下界（无事件时为 null）。 */
+  readonly observedFrom: number | null;
+  /** 观测到的事件时间上界（无事件时为 null）。 */
+  readonly observedTo: number | null;
+}
+
+/** 空扫描摘要（无会话或无事件时的起点）。 */
+export function emptyScanSummary(): ScanSummary {
+  return {
+    logsDecoded: 0,
+    eventsRead: 0,
+    decodeFailures: 0,
+    frameFailures: 0,
+    observedFrom: null,
+    observedTo: null,
+  };
+}
+
+/**
+ * 把一次日志读取并入扫描摘要（纯函数，逐日志累加）。
+ *
+ * @param summary 已有摘要。
+ * @param metrics 本次读取的度量（失败时只有 `frameFailures` 有效）。
+ * @returns 新的摘要（不修改入参）。
+ */
+export function accumulateScanSummary(summary: ScanSummary, metrics: DecodeMetrics): ScanSummary {
+  if (!metrics.success) {
+    return {
+      ...summary,
+      decodeFailures: summary.decodeFailures + 1,
+      frameFailures: summary.frameFailures + metrics.frameFailures,
+    };
+  }
+  return {
+    logsDecoded: summary.logsDecoded + 1,
+    eventsRead: summary.eventsRead + metrics.eventCount,
+    decodeFailures: summary.decodeFailures,
+    frameFailures: summary.frameFailures + metrics.frameFailures,
+    observedFrom:
+      metrics.observedFrom === null
+        ? summary.observedFrom
+        : summary.observedFrom === null
+          ? metrics.observedFrom
+          : Math.min(summary.observedFrom, metrics.observedFrom),
+    observedTo:
+      metrics.observedTo === null
+        ? summary.observedTo
+        : summary.observedTo === null
+          ? metrics.observedTo
+          : Math.max(summary.observedTo, metrics.observedTo),
+  };
+}
+
 /** 单会话元数据视图（projcache 派生）。 */
 export interface MetadataView {
   readonly available: boolean;
@@ -172,6 +244,8 @@ export interface DecodedSessionFile {
   readonly frames: number;
   readonly tornStart: number | undefined;
   readonly sizeBytes: number;
+  /** 本次读取的度量（供扫描摘要累加）。 */
+  readonly metrics: DecodeMetrics & { readonly success: true };
 }
 
 /** 会话节点（含递归子代理）。 */
@@ -187,6 +261,14 @@ export interface SearchOptions {
   readonly caseSensitive: boolean;
   readonly context: number;
   readonly limit: number;
+}
+
+/** 每会话命中分布：调用方据此剔除被自己语料污染的会话。 */
+export interface SessionHitCount {
+  readonly sessionId: string;
+  readonly type: "main" | "subagent";
+  readonly title: string | null;
+  readonly hits: number;
 }
 
 /** 检索范围过滤（与 list 同源语义）。 */
@@ -223,6 +305,15 @@ export interface SearchOutcome {
    */
   readonly totalIsExact: boolean;
   readonly coverage: SessionCoverage;
+  readonly scan: ScanSummary;
+  /**
+   * 每会话命中分布（含 0 命中的纳入会话），按命中数降序、同数按会话 id 升序。
+   *
+   * 存在理由（对应"检索被调用方自己的语料污染"）：检索在全库上做，而发起检索的会话与它派出的
+   * 子代理会话也在库里，调查结论、复述过的错误串、贴过的代码片段都会被命中。产物必须给出足够信息
+   * 让调用方区分"真实会话命中"与"自己的笔记命中"——只给一个总数会把污染藏起来。
+   */
+  readonly distribution: SessionHitCount[];
 }
 
 /** 统计结果。 */
@@ -241,6 +332,7 @@ export interface StatsOutcome {
   /** 全局聚合中轮次或步数不可用（未计入总和）的会话数；单会话恒为 0。摘要行据此显式附注。 */
   readonly excludedMetricSessions: number;
   readonly coverage: SessionCoverage;
+  readonly scan: ScanSummary;
   readonly single: SingleSessionStats | null;
 }
 
@@ -299,8 +391,16 @@ function errorMessage(error: unknown): string {
 function storeFail(
   category: StoreError["category"],
   detail?: string,
+  extra?: { readonly frameFailures: number },
 ): { success: false; error: StoreError } {
-  return { success: false, error: detail === undefined ? { category } : { category, detail } };
+  return {
+    success: false,
+    error: {
+      category,
+      ...(detail === undefined ? {} : { detail }),
+      ...(extra === undefined ? {} : { frameFailures: extra.frameFailures }),
+    },
+  };
 }
 
 function entryCwdNormalized(entry: SessionEntry): string {
@@ -863,7 +963,26 @@ export function buildList(
   };
 }
 
-/** 读取单个会话的完整解码日志。 */
+/** 一次日志读取的度量（供扫描摘要累加；失败时只有 `frameFailures` 有效）。 */
+export type DecodeMetrics =
+  | {
+      readonly success: false;
+      readonly frameFailures: number;
+    }
+  | {
+      readonly success: true;
+      readonly eventCount: number;
+      readonly frameFailures: number;
+      readonly observedFrom: number | null;
+      readonly observedTo: number | null;
+    };
+
+/**
+ * 读取单个会话的完整解码日志。
+ *
+ * @param entry 会话条目。
+ * @param catalog 官方格式库。
+ */
 export function readSessionFile(
   entry: SessionEntry,
   catalog: SessionFormatCatalog,
@@ -872,6 +991,7 @@ export function readSessionFile(
     let text: string;
     let frames: number;
     let tornStart: number | undefined;
+    const frameFailures = 0;
     if (entry.logCompressed) {
       const buffer = readFileSync(entry.logPath);
       const extraction = extractLogText(buffer);
@@ -879,7 +999,9 @@ export function readSessionFile(
         const detail = extraction.failedFrames
           .map((failure) => `帧 ${failure.index}: ${failure.message}`)
           .join("；");
-        return storeFail("data-unreadable", `帧解压失败: ${detail}`);
+        return storeFail("data-unreadable", `帧解压失败: ${detail}`, {
+          frameFailures: extraction.failedFrames.length,
+        });
       }
       text = extraction.text;
       frames = extraction.frameCount;
@@ -890,13 +1012,31 @@ export function readSessionFile(
       tornStart = undefined;
     }
     const decoded = decodeSessionLog(catalog, text, { tornTail: tornStart !== undefined });
-    if (!decoded.success) return storeFail("data-unreadable", decoded.error);
+    if (!decoded.success) {
+      return storeFail("data-unreadable", decoded.error, { frameFailures });
+    }
+    const events = decoded.data.events;
+    const times = events
+      .map((event) => eventTime(event))
+      .filter((time): time is number => time !== undefined);
     return {
       success: true,
-      data: { decoded: decoded.data, frames, tornStart, sizeBytes: entry.sizeBytes },
+      data: {
+        decoded: decoded.data,
+        frames,
+        tornStart,
+        sizeBytes: entry.sizeBytes,
+        metrics: {
+          success: true,
+          eventCount: events.length,
+          frameFailures,
+          observedFrom: times.length === 0 ? null : Math.min(...times),
+          observedTo: times.length === 0 ? null : Math.max(...times),
+        },
+      },
     };
   } catch (error) {
-    return storeFail("data-unreadable", errorMessage(error));
+    return storeFail("data-unreadable", errorMessage(error), { frameFailures: 0 });
   }
 }
 
@@ -1196,12 +1336,17 @@ function eventPayloadJson(event: EventRecord): string {
 /**
  * search 命令数据：按范围过滤会话，逐会话解码并按 scope 检索。
  *
- * 两条关键契约：
+ * 关键契约：
  * 1. `--limit` 只限制 `hits` 数组的收集上限，`totalHits` 对纳入会话全量计数且不做任何提前终止，
  *    因此"命中总数"不是显示条数的副产品（`totalIsExact` 恒为 true，证据见该字段注释）。
  * 2. 单个会话解码失败不会让整次检索失败，而是记入 `coverage.excluded`（原因="解码失败"）并继续。
  *    这是"未被列出者即为已覆盖"这一推断成立的前提——静默跳过或整体失败都会让调用方无法判断
  *    "0 命中"到底是"不存在"还是"没读到"。
+ * 3. `distribution` 逐会话给出命中数（含 0 命中的纳入会话），使调用方能把自己会话与子代理会话的
+ *    命中从结论中剔除；`excludeSessionTarget` 提供同一件事的自动化形式。
+ *
+ * @param sessionTarget 只检索该会话及其子代理子树；undefined 表示不限。
+ * @param excludeSessionTarget 排除该会话及其子代理子树（与 `sessionTarget` 以差集生效）。
  */
 export function runSearch(
   ctx: StoreContext,
@@ -1209,18 +1354,31 @@ export function runSearch(
   scopeFilters: ScopeFilters,
   options: SearchOptions,
   sessionTarget?: string,
+  excludeSessionTarget?: string,
 ): Result<SearchOutcome, StoreError> {
   const discovery = discoverReadableSessions(ctx.dshHome, ctx.catalog);
   if (!discovery.success) return discovery;
   const discoveryCoverage = coverageOf(discovery.data);
 
-  // `--session` 的子树展开与目标解析共用同一次发现结果，避免重复扫描造成两次读取之间的一致性漂移。
-  let sessionIds: Set<string> | null = null;
-  if (sessionTarget !== undefined) {
-    const resolved = resolveTargetWithin(discovery.data, sessionTarget, ctx.dshHome);
+  // `--session`/`--exclude-session` 的子树展开与目标解析共用同一次发现结果，
+  // 避免重复扫描造成两次读取之间的一致性漂移。
+  const subtreeIds = (target: string): Result<Set<string>, StoreError> => {
+    const resolved = resolveTargetWithin(discovery.data, target, ctx.dshHome);
     if (!resolved.success) return resolved;
     const subtree = collectSubtreeEntries(resolved.data, discovery.data.entries);
-    sessionIds = new Set(subtree.map((entry) => entry.id));
+    return { success: true, data: new Set(subtree.map((entry) => entry.id)) };
+  };
+  let sessionIds: Set<string> | null = null;
+  if (sessionTarget !== undefined) {
+    const resolved = subtreeIds(sessionTarget);
+    if (!resolved.success) return resolved;
+    sessionIds = resolved.data;
+  }
+  let excludedIds: Set<string> | null = null;
+  if (excludeSessionTarget !== undefined) {
+    const resolved = subtreeIds(excludeSessionTarget);
+    if (!resolved.success) return resolved;
+    excludedIds = resolved.data;
   }
 
   const selection = collectSessionViews(ctx, {
@@ -1233,21 +1391,30 @@ export function runSearch(
     sort: "time",
   });
   if (!selection.success) return selection;
-  const views =
-    sessionIds === null
-      ? selection.data.views
-      : selection.data.views.filter((view) => sessionIds.has(view.entry.id));
+  const views = selection.data.views.filter(
+    (view) =>
+      (sessionIds === null || sessionIds.has(view.entry.id)) &&
+      (excludedIds === null || !excludedIds.has(view.entry.id)),
+  );
 
   const needle = options.caseSensitive ? keyword : keyword.toLowerCase();
   const hits: SearchHit[] = [];
   let totalHits = 0;
   const decodeFailures: { id: string; reason: string }[] = [];
+  const distribution: SessionHitCount[] = [];
+  let scan = emptyScanSummary();
   for (const view of views) {
     const file = readSessionFile(view.entry, ctx.catalog);
     if (!file.success) {
       decodeFailures.push({ id: view.entry.id, reason: "解码失败" });
+      scan = accumulateScanSummary(scan, {
+        success: false,
+        frameFailures: file.error.frameFailures ?? 0,
+      });
       continue;
     }
+    scan = accumulateScanSummary(scan, file.data.metrics);
+    let sessionHits = 0;
     for (const event of file.data.decoded.events) {
       for (const unit of collectSearchUnits(event, options.scope)) {
         const haystack = options.caseSensitive ? unit.text : unit.text.toLowerCase();
@@ -1256,6 +1423,7 @@ export function runSearch(
           const at = haystack.indexOf(needle, from);
           if (at < 0) break;
           totalHits += 1;
+          sessionHits += 1;
           if (options.limit === 0 || hits.length < options.limit) {
             // 按 Unicode 码点计算上下文窗口（与 truncateText 同口径；先把 UTF-16 索引折算为码点数），
             // 避免在代理对（surrogate pair）中间切片产生孤立代理项（UTF-8 落盘后会变为 U+FFFD）。
@@ -1279,7 +1447,17 @@ export function runSearch(
         }
       }
     }
+    distribution.push({
+      sessionId: view.entry.id,
+      type: entryIsSubagent(view.entry) ? "subagent" : "main",
+      title: view.metadata.title.value,
+      hits: sessionHits,
+    });
   }
+  distribution.sort((left, right) => {
+    if (left.hits !== right.hits) return right.hits - left.hits;
+    return left.sessionId < right.sessionId ? -1 : left.sessionId > right.sessionId ? 1 : 0;
+  });
   const shown = hits.length;
   const excluded = [...discoveryCoverage.excluded, ...decodeFailures];
   return {
@@ -1299,6 +1477,8 @@ export function runSearch(
         includedCount: views.length,
         excluded,
       },
+      scan,
+      distribution,
     },
   };
 }
@@ -1381,6 +1561,7 @@ export function runStats(
             : [{ id: entry.id, reasons: metadata.reasons }],
         excludedMetricSessions: 0,
         coverage: { scannedCount: 1, includedCount: 1, excluded: [] },
+        scan: accumulateScanSummary(emptyScanSummary(), file.data.metrics),
         single,
       },
     };
@@ -1397,12 +1578,18 @@ export function runStats(
   if (!selection.success) return selection;
   let toolCalls = 0;
   const decodeFailures: { id: string; reason: string }[] = [];
+  let scan = emptyScanSummary();
   for (const view of selection.data.views) {
     const file = readSessionFile(view.entry, ctx.catalog);
     if (!file.success) {
       decodeFailures.push({ id: view.entry.id, reason: "解码失败" });
+      scan = accumulateScanSummary(scan, {
+        success: false,
+        frameFailures: file.error.frameFailures ?? 0,
+      });
       continue;
     }
+    scan = accumulateScanSummary(scan, file.data.metrics);
     toolCalls += countToolCalls(file.data);
   }
   let blankCount = 0;
@@ -1456,6 +1643,7 @@ export function runStats(
         includedCount: selection.data.views.length,
         excluded,
       },
+      scan,
       single: null,
     },
   };
