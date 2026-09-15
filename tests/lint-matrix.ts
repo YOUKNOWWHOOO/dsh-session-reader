@@ -827,6 +827,44 @@ function showCases(): MatrixCase[] {
           "错误: 参数无效（呈现类开关 --turn 仅 md 可用；去掉 --turn，或把 --format 改为 md）\n",
       },
     ),
+    // --probe：规模探测。与呈现类开关同用允许（按同组选项量字节数），与内容范围开关同用拒绝。
+    mcase("show-md-probe", ["show", MAIN_ID, ...healthyBase(), "--probe"], "md", null, 0),
+    mcase(
+      "show-md-probe-with-switches",
+      ["show", MAIN_ID, ...healthyBase(), "--probe", "--events", "--tools", "--truncate", "30"],
+      "md",
+      null,
+      0,
+    ),
+    mcase(
+      "show-md-probe-special",
+      ["show", "session-adv-dollar-03", ...healthyBase(), "--probe"],
+      "md",
+      null,
+      0,
+    ),
+    mcase(
+      "err-show-probe-subagents",
+      ["show", MAIN_ID, ...healthyBase(), "--probe", "--subagents"],
+      "none",
+      null,
+      2,
+      {
+        expectStderr:
+          "错误: 参数无效（--probe 只给规模摘要，与 --subagents 不能同时使用；去掉 --subagents，或去掉 --probe）\n",
+      },
+    ),
+    mcase(
+      "err-show-json-probe",
+      ["show", MAIN_ID, ...healthyBase(), "--format", "json", "--probe"],
+      "none",
+      null,
+      2,
+      {
+        expectStderr:
+          "错误: 参数无效（呈现类开关 --probe 仅 md 可用；去掉 --probe，或把 --format 改为 md）\n",
+      },
+    ),
   );
   cases.push(
     mcase(
@@ -1008,6 +1046,61 @@ function searchCases(): MatrixCase[] {
       "md",
       null,
       0,
+    ),
+    // --exclude-session：反选整棵子树（剔除调用方自己的语料）。
+    mcase(
+      "search-md-exclude-main",
+      ["search", "needle", ...healthyBase(), "--scope", "all", "--exclude-session", MAIN_ID],
+      "md",
+      null,
+      0,
+    ),
+    mcase(
+      "search-md-exclude-child",
+      ["search", "needle", ...healthyBase(), "--exclude-session", CHILD_ID],
+      "md",
+      null,
+      0,
+    ),
+    mcase(
+      "search-md-exclude-and-session",
+      [
+        "search",
+        "needle",
+        ...healthyBase(),
+        "--scope",
+        "all",
+        "--session",
+        MAIN_ID,
+        "--exclude-session",
+        CHILD_ID,
+      ],
+      "md",
+      null,
+      0,
+    ),
+    mcase(
+      "search-json-exclude",
+      ["search", "needle", ...healthyBase(), "--exclude-session", MAIN_ID, "--format", "json"],
+      "json",
+      "search",
+      0,
+    ),
+    mcase(
+      "err-search-exclude-unknown",
+      ["search", "needle", ...healthyBase(), "--exclude-session", "zzzzzzzz"],
+      "none",
+      null,
+      1,
+      { expectStderr: "错误: 目标不存在\n" },
+    ),
+    mcase(
+      "err-search-exclude-short-prefix",
+      ["search", "needle", ...healthyBase(), "--exclude-session", "adv"],
+      "none",
+      null,
+      2,
+      { expectStderr: "错误: 参数无效（会话前缀至少 8 个字符）\n" },
     ),
     mcase(
       "search-md-session-child",
@@ -1292,7 +1385,7 @@ function checkCases(): MatrixCase[] {
 // ------------------------- 结构白名单（手写解析） -------------------------
 
 const HEADING_WHITELIST =
-  /^(会话列表|会话列表（完整）|会话记录|检索结果|统计|完整性校验|时间线|轮次大纲|子代理 \d+(\.\d+)*)$/u;
+  /^(会话列表|会话列表（完整）|会话记录|检索结果|统计|完整性校验|时间线|轮次大纲|每会话命中分布|子代理 \d+(\.\d+)*)$/u;
 const FENCE_OPEN = /^(`{3,})text$/u;
 const FENCE_CLOSE = /^(`{3,})$/u;
 const MARKERS = [
@@ -1558,7 +1651,7 @@ function checkJsonStructure(
       !requireKeys(
         caseId,
         record,
-        ["matches", "total", "truncated", "scope", "totalIsExact"],
+        ["matches", "total", "truncated", "scope", "totalIsExact", "scan", "distribution"],
         problems,
       )
     ) {
@@ -1569,6 +1662,8 @@ function checkJsonStructure(
       problems.push(`${caseId}: totalIsExact 必须为 true（命中总数与 --limit 解耦）`);
     }
     checkCoverage(caseId, record?.coverage, problems);
+    checkScanSummary(caseId, record?.scan, problems);
+    checkDistribution(caseId, record?.distribution, problems);
   } else if (shape === "stats") {
     const kind = record?.kind;
     if (kind === "global") {
@@ -1580,10 +1675,56 @@ function checkJsonStructure(
       problems.push(`${caseId}: stats.kind 非法`);
     }
     checkCoverage(caseId, record?.coverage, problems);
+    checkScanSummary(caseId, record?.scan, problems);
   } else if (shape === "check") {
     if (!requireKeys(caseId, record, ["sessions", "anomalyCount", "coverage"], problems)) return;
     if (!Array.isArray(record?.sessions)) problems.push(`${caseId}: sessions 不是数组`);
     checkCoverage(caseId, record?.coverage, problems);
+  }
+}
+
+/** 扫描摘要结构断言：字段齐备、类型正确、"0 命中也有分母"所需字段不得缺失。 */
+function checkScanSummary(caseId: string, value: unknown, problems: string[]): void {
+  const scan = asRecord(value);
+  if (scan === undefined) {
+    problems.push(`${caseId}: scan 缺失`);
+    return;
+  }
+  for (const key of ["logsDecoded", "eventsRead", "decodeFailures", "frameFailures"]) {
+    if (typeof scan[key] !== "number") problems.push(`${caseId}: scan.${key} 不是数字`);
+  }
+  // 失败份数不得超过纳入会话数：这是"分母"可信度的最低校验。
+  if (
+    typeof scan.decodeFailures === "number" &&
+    typeof scan.logsDecoded === "number" &&
+    scan.decodeFailures + scan.logsDecoded === 0 &&
+    scan.eventsRead !== 0
+  ) {
+    problems.push(`${caseId}: scan 计数自相矛盾（读到事件但既无成功也无失败日志）`);
+  }
+  for (const key of ["observedFrom", "observedTo"]) {
+    const time = scan[key];
+    if (time !== null && typeof time !== "number")
+      problems.push(`${caseId}: scan.${key} 非数字或 null`);
+  }
+}
+
+/** 命中分布结构断言：每项含 sessionId/type/title/hits，且命中数非负。 */
+function checkDistribution(caseId: string, value: unknown, problems: string[]): void {
+  if (!Array.isArray(value)) {
+    problems.push(`${caseId}: distribution 不是数组`);
+    return;
+  }
+  for (const item of value) {
+    const entry = asRecord(item);
+    if (typeof entry?.sessionId !== "string")
+      problems.push(`${caseId}: distribution 项缺少 sessionId`);
+    if (entry?.type !== "main" && entry?.type !== "subagent") {
+      problems.push(`${caseId}: distribution 项 type 非法`);
+    }
+    if (typeof entry?.hits !== "number" || entry.hits < 0) {
+      problems.push(`${caseId}: distribution 项 hits 非法`);
+    }
   }
 }
 

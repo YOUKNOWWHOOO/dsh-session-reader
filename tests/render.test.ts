@@ -32,6 +32,7 @@ import type {
   ListOutcome,
   MetadataView,
   ModelView,
+  ScanSummary,
   SearchOutcome,
   SessionCoverage,
   SessionEntry,
@@ -92,6 +93,19 @@ function coverage(overrides: Partial<SessionCoverage> = {}): SessionCoverage {
     scannedCount: overrides.scannedCount ?? includedCount + excluded.length,
     includedCount,
     excluded,
+  };
+}
+
+/** 扫描摘要：默认"一份日志、零事件、零失败、无时间范围"；测试按需覆盖。 */
+function scanSummary(overrides: Partial<ScanSummary> = {}): ScanSummary {
+  return {
+    logsDecoded: 0,
+    eventsRead: 0,
+    decodeFailures: 0,
+    frameFailures: 0,
+    observedFrom: null,
+    observedTo: null,
+    ...overrides,
   };
 }
 
@@ -174,6 +188,21 @@ function decodedFile(events: Record<string, unknown>[] = RENDER_EVENTS): Decoded
     frames: 3,
     tornStart: undefined,
     sizeBytes: 2048,
+    metrics: metricsOf(events),
+  };
+}
+
+/** 由事件列表计算读取度量（与 store 层 `readSessionFile` 的口径一致）。 */
+function metricsOf(events: readonly Record<string, unknown>[]): DecodedSessionFile["metrics"] {
+  const times = events
+    .map((event) => (typeof event.time === "number" ? event.time : undefined))
+    .filter((time): time is number => time !== undefined);
+  return {
+    success: true,
+    eventCount: events.length,
+    frameFailures: 0,
+    observedFrom: times.length === 0 ? null : Math.min(...times),
+    observedTo: times.length === 0 ? null : Math.max(...times),
   };
 }
 
@@ -208,6 +237,7 @@ function showOptions(overrides: Partial<ShowMdOptions> = {}): ShowMdOptions {
     headers: false,
     truncate: 0,
     subagents: false,
+    probe: false,
     turnRange: null,
     seqRange: null,
     head: 0,
@@ -586,6 +616,8 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
       scope: "all",
       totalIsExact: true,
       coverage: coverage({ includedCount: 2 }),
+      scan: scanSummary(),
+      distribution: [],
     };
     const md = renderSearchMd(outcome);
     assertDocumentShape(md.content);
@@ -621,6 +653,8 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
         includedCount: 1,
         excluded: [{ id: "session-bad-09", reason: "解码失败" }],
       }),
+      scan: scanSummary({ logsDecoded: 1, eventsRead: 3 }),
+      distribution: [{ sessionId: "session-aaa-01", type: "main", title: "测试标题", hits: 0 }],
     };
     const md = renderSearchMd(outcome);
     assertDocumentShape(md.content);
@@ -650,6 +684,7 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
       unavailable: [{ id: "session-bbb-02", reasons: ["projcache 记录缺失"] }],
       excludedMetricSessions: 0,
       coverage: coverage({ includedCount: 3 }),
+      scan: scanSummary(),
       single: null,
     };
     const md = renderStatsMd(global);
@@ -741,6 +776,7 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
       unavailable: [],
       excludedMetricSessions: 0,
       coverage: coverage({ includedCount: 1 }),
+      scan: scanSummary(),
       single: singleStats,
     };
     const unavailableMd = renderStatsMd(base);
@@ -878,6 +914,7 @@ describe("render 边界与分支", () => {
       unavailable: [],
       excludedMetricSessions: 0,
       coverage: coverage({ includedCount: 1 }),
+      scan: scanSummary(),
       single: {
         id: "session-aaa-01",
         title: field<string>(null, true),
@@ -930,6 +967,8 @@ describe("render 边界与分支", () => {
       scope: "text",
       totalIsExact: true,
       coverage: coverage({ includedCount: 1 }),
+      scan: scanSummary(),
+      distribution: [],
     };
     const md = renderSearchMd(outcome);
     assert.equal(md.content.includes("已截断"), false);
@@ -949,6 +988,163 @@ describe("render 边界与分支", () => {
     const rendered = renderListMd(outcome, { full: false });
     assert.equal(
       rendered.content.includes("元数据不可用：`session-ccc-03`（`identity 不符`）"),
+      true,
+    );
+  });
+
+  it("search 扫描摘要与每会话命中分布（0 命中的分母 + 剔除污染的依据）", () => {
+    const outcome: SearchOutcome = {
+      hits: [
+        {
+          sessionId: "session-mine-01",
+          seq: 3,
+          time: 10,
+          label: "assistant",
+          excerpt: "…我的笔记里写过 write failed…",
+        },
+      ],
+      totalHits: 3,
+      scannedSessions: 3,
+      truncated: false,
+      searchedSessions: 3,
+      scope: "all",
+      totalIsExact: true,
+      coverage: coverage({ includedCount: 3, excluded: [{ id: "x-09", reason: "解码失败" }] }),
+      scan: scanSummary({
+        logsDecoded: 3,
+        eventsRead: 120,
+        decodeFailures: 1,
+        frameFailures: 2,
+        observedFrom: 1_700_000_000_000,
+        observedTo: 1_700_000_060_000,
+      }),
+      distribution: [
+        { sessionId: "session-mine-01", type: "main", title: "我的调查会话", hits: 3 },
+        { sessionId: "session-target-02", type: "main", title: "被调查会话", hits: 0 },
+        { sessionId: "child-03", type: "subagent", title: null, hits: 0 },
+      ],
+    };
+    const md = renderSearchMd(outcome);
+    assertDocumentShape(md.content);
+    // 分母：读了什么、读了多少、失败多少、覆盖到什么时间。
+    assert.equal(
+      md.content.includes(
+        "扫描明细：解码日志 3 份；读到事件 120 个；解码失败 1 份；帧解压失败 2 帧",
+      ),
+      true,
+    );
+    assert.match(
+      md.content,
+      /事件时间范围：\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2} ~ /u,
+    );
+    // 污染可见：逐会话分布含 0 命中项，且给出剔除手段。
+    assert.equal(md.content.includes("## 每会话命中分布"), true);
+    assert.equal(
+      md.content.includes("| 会话 | 类型 | 标题 | 命中 |\n| --- | --- | --- | --- |"),
+      true,
+    );
+    assert.match(md.content, /\| `session-mine-01` \| 主 \| `我的调查会话` \| 3 \|/u);
+    assert.match(md.content, /\| `session-target-02` \| 主 \| `被调查会话` \| 0 \|/u);
+    assert.match(md.content, /\| `child-03` \| 子 \| - \| 0 \|/u);
+    assert.equal(
+      md.content.includes("用 --exclude-session <标识> 排除调用方自己的会话及其子代理子树。"),
+      true,
+    );
+    const document = JSON.parse(renderSearchJson(outcome)) as {
+      scan: ScanSummary;
+      distribution: Array<{ sessionId: string; hits: number }>;
+    };
+    assert.equal(document.scan.eventsRead, 120);
+    assert.deepEqual(
+      document.distribution.map((item) => item.hits),
+      [3, 0, 0],
+    );
+  });
+
+  it("search 分布为空时不输出分布区块（避免空表触发 MD055）", () => {
+    const outcome: SearchOutcome = {
+      hits: [],
+      totalHits: 0,
+      scannedSessions: 0,
+      truncated: false,
+      searchedSessions: 0,
+      scope: "text",
+      totalIsExact: true,
+      coverage: coverage(),
+      scan: scanSummary(),
+      distribution: [],
+    };
+    const md = renderSearchMd(outcome);
+    assertDocumentShape(md.content);
+    assert.equal(md.content.includes("每会话命中分布"), false);
+    assert.equal(md.content.includes("事件时间范围：- ~ -"), true);
+  });
+
+  it("stats 全局与单会话都带扫描摘要", () => {
+    const global: StatsOutcome = {
+      kind: "global",
+      sessionCount: 1,
+      blankCount: 0,
+      turns: 0,
+      steps: 0,
+      toolCalls: 0,
+      tokens: { uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      earliestCreatedAt: null,
+      latestActivityAt: null,
+      totalSizeBytes: 0,
+      unavailable: [],
+      excludedMetricSessions: 0,
+      coverage: coverage({ includedCount: 1 }),
+      scan: scanSummary({ logsDecoded: 1, eventsRead: 7 }),
+      single: null,
+    };
+    const md = renderStatsMd(global);
+    assertDocumentShape(md.content);
+    assert.equal(
+      md.content.includes("扫描明细：解码日志 1 份；读到事件 7 个；解码失败 0 份；帧解压失败 0 帧"),
+      true,
+    );
+    const json = JSON.parse(renderStatsJson(global)) as { scan: ScanSummary };
+    assert.equal(json.scan.logsDecoded, 1);
+  });
+
+  it("--probe：只给规模摘要，正文不落盘且预计字节数等于完整导出的字节数", () => {
+    // 预计字节数必须等于"以同一组选项做完整导出"的字节数，因此对照物要用默认选项渲染。
+    const full = renderShowMd(node(), showOptions());
+    const probed = renderShowMd(node(), showOptions({ probe: true }));
+    assertDocumentShape(probed.content);
+    assert.equal(probed.content.includes("- 预计字节数："), true);
+    assert.equal(probed.content.includes("- 消息数：1 用户 / 1 助手"), true);
+    assert.equal(probed.content.includes("## 时间线"), false);
+    assert.equal(probed.content.includes("用户内容 USER-TEXT"), false);
+    assert.equal(
+      probed.content.includes(
+        `- 预计字节数：${Buffer.byteLength(full.content, "utf8")}（完整导出正文大小，按 UTF-8 计）`,
+      ),
+      true,
+    );
+    assert.match(probed.summary, /（规模探测）；事件 \d+ 个；预计正文 \d+ 字节$/u);
+  });
+
+  it("--probe：正文规模越大，探测产物的相对开销越小", () => {
+    // 用多轮消息把正文撑大：探测产物只随轮次大纲以外的头部增长，而完整导出随正文线性增长。
+    const manyEvents: Record<string, unknown>[] = [];
+    for (let turn = 1; turn <= 40; turn += 1) {
+      manyEvents.push({ type: "turn/start", seq: (turn - 1) * 2, time: turn, data: { turn } });
+      manyEvents.push({
+        type: "user/message",
+        seq: (turn - 1) * 2 + 1,
+        time: turn,
+        data: { role: "user", content: [{ type: "text", text: `第 ${turn} 轮正文`.repeat(40) }] },
+      });
+    }
+    const full = renderShowMd(node([], manyEvents), showOptions());
+    const probed = renderShowMd(node([], manyEvents), showOptions({ probe: true }));
+    assert.equal(probed.content.length * 10 < full.content.length, true);
+    assert.equal(
+      probed.content.includes(
+        `- 预计字节数：${Buffer.byteLength(full.content, "utf8")}（完整导出正文大小，按 UTF-8 计）`,
+      ),
       true,
     );
   });

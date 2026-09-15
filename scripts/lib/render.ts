@@ -27,8 +27,10 @@ import type {
   ListEntry,
   ListOutcome,
   ModelView,
+  ScanSummary,
   SearchOutcome,
   SessionCoverage,
+  SessionHitCount,
   SessionNode,
   SingleSessionStats,
   StatsOutcome,
@@ -39,6 +41,9 @@ const TURN_SUMMARY_LIMIT = 200;
 const METADATA_UNAVAILABLE_TEXT = "元数据不可用";
 const EMPTY_VALUE = "-";
 const TAB_WIDTH = 4;
+
+/** 每会话命中分布表格里标题的最大长度（超出按码点截断，避免单行无界增长）。 */
+const DISTRIBUTION_TITLE_LIMIT = 40;
 
 /** 渲染结果：文件内容 + stdout 用的命令级摘要。 */
 export interface RenderedOutput {
@@ -56,6 +61,11 @@ export interface ShowMdOptions {
   readonly headers: boolean;
   readonly truncate: number;
   readonly subagents: boolean;
+  /**
+   * 只给规模摘要、不落正文（对应"大体积产物缺先探测规模的两阶段能力"）：
+   * 产物只含头部 KV 块与预计字节数，调用方可据此决定是否再执行一次完整导出。
+   */
+  readonly probe: boolean;
   /** turn 区间（含端点）；null 表示不筛选。 */
   readonly turnRange: IntegerRange | null;
   /** seq 区间（含端点）；null 表示不筛选。 */
@@ -182,6 +192,43 @@ export function coverageSections(coverage: SessionCoverage): string[] {
     sections.push(`排除会话：${inlineValue(excluded.id)}（${inlineValue(excluded.reason)}）`);
   }
   return sections;
+}
+
+/**
+ * 扫描摘要的 md 片段（"0 命中"的分母）：
+ * 解码日志份数、读到的事件数、解码失败份数、帧解压失败帧数、观测到的事件时间范围。
+ * 时间范围为空时显示 `-`（禁止留空或省字段，否则调用方无法区分"没有事件"与"没统计"）。
+ */
+export function scanSections(scan: ScanSummary): string[] {
+  const from = scan.observedFrom === null ? EMPTY_VALUE : formatLocalIso(scan.observedFrom);
+  const to = scan.observedTo === null ? EMPTY_VALUE : formatLocalIso(scan.observedTo);
+  return [
+    `扫描明细：解码日志 ${scan.logsDecoded} 份；读到事件 ${scan.eventsRead} 个；解码失败 ${scan.decodeFailures} 份；帧解压失败 ${scan.frameFailures} 帧`,
+    `事件时间范围：${from} ~ ${to}`,
+  ];
+}
+
+/**
+ * 每会话命中分布的 md 表格（含 0 命中的纳入会话）。
+ *
+ * 存在理由（对应"检索被调用方自己的语料污染"）：检索在全库上做，发起检索的会话与它派出的子代理
+ * 会话也在库里，调查结论与复述过的错误串都会被命中。只给一个总数会把污染藏起来；给出逐会话分布，
+ * 调用方才能区分"真实会话命中"与"自己的笔记命中"。
+ */
+export function distributionSections(distribution: readonly SessionHitCount[]): string[] {
+  if (distribution.length === 0) return [];
+  const rows = distribution.map((item) => {
+    const title =
+      item.title === null
+        ? EMPTY_VALUE
+        : tableCellValue(truncateText(item.title, DISTRIBUTION_TITLE_LIMIT));
+    return `| ${tableCellValue(item.sessionId)} | ${item.type === "subagent" ? "子" : "主"} | ${title} | ${item.hits} |`;
+  });
+  return [
+    "## 每会话命中分布",
+    ["| 会话 | 类型 | 标题 | 命中 |", "| --- | --- | --- | --- |", ...rows].join("\n"),
+    "用 --exclude-session <标识> 排除调用方自己的会话及其子代理子树。",
+  ];
 }
 
 // ------------------------- list -------------------------
@@ -385,27 +432,39 @@ interface SessionEventStats {
   readonly turns: number;
   readonly steps: number;
   readonly toolCalls: number;
+  readonly userMessages: number;
+  readonly assistantMessages: number;
 }
 
 function computeEventStats(file: DecodedSessionFile): SessionEventStats {
   let turns = 0;
   let steps = 0;
   let toolCalls = 0;
+  let userMessages = 0;
+  let assistantMessages = 0;
   for (const event of file.decoded.events) {
     const type = eventType(event);
     if (type === "turn/start") turns += 1;
     else if (type === "step/start") steps += 1;
     else if (type === "tool/call") toolCalls += 1;
+    else if (type === "user/message") userMessages += 1;
+    else if (type === "assistant/message") assistantMessages += 1;
   }
-  return { turns, steps, toolCalls };
+  return { turns, steps, toolCalls, userMessages, assistantMessages };
 }
 
 function optionalInline(valueText: string | undefined): string {
   return valueText === undefined ? EMPTY_VALUE : inlineValue(valueText);
 }
 
-/** show 头部 KV 块（一个多行段落；值经载体隔离；f2 R2-4）。 */
-function nodeKvBlock(node: SessionNode): string {
+/**
+ * show 头部 KV 块（一个多行段落；值经载体隔离；f2 R2-4）。
+ *
+ * `estimatedBytes` 仅在已知时输出：`--probe` 会先做一次完整渲染来量出正文字节数
+ * （以"它自己的完整副本"为准，而不是估算公式），此时该字段必填；
+ * 常规导出不需要它（产物本身就是正文），传 undefined 即不输出，避免"顺手算一遍完整正文"的隐性成本。
+ */
+function nodeKvBlock(node: SessionNode, estimatedBytes?: number): string {
   const header = node.file.decoded.header;
   const usage = sumUsage(node.file);
   const stats = computeEventStats(node.file);
@@ -433,6 +492,10 @@ function nodeKvBlock(node: SessionNode): string {
   lines.push(
     `- 令牌：输入 ${usage.input}；输出 ${usage.output}；缓存读 ${usage.cacheRead}；推理 ${usage.reasoning}`,
   );
+  if (estimatedBytes !== undefined) {
+    lines.push(`- 预计字节数：${estimatedBytes}（完整导出正文大小，按 UTF-8 计）`);
+    lines.push(`- 消息数：${stats.userMessages} 用户 / ${stats.assistantMessages} 助手`);
+  }
   const anomalyDetails = node.file.decoded.anomalies.map((anomaly) => inlineValue(anomaly.detail));
   if (anomalyDetails.length > 0) lines.push(`- 异常：${anomalyDetails.join("；")}`);
   return lines.join("\n");
@@ -690,6 +753,8 @@ function outlineSections(node: SessionNode, options: ShowMdOptions): string[] {
  * 范围语义：`--turn`/`--seq` 作用于每个节点（含子代理，各自以自身事件流计轮次）；
  * `--head`/`--tail` 只作用于根节点——子代理被 `--subagents` 显式要求导出，静默截掉它们会让
  * "导出了全部子代理"这一预期落空，且产物中无从察觉。该不对称由 SKILL.md 显式声明。
+ *
+ * `--probe` 只作用于根节点：探测规模是一次"读之前"的动作，对子代理再各给一份正文就失去了意义。
  */
 function renderNodeSections(
   node: SessionNode,
@@ -698,8 +763,12 @@ function renderNodeSections(
   childPath: string,
   isRoot: boolean,
 ): string[] {
-  const sections: string[] = [nodeKvBlock(node)];
-  if (options.summary) {
+  const sections: string[] = [
+    nodeKvBlock(node, isRoot && options.probe ? probeSizeOf(node, options) : undefined),
+  ];
+  if (options.probe) {
+    // 探测模式下不输出任何会话正文：产物只回答"有多大、有多少条"。
+  } else if (options.summary) {
     sections.push(`${"#".repeat(level)} 轮次大纲`);
     sections.push(...outlineSections(node, options));
   } else {
@@ -731,11 +800,25 @@ function renderNodeSections(
 export function renderShowMd(node: SessionNode, options: ShowMdOptions): RenderedOutput {
   const sections = ["# 会话记录", ...renderNodeSections(node, options, 2, "", true)];
   const stats = computeEventStats(node.file);
-  const summary = options.summary
-    ? `会话 ${node.entry.id}（摘要）；轮次 ${stats.turns} 个`
-    : `会话 ${node.entry.id}；事件 ${node.file.decoded.events.length} 个` +
-      (options.subagents ? `；子代理 ${countNodes(node) - 1} 个` : "");
+  const summary = options.probe
+    ? `会话 ${node.entry.id}（规模探测）；事件 ${node.file.decoded.events.length} 个；预计正文 ${probeSizeOf(node, options)} 字节`
+    : options.summary
+      ? `会话 ${node.entry.id}（摘要）；轮次 ${stats.turns} 个`
+      : `会话 ${node.entry.id}；事件 ${node.file.decoded.events.length} 个` +
+        (options.subagents ? `；子代理 ${countNodes(node) - 1} 个` : "");
   return { content: assembleDocument(sections), summary };
+}
+
+/**
+ * 完整导出的正文字节数（UTF-8），供 `--probe` 给出"读之前"的规模。
+ *
+ * 实现取"以同一组选项渲染一份不探测的副本"的字节长度，而不是估算公式：
+ * 估算要重复渲染规则（含围栏动态长度、截断、归一化），必然与真实产出漂移，
+ * 而"预计 N 字节"一旦漂移就会让调用方的容量判断失效。代价是探测时多做一次渲染（CPU 换确定性）。
+ */
+function probeSizeOf(node: SessionNode, options: ShowMdOptions): number {
+  const full = renderShowMd(node, { ...options, probe: false });
+  return Buffer.byteLength(full.content, "utf8");
 }
 
 function countNodes(node: SessionNode): number {
@@ -914,13 +997,15 @@ export function renderSearchMd(outcome: SearchOutcome): RenderedOutput {
     `检索范围：${outcome.scope}（${SCOPE_COVERAGE_TEXT[outcome.scope]}）；命中总数 ${outcome.totalHits} 为${outcome.totalIsExact ? "精确值" : "下界"}`,
   );
   sections.push(...coverageSections(outcome.coverage));
+  sections.push(...scanSections(outcome.scan));
+  sections.push(...distributionSections(outcome.distribution));
   return {
     content: assembleDocument(sections),
     summary: `命中 ${outcome.totalHits} 处，显示 ${outcome.hits.length} 处`,
   };
 }
 
-/** search JSON：{ matches, total, truncated, scope, totalIsExact, coverage }。 */
+/** search JSON：{ matches, total, truncated, scope, totalIsExact, coverage, scan, distribution }。 */
 export function renderSearchJson(outcome: SearchOutcome): string {
   const document = {
     matches: outcome.hits.map((hit) => ({
@@ -935,6 +1020,8 @@ export function renderSearchJson(outcome: SearchOutcome): string {
     scope: outcome.scope,
     totalIsExact: outcome.totalIsExact,
     coverage: outcome.coverage,
+    scan: outcome.scan,
+    distribution: outcome.distribution,
   };
   return `${JSON.stringify(document, null, 2)}\n`;
 }
@@ -991,6 +1078,7 @@ export function renderStatsMd(outcome: StatsOutcome): RenderedOutput {
       );
     }
     sections.push(...coverageSections(outcome.coverage));
+    sections.push(...scanSections(outcome.scan));
     return {
       content: assembleDocument(sections),
       summary: formatStatsSummary(outcome),
@@ -1023,6 +1111,7 @@ export function renderStatsMd(outcome: StatsOutcome): RenderedOutput {
     );
   }
   sections.push(...coverageSections(outcome.coverage));
+  sections.push(...scanSections(outcome.scan));
   return {
     content: assembleDocument(sections),
     summary: formatStatsSummary(outcome),
@@ -1054,6 +1143,7 @@ export function renderStatsJson(outcome: StatsOutcome): string {
         metadata: { available: single.metadataAvailable, reasons: single.metadataReasons },
       },
       coverage: outcome.coverage,
+      scan: outcome.scan,
     };
     return `${JSON.stringify(document, null, 2)}\n`;
   }
@@ -1070,6 +1160,7 @@ export function renderStatsJson(outcome: StatsOutcome): string {
     totalSizeBytes: outcome.totalSizeBytes,
     unavailable: outcome.unavailable,
     coverage: outcome.coverage,
+    scan: outcome.scan,
   };
   return `${JSON.stringify(document, null, 2)}\n`;
 }

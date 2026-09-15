@@ -268,6 +268,11 @@ export const COMMANDS: readonly CommandSpec[] = [
         valueKind: "integer",
         description: "只呈现筛选结果的末 N 条事件（0=不限；仅 md）",
       },
+      {
+        name: "--probe",
+        kind: "switch",
+        description: "只给规模摘要（轮次/消息数/预计字节数），不落正文（仅 md）",
+      },
     ],
   },
   {
@@ -309,6 +314,13 @@ export const COMMANDS: readonly CommandSpec[] = [
         valueName: "<会话标识>",
         valueKind: "string",
         description: "只检索该会话及其子代理子树（与 show 目标同语法）",
+      },
+      {
+        name: "--exclude-session",
+        kind: "value",
+        valueName: "<会话标识>",
+        valueKind: "string",
+        description: "排除该会话及其子代理子树（用于剔除调用方自己的语料；与 show 目标同语法）",
       },
       WORKSPACE_OPTION,
       SINCE_OPTION,
@@ -652,6 +664,7 @@ export function validateCommandOptions(parsed: ParsedCommand): RunFailure | null
     "--seq",
     "--head",
     "--tail",
+    "--probe",
   ];
   const presentPresentation = presentation.filter((name) => parsed.options.has(name));
   if (format !== "md" && presentPresentation.length > 0) {
@@ -677,6 +690,17 @@ export function validateCommandOptions(parsed: ParsedCommand): RunFailure | null
       classification: "参数无效",
       exitCode: 2,
       detail: "--head 与 --tail 不能同时使用；只保留其中一个",
+    };
+  }
+  // --probe 与 --subagents 互斥：探测的意义是"读之前先问规模"，而 --subagents 会把产物扩展到整棵
+  // 子代理树（每棵子树各自是一份正文），两者同用既非探测也非导出。其余呈现类开关与范围开关**允许**
+  // 与 --probe 同用：探测会按同一组开关渲染一份副本并据实报告字节数，因此调用方可以用
+  // `--probe --events --truncate 500` 这样的组合量出"带这些选项的完整导出有多大"，正是本能力的用途。
+  if (parsed.options.has("--probe") && parsed.options.has("--subagents")) {
+    return {
+      classification: "参数无效",
+      exitCode: 2,
+      detail: "--probe 只给规模摘要，与 --subagents 不能同时使用；去掉 --subagents，或去掉 --probe",
     };
   }
   if (presentRange.length === 0) return null;
@@ -792,6 +816,7 @@ function renderShow(
     headers: optionSwitch(parsed, "--headers"),
     truncate: optionInteger(parsed, "--truncate", 0),
     subagents: includeSubagents,
+    probe: optionSwitch(parsed, "--probe"),
     turnRange: readRange(parsed, "--turn", 1),
     seqRange: readRange(parsed, "--seq", 0),
     head: optionInteger(parsed, "--head", 0),
@@ -818,6 +843,7 @@ function renderSearch(parsed: ParsedCommand, ctx: StoreContext, format: "md" | "
       limit: optionInteger(parsed, "--limit", 100),
     },
     optionValue(parsed, "--session"),
+    optionValue(parsed, "--exclude-session"),
   );
   if (!outcome.success) return { kind: "failure", failure: mapStoreError(outcome.error) };
   const summary = `命中 ${outcome.data.totalHits} 处，显示 ${outcome.data.hits.length} 处`;
