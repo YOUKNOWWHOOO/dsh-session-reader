@@ -15,7 +15,7 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 
 ## 输出使用规定
 
-- `--output-dir` 必须指向当前项目的临时目录（惯例 `<项目>/tmp/` 或 `<项目>/.tmp/`）；不得指向 dsh 主目录。
+- `--output-dir` 必须由调用方显式指定（无默认值，缺省退出 2）；惯例指向当前项目的临时目录（`<项目>/tmp/` 或 `<项目>/.tmp/`）。工具对目录位置零假定、不校验，不限制其是否位于 dsh 主目录内。
 - 终端只输出两行：输出文件绝对路径与摘要；会话正文只写入输出文件（UTF-8 无 BOM、LF、末尾恰一个换行）。
 - 输出文件绝不覆盖已存在的文件。
 - 输出文件可能含会话明文，按临时产物管理，不提交、不长期保留。
@@ -49,6 +49,12 @@ node scripts/session-reader.ts check  [<id|唯一前缀|last>] --output-dir <pro
 
 全局选项：`--dsh-home <路径>`（默认 `$DSH_HOME`，否则 `~\.dsh`）、`--lib-root <目录>`（官方格式库解析锚点，默认 `<dsh-home>\profiles\node_modules`）、`--format`、`-h/--help`。
 
+选项互斥（违者退出 2）：
+
+- `--format json|jsonl` 下禁止一切**呈现类开关**（`--role`、`--thinking`、`--tools`、`--events`、`--headers`、`--truncate`）——这六个开关仅 `md` 可用。
+- `--format jsonl` 下另禁止**内容范围开关** `--summary` 与 `--subagents`；`--format json` 允许这两个开关。
+- `stats` 指定目标（单会话）时禁止范围过滤选项 `--workspace`/`--since`/`--until`/`--origin`（不做静默忽略）。
+
 选项终止符：`--` 之后的所有 token 一律作为位置参数（用于以 `-` 开头的关键词，如 `search -- "- item"`）。
 
 示例（PowerShell）：
@@ -62,7 +68,7 @@ node scripts/session-reader.ts search compact --output-dir <project_tmp> --scope
 
 ## 默认参数组合（默认调用）
 
-默认组合 = 仅写「命令 + 目标（如需要） + `--output-dir`」，其余选项全部取默认值（含 `--dsh-home`、`--lib-root`、`--format` 等）。`--output-dir` 是默认组合中唯一必须显式提供的位置类参数，且必须遵守上文「输出使用规定」（指向项目临时目录，不得指向 dsh 主目录）。
+默认组合 = 仅写「命令 + 目标（如需要） + `--output-dir`」，其余选项全部取默认值（含 `--dsh-home`、`--lib-root`、`--format` 等）。`--output-dir` 是默认组合中唯一必须显式提供的位置类参数，且必须遵守上文「输出使用规定」（由调用方显式指定，惯例指向项目临时目录）。
 
 ```text
 node scripts/session-reader.ts list                      --output-dir <project_tmp>
@@ -81,7 +87,7 @@ node scripts/session-reader.ts check                     --output-dir <project_t
 ## 退出码与错误
 
 - `0` 成功（含 0 命中等空结果）；`1` 目标不存在（含前缀歧义）；`2` 参数错误；`3` 数据/IO 错误。
-- stderr 只输出 `错误: <分类>`；歧义目标在分类后附候选数。
+- stderr 只输出单行 `错误: <分类>`，分类后可附一段括号说明：歧义目标为 `（候选 N 个）`；参数错误为冲突或缺失的选项名、调用方自身在子命令位或选项位给出的 token（如 `错误: 参数无效（--format jsonl 与 --thinking 不能同时使用）`）。说明中不含会话内容、会话 ID、用户名与 dsh 数据路径。
 
 ## 使用要点
 
