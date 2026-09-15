@@ -741,7 +741,93 @@ function showCases(): MatrixCase[] {
         0,
       ),
     );
+    cases.push(
+      mcase(
+        `show-md-special-range-${id}`,
+        ["show", id, ...healthyBase(), "--turn", "1-2", "--seq", "0-3", "--events"],
+        "md",
+        null,
+        0,
+      ),
+    );
   }
+  // 范围选择穷尽：--turn/--seq 区间与单值形态 × --head/--tail × 可见性开关。
+  const turnArgs = ["1", "1-1", "1-2", "0-1"] as const;
+  const seqArgs = ["0", "0-0", "0-2", "2-4"] as const;
+  for (let index = 0; index < 16; index += 1) {
+    const args = ["show", SHOW_TARGETS[index % 4], ...healthyBase()];
+    if (index % 4 !== 3) args.push("--turn", turnArgs[index % 4]);
+    if (index % 4 !== 2) args.push("--seq", seqArgs[index % 4]);
+    if (index % 3 === 0) args.push("--events", "--headers");
+    if (index % 3 === 1) args.push("--thinking", "--tools");
+    if (index % 5 === 0) args.push("--head", "2");
+    if (index % 5 === 1) args.push("--tail", "2");
+    cases.push(mcase(`show-md-range-${index}`, args, "md", null, 0));
+  }
+  cases.push(
+    mcase("show-md-head-zero", ["show", MAIN_ID, ...healthyBase(), "--head", "0"], "md", null, 0),
+    mcase("show-md-tail-zero", ["show", MAIN_ID, ...healthyBase(), "--tail", "0"], "md", null, 0),
+    mcase(
+      "show-md-range-with-subagents",
+      ["show", MAIN_ID, ...healthyBase(), "--subagents", "--turn", "1-1"],
+      "md",
+      null,
+      0,
+    ),
+    mcase(
+      "show-md-range-out-of-bounds",
+      ["show", MAIN_ID, ...healthyBase(), "--turn", "98-99"],
+      "md",
+      null,
+      0,
+    ),
+    mcase(
+      "err-show-head-tail",
+      ["show", MAIN_ID, ...healthyBase(), "--head", "1", "--tail", "1"],
+      "none",
+      null,
+      2,
+      { expectStderr: "错误: 参数无效（--head 与 --tail 不能同时使用；只保留其中一个）\n" },
+    ),
+    mcase(
+      "err-show-summary-turn",
+      ["show", MAIN_ID, ...healthyBase(), "--summary", "--turn", "1"],
+      "none",
+      null,
+      2,
+      {
+        expectStderr:
+          "错误: 参数无效（--summary 与 --turn 不能同时使用；去掉 --turn，或去掉 --summary）\n",
+      },
+    ),
+    mcase(
+      "err-show-bad-turn",
+      ["show", MAIN_ID, ...healthyBase(), "--turn", "0"],
+      "none",
+      null,
+      2,
+      { expectStderr: "错误: 参数无效（--turn 取值应为 <A-B> 或 <A>（正整数，B 不小于 A））\n" },
+    ),
+    mcase(
+      "err-show-bad-seq",
+      ["show", MAIN_ID, ...healthyBase(), "--seq", "3-1"],
+      "none",
+      null,
+      2,
+      { expectStderr: "错误: 参数无效（--seq 取值应为 <A-B> 或 <A>（非负整数，B 不小于 A））\n" },
+    ),
+    mcase(
+      "err-show-json-turn",
+      ["show", MAIN_ID, ...healthyBase(), "--format", "json", "--turn", "1"],
+      "none",
+      null,
+      2,
+      {
+        expectStderr:
+          "错误: 参数无效（呈现类开关 --turn 仅 md 可用；去掉 --turn，或把 --format 改为 md）\n",
+      },
+    ),
+  );
   cases.push(
     mcase(
       "show-md-grandchild-subagents",
@@ -800,7 +886,10 @@ function showCases(): MatrixCase[] {
       "none",
       null,
       2,
-      { expectStderr: "错误: 参数无效（--format json 与呈现类开关 --thinking 不能同时使用）\n" },
+      {
+        expectStderr:
+          "错误: 参数无效（呈现类开关 --thinking 仅 md 可用；去掉 --thinking，或把 --format 改为 md）\n",
+      },
     ),
     mcase(
       "err-show-jsonl-summary",
@@ -808,7 +897,10 @@ function showCases(): MatrixCase[] {
       "none",
       null,
       2,
-      { expectStderr: "错误: 参数无效（--format jsonl 与 --summary 不能同时使用）\n" },
+      {
+        expectStderr:
+          "错误: 参数无效（--summary 不能与 --format jsonl 同时使用；去掉 --summary，或把 --format 改为 json）\n",
+      },
     ),
     mcase(
       "err-show-jsonl-subagents",
@@ -816,7 +908,10 @@ function showCases(): MatrixCase[] {
       "none",
       null,
       2,
-      { expectStderr: "错误: 参数无效（--format jsonl 与 --subagents 不能同时使用）\n" },
+      {
+        expectStderr:
+          "错误: 参数无效（--subagents 不能与 --format jsonl 同时使用；去掉 --subagents，或把 --format 改为 json）\n",
+      },
     ),
     mcase("err-show-missing-target", ["show", "zzzzzzzz", ...healthyBase()], "none", null, 1, {
       expectStderr: "错误: 目标不存在\n",
@@ -905,6 +1000,77 @@ function searchCases(): MatrixCase[] {
     args.push("--scope", scopes[index % 3], "--limit", ["1", "0"][index % 2]);
     cases.push(mcase(`search-json-${index}`, args, "json", "search", 0));
   }
+  // --session 限定：主会话自身与子树、子代理自身、前缀形态、以及无匹配路径。
+  cases.push(
+    mcase(
+      "search-md-session-main",
+      ["search", "needle", ...healthyBase(), "--scope", "all", "--session", MAIN_ID],
+      "md",
+      null,
+      0,
+    ),
+    mcase(
+      "search-md-session-child",
+      ["search", "needle", ...healthyBase(), "--scope", "all", "--session", CHILD_ID],
+      "md",
+      null,
+      0,
+    ),
+    mcase(
+      "search-md-session-prefix",
+      ["search", "needle", ...healthyBase(), "--session", "adv-main"],
+      "md",
+      null,
+      0,
+    ),
+    mcase(
+      "search-md-session-last",
+      ["search", "needle", ...healthyBase(), "--session", "last"],
+      "md",
+      null,
+      0,
+    ),
+    mcase(
+      "search-md-session-with-workspace",
+      [
+        "search",
+        "needle",
+        ...healthyBase(),
+        "--session",
+        MAIN_ID,
+        "--workspace",
+        "user_projects",
+        "--since",
+        "0",
+      ],
+      "md",
+      null,
+      0,
+    ),
+    mcase(
+      "search-json-session",
+      ["search", "needle", ...healthyBase(), "--session", MAIN_ID, "--format", "json"],
+      "json",
+      "search",
+      0,
+    ),
+    mcase(
+      "err-search-session-unknown",
+      ["search", "needle", ...healthyBase(), "--session", "zzzzzzzz"],
+      "none",
+      null,
+      1,
+      { expectStderr: "错误: 目标不存在\n" },
+    ),
+    mcase(
+      "err-search-session-short-prefix",
+      ["search", "needle", ...healthyBase(), "--session", "adv"],
+      "none",
+      null,
+      2,
+      { expectStderr: "错误: 参数无效（会话前缀至少 8 个字符）\n" },
+    ),
+  );
   cases.push(
     mcase("err-search-missing-keyword", ["search", ...healthyBase()], "none", null, 2, {
       expectStderr: "错误: 参数无效（缺少位置参数: <关键词>）\n",
@@ -1017,7 +1183,10 @@ function statsCases(): MatrixCase[] {
       "none",
       null,
       2,
-      { expectStderr: "错误: 参数无效（单会话统计不接受范围过滤选项: --since）\n" },
+      {
+        expectStderr:
+          "错误: 参数无效（单会话统计不接受范围过滤选项 --since；去掉 --since，或去掉会话目标改用全局聚合）\n",
+      },
     ),
     mcase(
       "err-stats-single-filter-origin",
@@ -1025,7 +1194,10 @@ function statsCases(): MatrixCase[] {
       "none",
       null,
       2,
-      { expectStderr: "错误: 参数无效（单会话统计不接受范围过滤选项: --origin）\n" },
+      {
+        expectStderr:
+          "错误: 参数无效（单会话统计不接受范围过滤选项 --origin；去掉 --origin，或去掉会话目标改用全局聚合）\n",
+      },
     ),
     mcase(
       "err-stats-single-filter-workspace",
@@ -1033,7 +1205,10 @@ function statsCases(): MatrixCase[] {
       "none",
       null,
       2,
-      { expectStderr: "错误: 参数无效（单会话统计不接受范围过滤选项: --workspace）\n" },
+      {
+        expectStderr:
+          "错误: 参数无效（单会话统计不接受范围过滤选项 --workspace；去掉 --workspace，或去掉会话目标改用全局聚合）\n",
+      },
     ),
   );
   return cases;
@@ -1087,12 +1262,29 @@ function checkCases(): MatrixCase[] {
       { expectStderr: "错误: 数据不可读\n" },
     ),
     mcase(
-      "err-list-broken",
-      ["list", "--dsh-home", "BROKEN", "--lib-root", LIB_ROOT],
+      "err-show-broken-corrupt",
+      ["show", "session-brk-corrupt-16", "--dsh-home", "BROKEN", "--lib-root", LIB_ROOT],
       "none",
       null,
       3,
+      // P7 根因修复：会话目录存在于磁盘上、只是 header 不可读，必须与"确实不存在"可区分
+      // （后者退出 1）。二者此前都落到"目标不存在"，使全量扫描误判为漏读。
       { expectStderr: "错误: 数据不可读\n" },
+    ),
+    mcase(
+      "err-show-broken-corrupt-unknown",
+      ["show", "session-brk-zzzz", "--dsh-home", "BROKEN", "--lib-root", LIB_ROOT],
+      "none",
+      null,
+      1,
+      { expectStderr: "错误: 目标不存在\n" },
+    ),
+    mcase(
+      "list-md-broken-tolerant",
+      ["list", "--dsh-home", "BROKEN", "--lib-root", LIB_ROOT],
+      "md",
+      null,
+      0,
     ),
   ];
 }
@@ -1109,8 +1301,13 @@ const MARKERS = [
   "**bold text**",
   "$ echo hello",
   "a@b.com",
-  "line1\rline2",
 ] as const;
+
+/**
+ * 跨行标记：含换行的敌意内容（如 CR/CRLF 归一化后的 `line1\nline2`）无法按单行匹配，
+ * 必须在整份产物上判定。其"是否被归一化"由 `checkMarkdownStructure` 的 CR 检查单独兜住。
+ */
+const MULTILINE_MARKERS = ["line1\nline2"] as const;
 
 interface HeadingNode {
   readonly level: number;
@@ -1168,12 +1365,13 @@ function collectMarkers(
   }
 }
 
-/** 结构白名单断言（md 产物）：行/空行纪律、标题词表与同级唯一、围栏闭合、载体覆盖、无制表符。 */
+/** 结构白名单断言（md 产物）：行/空行纪律、标题词表与同级唯一、围栏闭合、载体覆盖、无制表符/CR。 */
 function checkMarkdownStructure(
   caseId: string,
   content: string,
   problems: string[],
   markersSeen: Set<string>,
+  multiLineMarkersSeen: Set<string>,
 ): void {
   const fail = (message: string): void => {
     problems.push(`${caseId}: ${message}`);
@@ -1182,8 +1380,14 @@ function checkMarkdownStructure(
     fail("产物为空");
     return;
   }
+  for (const marker of MULTILINE_MARKERS) {
+    if (content.includes(marker)) multiLineMarkersSeen.add(marker);
+  }
   if (content.includes("\uFEFF")) fail("含 BOM");
   if (content.includes("\t")) fail("含制表符（应已归一化为空格）");
+  // 输出契约要求 LF-only：CR 会被 markdownlint 忽略，因此必须在此单独拦截，
+  // 否则正文携带的 CR 会静默破坏"UTF-8 无 BOM、LF"这一契约。
+  if (content.includes("\r")) fail("含 CR 字节（CR/CRLF 应已归一化为 LF）");
   if (!content.endsWith("\n")) fail("末尾缺少换行");
   if (content.endsWith("\n\n")) fail("末尾多余空行");
   const lines = content.split("\n");
@@ -1199,7 +1403,7 @@ function checkMarkdownStructure(
   for (let index = 0; index < body.length; index += 1) {
     const line = body[index];
     if (fence !== null) {
-      // 围栏内允许数据携带 CR（会话原始内容，R3 不做 CR 归一化）；标记只登记不检查载体。
+      // 围栏内的内容已被 render 层归一化（CR → LF、制表符 → 空格），标记只登记不检查载体。
       collectMarkers(caseId, line, null, problems, markersSeen);
       const close = FENCE_CLOSE.exec(line);
       if (close !== null && close[1].length >= fence) {
@@ -1305,7 +1509,7 @@ function checkJsonStructure(
   }
   const record = asRecord(parsed);
   if (shape === "list") {
-    if (!requireKeys(caseId, record, ["sessions"], problems)) return;
+    if (!requireKeys(caseId, record, ["sessions", "coverage"], problems)) return;
     const sessions = record?.sessions;
     if (!Array.isArray(sessions)) {
       problems.push(`${caseId}: sessions 不是数组`);
@@ -1318,7 +1522,6 @@ function checkJsonStructure(
         first,
         [
           "id",
-          "shortId",
           "type",
           "title",
           "cwd",
@@ -1337,7 +1540,11 @@ function checkJsonStructure(
         ],
         problems,
       );
+      if (first?.shortId !== undefined) {
+        problems.push(`${caseId}: 列表项不应再输出截断的 shortId（显示值必须与可传值同源）`);
+      }
     }
+    checkCoverage(caseId, record?.coverage, problems);
   } else if (shape === "show") {
     if (
       !requireKeys(caseId, record, ["session", "meta", "turns", "messages", "subagents"], problems)
@@ -1347,8 +1554,21 @@ function checkJsonStructure(
     const session = asRecord(record?.session);
     if (typeof session?.id !== "string") problems.push(`${caseId}: session.id 缺失`);
   } else if (shape === "search") {
-    if (!requireKeys(caseId, record, ["matches", "total", "truncated"], problems)) return;
+    if (
+      !requireKeys(
+        caseId,
+        record,
+        ["matches", "total", "truncated", "scope", "totalIsExact"],
+        problems,
+      )
+    ) {
+      return;
+    }
     if (typeof record?.truncated !== "boolean") problems.push(`${caseId}: truncated 不是布尔`);
+    if (record?.totalIsExact !== true) {
+      problems.push(`${caseId}: totalIsExact 必须为 true（命中总数与 --limit 解耦）`);
+    }
+    checkCoverage(caseId, record?.coverage, problems);
   } else if (shape === "stats") {
     const kind = record?.kind;
     if (kind === "global") {
@@ -1359,9 +1579,38 @@ function checkJsonStructure(
     } else {
       problems.push(`${caseId}: stats.kind 非法`);
     }
+    checkCoverage(caseId, record?.coverage, problems);
   } else if (shape === "check") {
-    if (!requireKeys(caseId, record, ["sessions", "anomalyCount"], problems)) return;
+    if (!requireKeys(caseId, record, ["sessions", "anomalyCount", "coverage"], problems)) return;
     if (!Array.isArray(record?.sessions)) problems.push(`${caseId}: sessions 不是数组`);
+    checkCoverage(caseId, record?.coverage, problems);
+  }
+}
+
+/** 覆盖声明结构断言：scannedCount = includedCount + excluded.length，且排除项含 id 与 reason。 */
+function checkCoverage(caseId: string, value: unknown, problems: string[]): void {
+  const coverage = asRecord(value);
+  if (coverage === undefined) {
+    problems.push(`${caseId}: coverage 缺失`);
+    return;
+  }
+  const scanned = coverage.scannedCount;
+  const included = coverage.includedCount;
+  const excluded = coverage.excluded;
+  if (typeof scanned !== "number" || typeof included !== "number" || !Array.isArray(excluded)) {
+    problems.push(`${caseId}: coverage 字段类型非法`);
+    return;
+  }
+  if (scanned !== included + excluded.length) {
+    problems.push(
+      `${caseId}: coverage 恒等式不成立（scanned ${scanned} != included ${included} + excluded ${excluded.length}）`,
+    );
+  }
+  for (const item of excluded) {
+    const entry = asRecord(item);
+    if (typeof entry?.id !== "string" || typeof entry?.reason !== "string") {
+      problems.push(`${caseId}: coverage.excluded 项缺少 id/reason`);
+    }
   }
 }
 
@@ -1413,6 +1662,7 @@ interface MatrixContext {
   readonly problems: string[];
   readonly results: CaseResult[];
   readonly markersSeen: Set<string>;
+  readonly multiLineMarkersSeen: Set<string>;
   readonly homes: Map<string, string>;
 }
 
@@ -1519,7 +1769,14 @@ function executeCase(ctx: MatrixContext, item: MatrixCase): void {
   }
   const updated: CaseResult = { ...result, outputPath: contract.path };
   ctx.results.push(updated);
-  if (item.kind === "md") checkMarkdownStructure(item.id, content, ctx.problems, ctx.markersSeen);
+  if (item.kind === "md")
+    checkMarkdownStructure(
+      item.id,
+      content,
+      ctx.problems,
+      ctx.markersSeen,
+      ctx.multiLineMarkersSeen,
+    );
   else if (item.kind === "json") checkJsonStructure(item.id, item.shape, content, ctx.problems);
   else if (item.kind === "jsonl") checkJsonlStructure(item.id, content, ctx.problems);
 }
@@ -1593,6 +1850,9 @@ interface LintRunResult {
 }
 
 const LINT_BATCH_SIZE = 50;
+
+/** 确定性复跑产生的额外 md 产物数（list 与 show 各跑两次）。 */
+const DETERMINISM_MD_ARTIFACTS = 4;
 
 /**
  * 以参数数组直接调用 markdownlint JS 入口（不经 shell，避免 cmd 引号拼接问题）。
@@ -1687,6 +1947,7 @@ async function main(argv: readonly string[]): Promise<number> {
     problems: [],
     results: [],
     markersSeen: new Set<string>(),
+    multiLineMarkersSeen: new Set<string>(),
     homes: new Map([
       ["HEALTHY", healthyHome],
       ["BROKEN", brokenHome],
@@ -1710,6 +1971,7 @@ async function main(argv: readonly string[]): Promise<number> {
   }
 
   // 确定性：同一输入两次渲染（文件名除外）逐字节一致。
+  // 两个命令各跑两次，因此 out 目录内会多出 4 个 md 产物；该数量由下面的常量与断言共同约束。
   const listArgs = [
     "list",
     "--dsh-home",
@@ -1767,9 +2029,11 @@ async function main(argv: readonly string[]): Promise<number> {
   const jsonlCount = ctx.results.filter(
     (entry) => entry.outputPath?.endsWith(".jsonl") === true,
   ).length;
-  // 实际处理文件数断言：out 内 md = 用例 md 产物 + 确定性复跑 4 个；且显式分批覆盖全部文件。
-  if (lint.mdFiles !== mdCount + 4) {
-    ctx.problems.push(`out 内 md 文件数 ${lint.mdFiles} ≠ 用例 md ${mdCount} + 确定性 4`);
+  // 实际处理文件数断言：out 内 md = 用例 md 产物 + 确定性复跑产物；且显式分批覆盖全部文件。
+  if (lint.mdFiles !== mdCount + DETERMINISM_MD_ARTIFACTS) {
+    ctx.problems.push(
+      `out 内 md 文件数 ${lint.mdFiles} ≠ 用例 md ${mdCount} + 确定性 ${DETERMINISM_MD_ARTIFACTS}`,
+    );
   }
   if (lint.processedFiles !== lint.mdFiles) {
     ctx.problems.push(
@@ -1784,6 +2048,11 @@ async function main(argv: readonly string[]): Promise<number> {
   for (const marker of MARKERS) {
     if (!ctx.markersSeen.has(marker)) {
       ctx.problems.push(`敌意标记未出现在任何 md 产物: ${marker}`);
+    }
+  }
+  for (const marker of MULTILINE_MARKERS) {
+    if (!ctx.multiLineMarkersSeen.has(marker)) {
+      ctx.problems.push(`跨行敌意标记未出现在任何 md 产物: ${JSON.stringify(marker)}`);
     }
   }
 
