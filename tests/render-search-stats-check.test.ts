@@ -49,12 +49,15 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
     );
     assert.equal(md.content.includes("扫描会话 2 个；纳入 2 个；排除 0 个"), true);
     assert.equal(md.summary, "命中 4 处，显示 1 处");
-    const document = JSON.parse(renderSearchJson(outcome)) as Record<string, unknown>;
+    const rendered = renderSearchJson(outcome);
+    const document = JSON.parse(rendered.content) as Record<string, unknown>;
     assert.equal(document.total, 4);
     assert.equal(document.truncated, true);
     assert.equal(document.scope, "all");
     assert.equal(document.totalIsExact, true);
     assert.deepEqual(document.coverage, { scannedCount: 2, includedCount: 2, excluded: [] });
+    // 摘要与 md 同源：同一 outcome 的 md 摘要为「命中 4 处，显示 1 处」。
+    assert.equal(rendered.summary, md.summary);
   });
 
   it("search 未截断时无截断标注，且排除项逐条列出", () => {
@@ -119,9 +122,12 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
       globalExcluded.summary,
       "会话 3 个；总轮次 5；工具调用 9（2 个会话未计入，原因见输出文件）",
     );
-    const json = JSON.parse(renderStatsJson(global)) as Record<string, unknown>;
+    const globalJson = renderStatsJson(global);
+    const json = JSON.parse(globalJson.content) as Record<string, unknown>;
     assert.equal(json.kind, "global");
     assert.equal(json.sessionCount, 3);
+    // 摘要与 md 同源：json 形态的 stdout 第二行必须与 md 摘要逐字一致。
+    assert.equal(globalJson.summary, md.summary);
 
     const single: StatsOutcome = {
       ...global,
@@ -155,8 +161,12 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
     assertDocumentShape(singleMd.content);
     assert.equal(singleMd.content.includes("- 标题：`单会话标题`"), true);
     assert.equal(singleMd.summary, "会话 session-aaa-01；轮次 2；工具调用 1");
-    const singleJson = JSON.parse(renderStatsJson(single)) as { session: Record<string, unknown> };
+    const singleJsonRendered = renderStatsJson(single);
+    const singleJson = JSON.parse(singleJsonRendered.content) as {
+      session: Record<string, unknown>;
+    };
     assert.equal(singleJson.session.id, "session-aaa-01");
+    assert.equal(singleJsonRendered.summary, singleMd.summary);
   });
 
   it("stats 单会话：blank/turns 不可用与空值口径（不静默显 -/0）", () => {
@@ -256,12 +266,14 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
     assert.equal(md.content.includes("结论：发现 1 项异常"), true);
     assert.equal(md.content.includes("扫描会话 2 个；纳入 2 个；排除 0 个"), true);
     assert.equal(md.summary, "会话 2 个；异常 1 项");
-    const json = JSON.parse(renderCheckJson(outcome)) as {
+    const checkJson = renderCheckJson(outcome);
+    const json = JSON.parse(checkJson.content) as {
       anomalyCount: number;
       coverage: SessionCoverage;
     };
     assert.equal(json.anomalyCount, 1);
     assert.deepEqual(json.coverage, { scannedCount: 2, includedCount: 2, excluded: [] });
+    assert.equal(checkJson.summary, md.summary);
 
     const clean = renderCheckMd({ sessions: [], anomalyCount: 0, coverage: coverage() });
     assert.equal(clean.content.includes("结论：无异常"), true);

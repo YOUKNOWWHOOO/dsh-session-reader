@@ -140,8 +140,15 @@ export function outputFileName(
   return `session-reader-${command}-${formatUtcStamp(date)}-${suffix}.${extensionForFormat(format)}`;
 }
 
-/** `--name` 允许的字符集：ASCII 字母数字、下划线、连字符、CJK 统一表意文字（含扩展 A 与兼容区）。 */
-const OUTPUT_NAME_PATTERN = /^[A-Za-z0-9_\-\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+$/u;
+/**
+ * `--name` 允许的字符集：ASCII 字母数字、下划线、连字符，以及全部汉字。
+ *
+ * 汉字用 Unicode 属性 `Script=Han` 表达，而不是手写 `\uXXXX` 区间：手写区间只能覆盖基本平面
+ * （基本区、扩展 A、兼容区），会把扩展 B 及以后的正常汉字（如 `𠮷` U+20BB7）误判为非法，
+ * 而报错文案与 `SKILL.md` 承诺的正是"中文"。属性转义随 Unicode 数据更新，是"中文可用"
+ * 这一要求的直接表达；本白名单仍是白名单——`.`、路径分隔符、`:`、空白与控制字符一律不在内。
+ */
+const OUTPUT_NAME_PATTERN = /^[A-Za-z0-9_\-\p{Script=Han}]+$/u;
 
 /** Windows 保留设备名（不区分大小写；写入这些名字会被系统重定向到设备）。 */
 const RESERVED_DEVICE_NAMES = new Set([
@@ -188,7 +195,7 @@ export function validateOutputName(value: string): string | null {
     return `--name 最长 ${OUTPUT_NAME_MAX_LENGTH} 个字符`;
   }
   if (!OUTPUT_NAME_PATTERN.test(value)) {
-    return "--name 只允许字母、数字、下划线、连字符与中文；产物名固定为 <name>.<扩展名>，扩展名由 --format 决定";
+    return "--name 只允许 ASCII 字母、数字、下划线、连字符与中文；产物名固定为 <name>.<扩展名>，扩展名由 --format 决定";
   }
   if (RESERVED_DEVICE_NAMES.has(value.toUpperCase())) {
     return `--name 不得使用 Windows 保留设备名 ${value.toUpperCase()}；请换一个名字`;

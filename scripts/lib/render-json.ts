@@ -2,11 +2,12 @@
 // 含子代理的父子嵌套递归（nodeToJson）与逐事件穷尽导出的逻辑 header。
 // 主要入口：renderListJson / renderShowJson / renderShowJsonl / renderSearchJson / renderStatsJson /
 // renderCheckJson。
-// 关键依赖：render-core.ts（会话派生事实、RenderedOutput）、render-summary.ts（jsonl 摘要文案）、
+// 关键依赖：render-core.ts（会话派生事实、RenderedOutput）、render-summary.ts（全部命令级摘要文案）、
 // decode.ts（事件读取基元）、store-types.ts（outcome 与节点类型）。
 // 设计约束：json 侧不做任何文本载体与归一化（载体规则仅 md 适用，见 render-core.ts 文件头的层规则）；
 // 键序稳定、`null` 表示空值；字段名与嵌套形态是 json 形态的对外契约，不得改写。show 的 coverage 与 md
-// 同源同口径：作用域是本目标及其子树，可归属的排除项恒为空。
+// 同源同口径：作用域是本目标及其子树，可归属的排除项恒为空。每个 json 渲染函数与 md 侧同签名返回
+// `{ content, summary }`：摘要是 stdout 第二行，只能取自 render-summary.ts，CLI 不得自行拼接。
 import {
   asArray,
   asRecord,
@@ -27,7 +28,14 @@ import {
   type RenderedOutput,
   sumUsage,
 } from "./render-core.ts";
-import { showJsonlSummary } from "./render-summary.ts";
+import {
+  checkSummary,
+  formatStatsSummary,
+  listSummary,
+  searchSummary,
+  showJsonlSummary,
+  showSummary,
+} from "./render-summary.ts";
 import type {
   CheckOutcome,
   CoverageSkip,
@@ -62,9 +70,12 @@ function entryToJson(entry: ListEntry): Record<string, unknown> {
   };
 }
 
-/** list JSON：{ sessions, coverage }，每项含全部列字段与元数据可用性标记。 */
-export function renderListJson(outcome: ListOutcome): string {
-  return `${JSON.stringify({ sessions: outcome.entries.map(entryToJson), coverage: outcome.coverage }, null, 2)}\n`;
+/** list JSON：`{ sessions, coverage }`，每项含全部列字段与元数据可用性标记。 */
+export function renderListJson(outcome: ListOutcome): RenderedOutput {
+  return {
+    content: `${JSON.stringify({ sessions: outcome.entries.map(entryToJson), coverage: outcome.coverage }, null, 2)}\n`,
+    summary: listSummary(outcome),
+  };
 }
 
 // ------------------------- show -------------------------
@@ -192,11 +203,20 @@ function nodeToJson(node: SessionNode, includeMessages: boolean): Record<string,
   };
 }
 
-/** show JSON：`{ session, meta, turns, messages, subagents, coverage }`（子代理为父子嵌套结构）。 */
+/**
+ * show JSON：`{ session, meta, turns, messages, subagents, coverage }`（子代理为父子嵌套结构）。
+ *
+ * 摘要与 md 路径同源（`showSummary`）：`--summary` 与 `--subagents` 两个开关决定措辞，
+ * 因此 `show <目标> --summary --format json` 的 stdout 第二行与 md 逐字一致。
+ */
 export function renderShowJson(
   node: SessionNode,
-  options: { readonly summary: boolean; readonly unattributable: readonly CoverageSkip[] },
-): string {
+  options: {
+    readonly summary: boolean;
+    readonly subagents: boolean;
+    readonly unattributable: readonly CoverageSkip[];
+  },
+): RenderedOutput {
   const nodes = countNodes(node);
   const document = {
     ...nodeToJson(node, !options.summary),
@@ -208,7 +228,10 @@ export function renderShowJson(
       unattributable: options.unattributable,
     },
   };
-  return `${JSON.stringify(document, null, 2)}\n`;
+  return {
+    content: `${JSON.stringify(document, null, 2)}\n`,
+    summary: showSummary(node, options, computeEventStats(node.file)),
+  };
 }
 
 /** show JSONL：首行逻辑 header，其后每行一个已解码事件（键序稳定）。 */
@@ -225,8 +248,8 @@ export function renderShowJsonl(node: SessionNode): RenderedOutput {
 
 // ------------------------- search -------------------------
 
-/** search JSON：{ matches, total, truncated, scope, totalIsExact, coverage, scan, distribution }。 */
-export function renderSearchJson(outcome: SearchOutcome): string {
+/** search JSON：`{ matches, total, truncated, scope, totalIsExact, coverage, scan, distribution }`。 */
+export function renderSearchJson(outcome: SearchOutcome): RenderedOutput {
   const document = {
     matches: outcome.hits.map((hit) => ({
       sessionId: hit.sessionId,
@@ -243,13 +266,17 @@ export function renderSearchJson(outcome: SearchOutcome): string {
     scan: outcome.scan,
     distribution: outcome.distribution,
   };
-  return `${JSON.stringify(document, null, 2)}\n`;
+  return {
+    content: `${JSON.stringify(document, null, 2)}\n`,
+    summary: searchSummary(outcome),
+  };
 }
 
 // ------------------------- stats -------------------------
 
 /** stats JSON：global=聚合对象；single=单会话对象（字段值为 null 表示不可用/空）。 */
-export function renderStatsJson(outcome: StatsOutcome): string {
+export function renderStatsJson(outcome: StatsOutcome): RenderedOutput {
+  const summary = formatStatsSummary(outcome);
   if (outcome.single !== null) {
     const single = outcome.single;
     const document = {
@@ -275,7 +302,7 @@ export function renderStatsJson(outcome: StatsOutcome): string {
       coverage: outcome.coverage,
       scan: outcome.scan,
     };
-    return `${JSON.stringify(document, null, 2)}\n`;
+    return { content: `${JSON.stringify(document, null, 2)}\n`, summary };
   }
   const document = {
     kind: "global",
@@ -292,13 +319,13 @@ export function renderStatsJson(outcome: StatsOutcome): string {
     coverage: outcome.coverage,
     scan: outcome.scan,
   };
-  return `${JSON.stringify(document, null, 2)}\n`;
+  return { content: `${JSON.stringify(document, null, 2)}\n`, summary };
 }
 
 // ------------------------- check -------------------------
 
-/** check JSON：{ sessions, anomalyCount, coverage }。 */
-export function renderCheckJson(outcome: CheckOutcome): string {
+/** check JSON：`{ sessions, anomalyCount, coverage }`。 */
+export function renderCheckJson(outcome: CheckOutcome): RenderedOutput {
   const document = {
     sessions: outcome.sessions.map((session) => ({
       id: session.id,
@@ -316,5 +343,8 @@ export function renderCheckJson(outcome: CheckOutcome): string {
     anomalyCount: outcome.anomalyCount,
     coverage: outcome.coverage,
   };
-  return `${JSON.stringify(document, null, 2)}\n`;
+  return {
+    content: `${JSON.stringify(document, null, 2)}\n`,
+    summary: checkSummary(outcome),
+  };
 }
