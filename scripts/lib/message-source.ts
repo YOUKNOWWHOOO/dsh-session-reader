@@ -32,14 +32,17 @@ export interface SourceAttribution {
 /**
  * 本技能识别的 kind：词表内的值在 md 中裸写，词表外的值入行内载体。
  *
- * 词表的来源分三层，均取自本机安装的官方包：基础成员 4 个由 `@deepseek-ai/dsh-llm` 的
- * `MessageSourceMap` 声明（`user`、`plugin`、`model`、`tool`）；`agent-message`、`subagent-settled`、
- * `skill-invocation`、`team-message`、`goal`、`session-reference` 由 `dsh-subagent`、`dsh-skill`、
- * `dsh-router`（内嵌声明）等包各自 `declare module` 增补；`skill-catalog`、`agent-instructions`、
- * `webhook` 由对应插件包增补。`coordinator`、`subagent-report` 只出现在官方 v2→v3 适配器的
- * `SOURCE_KINDS` 白名单里（`dsh-session-format-v2-to-v3`），并没有本包的合并声明，但它们是该适配器
- * 承认的合法取值，故一并视为已知。该词表**不是**对官方词表的完整声明——联合是合并可扩展的，
- * 任何未列入的取值都会走载体分支原样呈现，这正是设计意图。
+ * 词表的来源分三层，均取自本机安装的官方包（以下文件与行号为实测位置）：基础成员 4 个由
+ * `@deepseek-ai/dsh-llm\lib\types\message.d.ts` 的 `MessageSourceMap` 声明（`user`、`plugin`、
+ * `model`、`tool`）；`agent-message`、`subagent-settled`、`skill-invocation`、`goal`、
+ * `session-reference` 由 `dsh-subagent`、`dsh-skill`、`dsh-goal`、`dsh-session-reference` 各自
+ * `declare module` 增补；`team-message` 在本机 `@deepseek-ai` 的 `.d.ts` 中没有声明，只出现在
+ * `dsh-llm\lib\typert.host.js` 的聚合声明与官方适配器白名单里（同名类型 `TeamMessageSource` 亦然）。
+ * `skill-catalog`、`agent-instructions`、`webhook` 由对应插件包增补。`coordinator`、`subagent-report`
+ * 不出现在任何合并声明中，只出现在官方迁移适配器与持久化 worker 的取值白名单里
+ * （`dsh-session-format-v0-to-v1`、`dsh-session-format-v2-to-v3`、`dsh-session-persistence-jsonl`），
+ * 但它们是官方承认的合法取值，故一并视为已知。该词表**不是**对官方词表的完整声明——联合是合并
+ * 可扩展的，任何未列入的取值都会走载体分支原样呈现，这正是设计意图。
  */
 const KNOWN_KINDS: readonly string[] = [
   "user",
