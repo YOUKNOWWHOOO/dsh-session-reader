@@ -46,9 +46,11 @@ const DISTRIBUTION_TITLE_LIMIT = 40;
  *
  * 契约：`扫描会话 N 个；纳入 M 个；排除 K 个`，随后逐条 `排除会话：<完整 id>（<原因>）`，
  * 再逐条 `归属未知：<id>（<原因>）`（仅 `show` 可能有内容）。
- * 恒等式 `N = M + K` 必须成立——调用方据此核对是否存在未列出的漏读；这是"未被列出者即为已覆盖"
- * 这一推断的唯一依据，因此排除项必须逐条列出，禁止合并成计数。归属未知项不计入 `N`/`M`/`K`：
- * 连"是否属于本次作用域"都无法判定，把它算进任何一项都会让恒等式失去含义。
+ * `N` 在实现里就是由 `M + K` 构造的（见 store-discovery.ts 的 coverageOf 及各命令的覆盖计算），
+ * 因此恒等式必然成立，**它不是独立的核对手段**——核对覆盖范围只能依据逐条列出的排除项；
+ * 禁止把 `N = M + K` 表述为"据此发现漏读"（见 doc\开发规范.md 的覆盖声明契约）。排除项因此
+ * 必须逐条列出，禁止合并成计数。归属未知项不计入 `N`/`M`/`K`：连"是否属于本次作用域"都无法
+ * 判定，把它算进任何一项都会让这三个数失去含义。
  */
 export function coverageSections(coverage: SessionCoverage): string[] {
   const sections = [
@@ -177,8 +179,12 @@ export function renderListMd(
   }
   for (const entry of outcome.entries) {
     if (entry.metadata.reasons.length > 0) {
+      // 文案用「不完整」而不是「不可用」：触发条件是 `reasons.length > 0`，它既覆盖"整体不可用"，
+      // 也覆盖"可读但缺字段"（`--full` 的 `**元数据**` 字段把这两种状态分别写作 `不可用` 与
+      // `部分缺失`）。若这里写「不可用」，同一会话会在同一产物里被同时描述为「部分缺失」与
+      // 「不可用」，调用方无法据以判断可用程度。「不完整」对两种状态都成立。
       sections.push(
-        `元数据不可用：${inlineValue(entry.id)}（${entry.metadata.reasons
+        `元数据不完整：${inlineValue(entry.id)}（${entry.metadata.reasons
           .map((reason) => inlineValue(reason))
           .join("；")}）`,
       );
@@ -217,8 +223,10 @@ export function renderSearchMd(outcome: SearchOutcome): RenderedOutput {
     ? `；已截断显示 ${outcome.hits.length} 条（--limit 0 显示全部）`
     : "";
   sections.push(`命中总数：${outcome.totalHits}${truncatedNote}`);
+  // `totalIsExact` 的类型是字面量 `true`：不存在"下界"形态，因此这里直接给"精确值"，
+  // 不保留任何不可达分支（见 store-types.ts 的 SearchOutcome.totalIsExact 注释）。
   sections.push(
-    `检索范围：${outcome.scope}（${SCOPE_COVERAGE_TEXT[outcome.scope]}）；命中总数 ${outcome.totalHits} 为${outcome.totalIsExact ? "精确值" : "下界"}`,
+    `检索范围：${outcome.scope}（${SCOPE_COVERAGE_TEXT[outcome.scope]}）；命中总数 ${outcome.totalHits} 为精确值`,
   );
   sections.push(...coverageSections(outcome.coverage));
   sections.push(...scanSections(outcome.scan));
@@ -254,8 +262,9 @@ export function renderStatsMd(outcome: StatsOutcome): RenderedOutput {
       ].join("\n"),
     );
     if (single.metadataReasons.length > 0) {
+      // 与 list 页脚同口径：`reasons` 非空即列出，文案对"整体不可用"与"部分缺失"都成立。
       sections.push(
-        `元数据不可用：${single.metadataReasons.map((reason) => inlineValue(reason)).join("；")}`,
+        `元数据不完整：${single.metadataReasons.map((reason) => inlineValue(reason)).join("；")}`,
       );
     }
     sections.push(...coverageSections(outcome.coverage));
@@ -285,8 +294,9 @@ export function renderStatsMd(outcome: StatsOutcome): RenderedOutput {
     ].join("\n"),
   );
   for (const unavailable of outcome.unavailable) {
+    // 该列表的判据是 `reasons.length > 0`（含"可读但缺字段"），因此文案与 list 页脚同用「不完整」。
     sections.push(
-      `元数据不可用：${inlineValue(unavailable.id)}（${unavailable.reasons
+      `元数据不完整：${inlineValue(unavailable.id)}（${unavailable.reasons
         .map((reason) => inlineValue(reason))
         .join("；")}）`,
     );

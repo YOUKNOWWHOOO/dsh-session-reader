@@ -47,12 +47,13 @@ describe("render 边界与分支", () => {
     assert.equal(document.subagents.length, 1);
   });
 
-  it("事件 data 循环引用 → [不可序列化]", () => {
+  it("事件 data 不可序列化 → 直接抛错（禁止用占位文案掩盖缺陷）", () => {
     const circular: Record<string, unknown> = { turn: 1 };
     circular.self = circular;
     const events = [...RENDER_EVENTS, { type: "custom/unknown", seq: 9, time: 19, data: circular }];
-    const md = renderShowMd(node([], events), showOptions({ events: true }));
-    assert.equal(md.content.includes("[不可序列化]"), true);
+    // 载荷不可序列化说明上游已偏离契约：必须让异常抛到 CLI 顶层映射为 `内部错误`，
+    // 而不是把 `[不可序列化]` 这类占位文案混进产物冒充正文。
+    assert.throws(() => renderShowMd(node([], events), showOptions({ events: true })));
   });
 
   it("list 全量模式：模型/令牌不可用列显示元数据不可用", () => {
@@ -115,7 +116,7 @@ describe("render 边界与分支", () => {
       },
     };
     const singleMd = renderStatsMd(singleOutcome);
-    assert.equal(singleMd.content.includes("元数据不可用：`projcache 记录缺失`"), true);
+    assert.equal(singleMd.content.includes("元数据不完整：`projcache 记录缺失`"), true);
 
     const emptyGlobal: StatsOutcome = {
       ...singleOutcome,
@@ -166,7 +167,7 @@ describe("render 边界与分支", () => {
     };
     const rendered = renderListMd(outcome, { full: false });
     assert.equal(
-      rendered.content.includes("元数据不可用：`session-ccc-03`（`identity 不符`）"),
+      rendered.content.includes("元数据不完整：`session-ccc-03`（`identity 不符`）"),
       true,
     );
   });
@@ -354,10 +355,10 @@ describe("render 边界与分支", () => {
     assertDocumentShape(turnFiltered.content);
     assert.equal(turnFiltered.content.includes("T2-PROMPT"), true);
     assert.equal(turnFiltered.content.includes("T1-PROMPT"), false);
-    // 条目数按"已写入产物的 md 行/段"计（标签行 + 围栏 + 载荷），因此一条消息对应 3 条条目。
+    // 条目以"标签行 + 正文围栏"为一个单位计数（见 renderTimelineMd）：一条消息 = 1 条条目。
     assert.equal(
       turnFiltered.content.includes(
-        "筛选：turn 2-2；显示 2 条时间线条目（区间内事件 3 个，共 6 个事件）",
+        "筛选：turn 2-2；显示 1 条时间线条目（区间内事件 3 个，共 6 个事件）",
       ),
       true,
     );
@@ -370,7 +371,7 @@ describe("render 边界与分支", () => {
     assert.equal(seqFiltered.content.includes("T2-PROMPT"), true);
     assert.equal(
       seqFiltered.content.includes(
-        "筛选：seq 1-4；显示 4 条时间线条目（区间内事件 4 个，共 6 个事件）",
+        "筛选：seq 1-4；显示 2 条时间线条目（区间内事件 4 个，共 6 个事件）",
       ),
       true,
     );
@@ -380,14 +381,16 @@ describe("render 边界与分支", () => {
     assert.equal(seqNarrow.content.includes("T2-PROMPT"), false);
     assert.equal(
       seqNarrow.content.includes(
-        "筛选：seq 0-1；显示 2 条时间线条目（区间内事件 2 个，共 6 个事件）",
+        "筛选：seq 0-1；显示 1 条时间线条目（区间内事件 2 个，共 6 个事件）",
       ),
       true,
     );
 
     const headFiltered = renderShowMd(node([], events), showOptions({ head: 1 }));
-    assert.equal(headFiltered.content.includes("T1-PROMPT"), false);
+    // 首 1 条是**完整**的一条：标签行与其正文围栏必须同时保留（禁止截出孤立标签行）。
+    assert.equal(headFiltered.content.includes("T1-PROMPT"), true);
     assert.equal(headFiltered.content.includes("**用户**："), true);
+    assert.equal(headFiltered.content.includes("T2-PROMPT"), false);
     assert.equal(
       headFiltered.content.includes(
         "筛选：首 1 条；显示 1 条时间线条目（区间内事件 6 个，共 6 个事件）",
@@ -396,8 +399,9 @@ describe("render 边界与分支", () => {
     );
 
     const tailFiltered = renderShowMd(node([], events), showOptions({ tail: 1 }));
-    // 末 1 条 = 最后一个条目（围栏块本身），因此只保留 T2 的正文载荷，标签行被截掉。
+    // 末 1 条同样是完整条目：正文围栏与它的标签行都必须保留（禁止截出无标签围栏块）。
     assert.equal(tailFiltered.content.includes("T2-PROMPT"), true);
+    assert.equal(tailFiltered.content.includes("**用户**："), true);
     assert.equal(tailFiltered.content.includes("T1-PROMPT"), false);
     assert.equal(
       tailFiltered.content.includes(
@@ -417,6 +421,23 @@ describe("render 边界与分支", () => {
   it("show 未筛选时不输出筛选说明行", () => {
     const plain = renderShowMd(node(), showOptions());
     assert.equal(plain.content.includes("筛选："), false);
+  });
+
+  it("子代理块的筛选说明行不得出现只作用于根块的 `首/末 N 条`", () => {
+    const child: SessionNode = {
+      entry: { ...sessionEntry(), id: "cafe1111-2222-3333-4444-555566667777" },
+      file: decodedFile(),
+      children: [],
+    };
+    const parent = node([child]);
+    const filtered = renderShowMd(parent, showOptions({ head: 1, subagents: true }));
+    // `--head` 只裁剪根块：子代理块既没有被裁剪，就不得在同一行里声称"首 1 条"，
+    // 否则会出现「首 1 条；显示 N 条时间线条目」这种自相矛盾的外观。
+    const filterLines = filtered.content.split("\n").filter((line) => line.startsWith("筛选："));
+    assert.equal(filterLines.length, 1);
+    assert.equal(filterLines[0].startsWith("筛选：首 1 条；显示 1 条时间线条目"), true);
+    // 子代理块本身仍完整呈现（`--head` 不作用于它）。
+    assert.equal(filtered.content.includes("## 子代理 1"), true);
   });
 
   it("事件载荷截断由 --truncate 决定：0 即不截断", () => {

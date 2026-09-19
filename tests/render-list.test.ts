@@ -45,7 +45,7 @@ describe("renderListMd / renderListJson", () => {
     assert.equal(rendered.content.includes("合计：匹配 2 个会话，显示 2 个（共扫描 3 个）"), true);
     assert.equal(rendered.content.includes("已隐藏空会话 1 个（--include-blank 显示）"), true);
     assert.equal(
-      rendered.content.includes("元数据不可用：`session-bbb-02`（`projcache 记录缺失`）"),
+      rendered.content.includes("元数据不完整：`session-bbb-02`（`projcache 记录缺失`）"),
       true,
     );
     assert.equal(rendered.content.includes("扫描会话 3 个；纳入 2 个；排除 1 个"), true);

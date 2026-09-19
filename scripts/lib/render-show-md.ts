@@ -48,14 +48,15 @@ interface HiddenCounts {
   events: number;
 }
 
+/**
+ * 事件载荷的 JSON 文本。
+ *
+ * 这里**不**捕获 `JSON.stringify` 的异常：一旦出现不可序列化的载荷，就说明上一步（官方库解码
+ * 或夹具构造）已经偏离契约，任何占位文案都会以"看起来像正文"的形式混进产物，把真正的缺陷
+ * 掩盖起来。让它抛错、由 CLI 顶层映射为 `内部错误`（退出 3），问题才会在第一时间显性暴露。
+ */
 function eventDataJson(event: EventRecord): string {
-  const data = event.data;
-  if (data === undefined) return "{}";
-  try {
-    return JSON.stringify(data);
-  } catch {
-    return "[不可序列化]";
-  }
+  return event.data === undefined ? "{}" : JSON.stringify(event.data);
 }
 
 function optionalInline(valueText: string | undefined): string {
@@ -75,11 +76,14 @@ function nodeKvBlock(node: SessionNode, estimatedBytes?: number): string {
   const stats = computeEventStats(node.file);
   const title = findSessionTitle(node.file);
   const origin = readString(header, "origin");
+  const createdAt = readNumber(header, "createdAt");
   const lines: string[] = [
     `- ID：${inlineValue(node.entry.id)}`,
     `- 标题：${title === null ? EMPTY_VALUE : inlineValue(title)}`,
     `- 工作区：${optionalInline(readString(header, "cwd"))}`,
-    `- 创建：${formatLocalIso(readNumber(header, "createdAt") ?? 0)}`,
+    // 缺 `createdAt` 时显示 `-`，禁止兜底到 0：兜底会把"字段缺失"伪装成一个有效时间（1970），
+    // 与「空值显示 -」的契约冲突，也与同段 `- 深度：` 的口径不一致。
+    `- 创建：${createdAt === undefined ? EMPTY_VALUE : formatLocalIso(createdAt)}`,
   ];
   if (origin === "subagent") {
     lines.push("- 类型：子代理");
@@ -187,6 +191,7 @@ export function selectEvents(
  */
 function filterSummaryMd(
   options: ShowMdOptions,
+  isRoot: boolean,
   displayed: number,
   selected: number,
   total: number,
@@ -196,8 +201,10 @@ function filterSummaryMd(
     parts.push(`turn ${options.turnRange.from}-${options.turnRange.to}`);
   }
   if (options.seqRange !== null) parts.push(`seq ${options.seqRange.from}-${options.seqRange.to}`);
-  if (options.head > 0) parts.push(`首 ${options.head} 条`);
-  if (options.tail > 0) parts.push(`末 ${options.tail} 条`);
+  // `--head`/`--tail` 只裁剪根块（见 renderTimelineMd 的 limitItems）：子代理块必须省略这两段，
+  // 否则会出现「首 3 条；显示 50 条时间线条目」这种同一行内自相矛盾的外观。
+  if (isRoot && options.head > 0) parts.push(`首 ${options.head} 条`);
+  if (isRoot && options.tail > 0) parts.push(`末 ${options.tail} 条`);
   if (parts.length === 0) return null;
   return `筛选：${parts.join("；")}；显示 ${displayed} 条时间线条目（区间内事件 ${selected} 个，共 ${total} 个事件）`;
 }
@@ -293,29 +300,31 @@ function timelineItem(
 }
 
 /**
- * 渲染时间线：按事件顺序产出条目；`limitItems` 为真时按 `head`/`tail` 对**条目序列**做首尾截取。
- * `sections.length` 是最终显示的条目数，供筛选说明行如实标注。
+ * 渲染时间线：按事件顺序产出**条目**；`limitItems` 为真时按 `head`/`tail` 对**条目序列**做首尾截取。
+ *
+ * 条目的单位是"一个 `string[]`"（标签行 ＋ 正文围栏／单行载荷），而不是数组元素：`--head N` 的
+ * `N` 在文档里定义为条目数，若对扁平的 `string[]` 做 `slice`，截断点会落在条目内部，产出
+ * 孤立标签行或无标签围栏块，且说明行的计数与实物不符（`shownItems` 因此按条目计数）。
  * `head` 与 `tail` 互斥由 CLI 校验保证，此处按 head 优先处理，不做静默合并。
  */
 function renderTimelineMd(
   options: ShowMdOptions,
   events: readonly EventRecord[],
   limitItems: boolean,
-): { sections: string[]; hidden: HiddenCounts } {
+): { sections: string[]; hidden: HiddenCounts; shownItems: number } {
   const hidden: HiddenCounts = { reasoning: 0, tools: 0, events: 0 };
-  const items: string[] = [];
+  const items: string[][] = [];
   for (const event of events) {
     const item = timelineItem(event, options, hidden);
-    if (item !== null) items.push(...item);
+    if (item !== null) items.push(item);
   }
-  if (!limitItems) return { sections: items, hidden };
-  const sections =
-    options.head > 0
-      ? items.slice(0, options.head)
-      : options.tail > 0
-        ? items.slice(Math.max(0, items.length - options.tail))
-        : items;
-  return { sections, hidden };
+  let shown = items;
+  if (limitItems && options.head > 0) {
+    shown = items.slice(0, options.head);
+  } else if (limitItems && options.tail > 0) {
+    shown = items.slice(Math.max(0, items.length - options.tail));
+  }
+  return { sections: shown.flat(), hidden, shownItems: shown.length };
 }
 
 function hiddenSummaryMd(hidden: HiddenCounts, options: ShowMdOptions): string {
@@ -383,7 +392,8 @@ function renderNodeSections(
     sections.push(...timeline.sections);
     const filterText = filterSummaryMd(
       options,
-      timeline.sections.length,
+      isRoot,
+      timeline.shownItems,
       ranged.length,
       node.file.decoded.events.length,
     );

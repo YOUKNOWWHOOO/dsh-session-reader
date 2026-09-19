@@ -111,9 +111,9 @@ function maxBacktickRun(text: string): number {
  * 归一化 1：制表符 → 4 空格（MD010 覆盖围栏与行内代码；f2 R3-1）。
  *
  * 同一步骤内把 CRLF 与孤立 CR 一律折叠为 LF：输出契约要求产物为"UTF-8 无 BOM、LF"，
- * 而会话正文本身可能含 CR 字节（实测 907 个 lint 门禁产物中有 5 个因正文含 CR 而混入 CR 字节）。
- * 内嵌 CR 不会被 markdownlint 判为违规，因此它是**契约层面的静默破坏**而非 lint 问题——
- * 必须在载体归一化阶段消除，否则"LF"这一契约无法成立。
+ * 而会话正文本身可能含 CR 字节，一旦漏过就会让产物混入 CR。内嵌 CR 不会被 markdownlint
+ * 判为违规，因此它是**契约层面的静默破坏**而非 lint 问题——必须在载体归一化阶段消除，
+ * 否则"LF"这一契约无法成立。（此处不写命中的产物个数：该计数随门禁规模变化，写死必然过时。）
  */
 export function normalizeTabs(text: string): string {
   return text.replace(/\r\n|\r/gu, "\n").replace(/\t/gu, " ".repeat(TAB_WIDTH));

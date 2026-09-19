@@ -191,7 +191,11 @@ export const COMMANDS: readonly CommandSpec[] = [
         description: "排序键（time/created/size/turns 降序；title 升序）",
         defaultText: "time",
       },
-      { name: "--full", kind: "switch", description: "显示全部列" },
+      {
+        name: "--full",
+        kind: "switch",
+        description: "逐会话块列出全部字段（替代精简表格；仅 md）",
+      },
     ],
   },
   {
@@ -249,14 +253,14 @@ export const COMMANDS: readonly CommandSpec[] = [
         kind: "value",
         valueName: "<N>",
         valueKind: "integer",
-        description: "只呈现筛选结果的首 N 条事件（0=不限；仅 md）",
+        description: "只呈现根块筛选后的首 N 条时间线条目（0=不限；仅 md）",
       },
       {
         name: "--tail",
         kind: "value",
         valueName: "<N>",
         valueKind: "integer",
-        description: "只呈现筛选结果的末 N 条事件（0=不限；仅 md）",
+        description: "只呈现根块筛选后的末 N 条时间线条目（0=不限；仅 md）",
       },
       {
         name: "--probe",
