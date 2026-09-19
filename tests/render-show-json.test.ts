@@ -7,7 +7,7 @@ import { node, RENDER_EVENTS } from "./render-helpers.ts";
 describe("renderShowJson / renderShowJsonl", () => {
   it("JSON 结构：session/meta/turns/messages/subagents/coverage", () => {
     const document = JSON.parse(
-      renderShowJson(node(), { summary: false, unattributable: [] }),
+      renderShowJson(node(), { summary: false, subagents: false, unattributable: [] }).content,
     ) as Record<string, unknown>;
     const session = document.session as Record<string, unknown>;
     assert.equal(session.id, "session-render-01");
@@ -30,8 +30,9 @@ describe("renderShowJson / renderShowJsonl", () => {
     const document = JSON.parse(
       renderShowJson(node(), {
         summary: false,
+        subagents: false,
         unattributable: [{ id: "x-bad", reason: "header 分类 malformed" }],
-      }),
+      }).content,
     ) as { coverage: { unattributable: Array<{ id: string; reason: string }> } };
     assert.deepEqual(document.coverage.unattributable, [
       { id: "x-bad", reason: "header 分类 malformed" },
@@ -40,9 +41,25 @@ describe("renderShowJson / renderShowJsonl", () => {
 
   it("--summary 时 messages 为空", () => {
     const document = JSON.parse(
-      renderShowJson(node(), { summary: true, unattributable: [] }),
+      renderShowJson(node(), { summary: true, subagents: false, unattributable: [] }).content,
     ) as Record<string, unknown>;
     assert.deepEqual(document.messages, []);
+  });
+
+  it("摘要与 md 同源：正文带事件数、--summary 带轮次、--subagents 追加子代理数", () => {
+    const base = { unattributable: [] };
+    assert.match(
+      renderShowJson(node(), { ...base, summary: false, subagents: false }).summary,
+      /^会话 session-render-01；事件 \d+ 个$/u,
+    );
+    assert.match(
+      renderShowJson(node(), { ...base, summary: false, subagents: true }).summary,
+      /^会话 session-render-01；事件 \d+ 个；子代理 \d+ 个$/u,
+    );
+    assert.match(
+      renderShowJson(node(), { ...base, summary: true, subagents: false }).summary,
+      /^会话 session-render-01（摘要）；轮次 \d+ 个$/u,
+    );
   });
 
   it("JSONL：首行逻辑 header，其后逐事件", () => {

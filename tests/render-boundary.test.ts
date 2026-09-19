@@ -39,7 +39,9 @@ describe("render 边界与分支", () => {
     const md = renderShowMd(parent, showOptions({ role: "assistant" }));
     assert.equal(md.content.includes("助手内容 ASSIST-TEXT"), true);
     assert.equal(md.content.includes("用户内容 USER-TEXT"), false);
-    const document = JSON.parse(renderShowJson(parent, { summary: false, unattributable: [] })) as {
+    const document = JSON.parse(
+      renderShowJson(parent, { summary: false, subagents: true, unattributable: [] }).content,
+    ) as {
       subagents: Array<Record<string, unknown>>;
     };
     assert.equal(document.subagents.length, 1);
@@ -227,7 +229,7 @@ describe("render 边界与分支", () => {
       md.content.includes("用 --exclude-session <标识> 排除调用方自己的会话及其子代理子树。"),
       true,
     );
-    const document = JSON.parse(renderSearchJson(outcome)) as {
+    const document = JSON.parse(renderSearchJson(outcome).content) as {
       scan: ScanSummary;
       distribution: Array<{ sessionId: string; hits: number }>;
     };
@@ -281,7 +283,7 @@ describe("render 边界与分支", () => {
       md.content.includes("扫描明细：解码日志 1 份；读到事件 7 个；解码失败 0 份；帧解压失败 0 帧"),
       true,
     );
-    const json = JSON.parse(renderStatsJson(global)) as { scan: ScanSummary };
+    const json = JSON.parse(renderStatsJson(global).content) as { scan: ScanSummary };
     assert.equal(json.scan.logsDecoded, 1);
   });
 

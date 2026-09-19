@@ -108,7 +108,8 @@ describe("renderListMd / renderListJson", () => {
       hiddenBlankCount: 0,
       coverage: coverage({ includedCount: 1 }),
     };
-    const document = JSON.parse(renderListJson(outcome)) as {
+    const rendered = renderListJson(outcome);
+    const document = JSON.parse(rendered.content) as {
       sessions: Array<Record<string, unknown>>;
       coverage: SessionCoverage;
     };
@@ -118,5 +119,7 @@ describe("renderListMd / renderListJson", () => {
     assert.equal(document.sessions[0].title, "测试标题");
     assert.deepEqual(document.sessions[0].metadata, { available: true, reasons: [] });
     assert.deepEqual(document.coverage, { scannedCount: 1, includedCount: 1, excluded: [] });
+    // 摘要与 md 同源：json 形态的 stdout 第二行不得与 md 漂移。
+    assert.equal(rendered.summary, "匹配会话 1 个，显示 1 个");
   });
 });

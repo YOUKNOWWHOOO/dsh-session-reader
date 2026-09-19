@@ -17,29 +17,30 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 ## 输出使用规定
 
 - `--output-dir` 无默认值，惯例指向项目临时目录（`<项目>/tmp/` 或 `<项目>/.tmp/`）。目录不存在时创建；创建、写入或移动失败退出 3。工具不校验路径合法性，也不限制其是否位于 dsh 主目录内。
-- 成功时 stdout 恰两行：`完整输出已保存到: <绝对路径>` 与 `<摘要>；输出文件共 N 行`，`N` 等于产物实际行数；会话正文只写入输出文件。失败时 stdout 为空，只有 stderr 一行。`--help` 例外：写 stdout、退出 0、不需要 `--output-dir`。
+- 成功时 stdout 恰两行：`完整输出已保存到: <绝对路径>` 与 `<摘要>；输出文件共 N 行`，`N` 等于产物实际行数。摘要给出该命令的关键计数，且同一调用不因 `--format` 改变：`list` 为匹配条数与显示条数、`search` 为命中处数与显示处数、`show` 为事件数（`--summary` 为轮次数、`--probe` 为预计字节数、`--subagents` 追加子代理数）、`stats` 为会话数与总轮次/工具调用、`check` 为会话数与异常项数。会话正文只写入输出文件。失败时 stdout 为空，只有 stderr 一行。`--help` 例外：写 stdout、退出 0、不需要 `--output-dir`。
 - 产物编码 UTF-8 无 BOM、LF、末尾恰一个换行。
 - 未指定 `--name` 时产物名为 `session-reader-<命令>-<UTC 时间戳>-<随机 6 位>[a-z0-9].<扩展名>`；目标已存在即拒绝、退出 2（分类 `输出文件已存在`）。
 - 指定 `--name <basename>` 时产物恒为 `<output-dir>/<basename>.<扩展名>`，扩展名由 `--format` 决定，同名产物被原子替换（覆盖即丢失上一次内容）。
-- `--name` 取值：ASCII 字母、数字、`_`、`-`，加 CJK 统一表意文字基本区、扩展 A 与兼容区；长度 1-64（按 UTF-16 单元）；禁 `.`、路径分隔符、空白、控制字符；禁 22 个 Windows 保留设备名 `CON`、`PRN`、`AUX`、`NUL`、`COM1`-`COM9`、`LPT1`-`LPT9`。扩展 B 及以后的汉字（如 `𠮷`）不被接受。违者退出 2，错误文案指出原因。
+- `--name` 取值：ASCII 字母、数字、`_`、`-`，加全部汉字（Unicode `Script=Han`，含扩展 B 及以后）；长度 1-64（按 UTF-16 单元）；禁 `.`、路径分隔符、空白、控制字符；禁 22 个 Windows 保留设备名 `CON`、`PRN`、`AUX`、`NUL`、`COM1`-`COM9`、`LPT1`-`LPT9`。违者退出 2，错误文案指出原因。
 - 默认格式 `md` 的产物真实通过全局 markdownlint 基线（技能根 `.markdownlint.jsonc` 与全局基线逐条一致，无文件内豁免、无配置放宽）：调用方无需将输出目录排除在静态检查之外；`json`/`jsonl` 不参与 lint。
 - 产物可能含会话明文，按临时产物管理。
 
 ## 覆盖范围与统计口径
 
-覆盖声明让调用方无需读源码即可判断结论强度。md 形态为 `扫描会话 N 个；纳入 M 个；排除 K 个` 加逐条 `排除会话：<完整 id>（<原因>）`；json 形态为 `coverage: { scannedCount, includedCount, excluded: [{ id, reason }] }`。
+覆盖声明让调用方无需读源码即可判断结论强度。md 形态为 `扫描会话 N 个；纳入 M 个；排除 K 个` 加逐条 `排除会话：<完整 id>（<原因>）`；json 形态为 `coverage: { scannedCount, includedCount, excluded: [{ id, reason }], unattributable?: [{ id, reason }] }`，其中 `unattributable` 仅 `show --subagents` 出现。
 
-- `N = M + K` 恒成立。`M` 是本次作用域内进入结论的会话数，即范围过滤后的会话数减去其中解码失败者；`K` 是本次无法纳入的会话数。
-- `K` 的两类来源：发现阶段 header 不可读的全库会话（无从判定其是否符合过滤条件），与作用域内解码失败者。解码失败的会话只计入 `K`，不同时计入 `M`。
-- `排除会话：<id>（<原因>）` 逐条列出 `K` 中每个会话；header 不可读时 `id` 为会话目录名。聚合命令（`list`/`search`/`stats`）跳过这类会话并声明、退出 0；单目标命令（`show`、`stats <目标>`）遇同类情况退出 3。`check` 的 `K` 恒为 0，其枚举本就不读 header。
-- `--limit` 不影响 `N`/`M`/`K`。
+- `N = M + K` 恒成立，且实现就是按 `N = M + K` 构造这三个数——它不是独立的核对手段；核对覆盖范围要看逐条列出的排除项。
+- `list` 的 `M`/`K` 描述发现阶段的全库覆盖：`M` 是 header 可读的会话数，`K` 是 header 不可读的会话数。它与范围过滤、空会话隐藏、`--limit` 都无关；过滤结果由 `合计：匹配 A 个会话，显示 B 个（共扫描 C 个）` 表达（`C` 即 `N`）。
+- `search` 与 `stats` 的 `M` 是本次作用域内实际进入检索/统计的会话数（范围过滤后的会话数减去其中解码失败者）；`K` 由两部分构成：发现阶段 header 不可读的全库会话（无从判定其是否符合过滤条件）与作用域内解码失败者。解码失败的会话只计入 `K`，不同时计入 `M`。
+- `stats <目标>` 的覆盖声明恒为 `扫描会话 1 个；纳入 1 个；排除 0 个`；`check` 的 `K` 恒为 0（其枚举本就不读 header）。`--limit` 不影响 `N`/`M`/`K`。
+- `排除会话：<id>（<原因>）` 逐条列出 `K` 中每个会话；header 不可读时 `id` 为会话目录名。聚合命令（`list`/`search`/`stats`）跳过这类会话并声明、退出 0；单目标命令（`show`、`stats <目标>`）遇同类情况退出 3。
 - 仅 `show --subagents` 追加 `归属未知：<id>（<原因>）` 行：header 不可读的会话无从取得 id 与父子关系，无法判定是否属于目标子树，故不计入 `N`/`M`/`K`，只声明读取缺口。
 - `list` 另输出 `合计：匹配 A 个会话，显示 B 个（共扫描 C 个）`、`已隐藏空会话 D 个（--include-blank 显示）`（`D > 0` 时），以及对每个元数据不可用条目的 `元数据不可用：<id>（<原因>）`。
-- `search` 与 `stats` 另输出 `扫描明细：解码日志 X 份；读到事件 Y 个；解码失败 Z 份；帧解压失败 W 帧` 与 `事件时间范围：<下界> ~ <上界>`。时间取自**事件自带的 `time` 字段**，与会话最近活动时间不是同一口径；无事件时显示 `-`。
+- `search` 与 `stats` 另输出 `扫描明细：解码日志 X 份；读到事件 Y 个；解码失败 Z 份；帧解压失败 W 帧` 与 `事件时间范围：<下界> ~ <上界>`。时间取自**事件自带的 `time` 字段**，与会话最近活动时间不是同一口径；无事件时显示 `-`。`stats` 全局在存在轮次/步数不可用的会话时，摘要行追加 `（N 个会话未计入，原因见输出文件）`（这些会话不计入总轮次与总步数）；`stats` 单会话在元数据不可用时输出 `元数据不可用：<原因>`（不带 id）。
 - `search` 另输出 `检索范围：<scope>（<覆盖面描述>）；命中总数 X 为精确值`、`命中总数：X`（被 `--limit` 截断时追加 `；已截断显示 N 条（--limit 0 显示全部）`），以及 `## 每会话命中分布` 表格与其后的固定提示行 `用 --exclude-session <标识> 排除调用方自己的会话及其子代理子树。`（分布为空时整段不输出）。
 - 命中总数是**检索单元内的匹配次数**，不是文本出现次数：同一段文本可能按正文、按字段、按事件载荷被各计一次，因此 `text` < `tools` < `all`。`为精确值` 表示该数未被 `--limit` 截断，因此 `--scope all` 下「0 命中」可作为「不存在」的证据。
 - 命中分布逐会话给出命中数（含 0 命中的纳入会话），按命中数降序、同数按会话 id 升序，标题列按码点截断 40。用途是把**调用方自己的语料**从结论里剔除：检索在全库上做，发起检索的会话及其子代理会话也在库里，笔记与复述过的错误串都会被命中。
-- `show` 另输出 `筛选：…；显示 X 条时间线条目（区间内事件 Y 个，共 Z 个事件）`（每个块各一条，`Z` 为该块自身的事件数）与 `摘要：…`（五段固定顺序：推理、工具、生命周期事件的隐藏数，角色过滤说明，截断说明）。
+- `show` 另输出 `筛选：…；显示 X 条时间线条目（区间内事件 Y 个，共 Z 个事件）`（`…` 为 `turn A-B`、`seq A-B`、`首 N 条`、`末 N 条` 中以 `；` 连接者；每个块各一条，`Z` 为该块自身的事件数）与 `摘要：…`（五段固定顺序：推理、工具、生命周期事件的隐藏数，角色过滤说明，截断说明）。
 - `show --probe` 只产出头部 KV 与 `- 预计字节数：`、`- 消息数：`，不含覆盖声明。
 
 ## 输出格式（md）
@@ -49,26 +50,26 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 - 文档标题：`# 会话列表`（`list`）、`# 会话列表（完整）`（`list --full`）、`# 会话记录`（`show`）、`# 检索结果`（`search`）、`# 统计`（`stats`）、`# 完整性校验`（`check`）。
 - 区块标题：`## 时间线`（根块）、`### 时间线`（子代理块）、`## 轮次大纲`（`--summary`）、`### 轮次大纲`（子代理块）、`## 子代理 <路径编号>`（恒 H2，编号如 `1`、`1.1`）、`## 每会话命中分布`（`search`）。
 - 标签行恒以 `：` 收尾，穷尽 8 个：`**用户**`、`**助手**`、`**推理**`、`**工具调用**（<name>）`、`**工具结果**`、`**工具结果**（错误）`、`**系统消息**`、`**事件**`。`**事件**` 不是围栏，同一行为 `` **事件**：`<类型>` `<载荷 JSON>` ``。加 `--headers` 时标签变为 `（seq N；<本地时间>）：`。
-- `show` 头部字段：`- ID：`、`- 标题：`、`- 工作区：`、`- 创建：`、`- 类型：主会话|子代理`、`- 父会话：`（子代理）、`- 深度：`（子代理）、`- 预设：`、`- 日志：`、`- 规模：<大小>；v<N>；<帧> 帧；<行> 行；<事件> 事件`、`- 轮次：<轮次>；步数：<步数>；工具调用：<数>`、`- 令牌：输入 A；输出 B；缓存读 C；推理 D`、`- 异常：…`（有异常时）。`--probe` 追加 `- 预计字节数：N（完整导出正文大小，按 UTF-8 计）` 与 `- 消息数：X 用户 / Y 助手`。
+- `show` 头部字段：`- ID：`、`- 标题：`、`- 工作区：`、`- 创建：`、`- 类型：主会话|子代理`、`- 父会话：`（子代理）、`- 深度：`（子代理）、`- 预设：`、`- 日志：`（会话日志绝对路径）、`- 规模：<大小>；v<N>；<帧> 帧；<行> 行；<事件> 事件`、`- 轮次：<轮次>；步数：<步数>；工具调用：<数>`、`- 令牌：输入 A；输出 B；缓存读 C；推理 D`、`- 异常：…`（有异常时）。`--probe` 追加 `- 预计字节数：N（完整导出正文大小，按 UTF-8 计）` 与 `- 消息数：X 用户 / Y 助手`。
 - 表格只有两处：`list` 精简列的 `| ID | 标题 | 工作区 | 最近活动 | 轮次 | 类型 | 大小 |`，与命中分布的 `| 会话 | 类型 | 标题 | 命中 |`。
 - `list --full` 每个会话一个块：`- <完整 id>：<标题>（主|子）`，续行两空格缩进 `**工作区**`、`**最近活动**`、`**轮次**`、`**大小**`、`**创建**`、`**cwd**`、`**预设**`、`**模型**`（`provider/model`）、`**令牌**`（`未缓存输入/输出/缓存读/缓存写`，斜杠分隔）、`**元数据**`（`projcache`、`部分缺失`、`不可用`）。
 - `stats` 头部字段：单会话为 `会话`、`空会话`、`轮次`、`步数`、`工具调用`、`令牌：未缓存输入…`、`创建`、`最近活动`、`标题`、`预设`、`模型`、`日志`、`大小`；全局为 `会话数`、`空会话数`、`总轮次`、`总步数`、`工具调用总数`、`令牌-未缓存输入/输出/缓存读/缓存写`、`时间跨度`、`日志总大小`。
-- `check` 每个会话一行：`- <id>：v=<N>；结构=<值>；帧=<N>；行=<N>；seq=<连续|不连续|->；坏行=<N>；异常=<N>`，有异常时追加 `；异常详情：…`；末尾为 `结论：无异常` 或 `结论：发现 N 项异常`。
+- `check` 每个会话一行：`- <id>：v=<N>；结构=<完整|结构损坏|tornStart@<偏移>>；帧=<N>；行=<N>；seq=<连续|不连续|->；坏行=<N>；异常=<N>`，有异常时追加 `；异常详情：…`；末尾为 `结论：无异常` 或 `结论：发现 N 项异常`。
 - `show --summary` 的条目为 `- T<turn>（seq <seq>）：<prompt> → <response>`；会话无轮次事件时整段为 `无`。
 - `search` 命中行为 `` - `<完整 id>`（seq <N>）`<标签>`：`<片段>` ``。标签在事件载荷命中上是事件类型（如 `assistant/attempt`、`llm/retry`），在按字段枚举的命中上是工具自造的单元名（`user`、`assistant`、`tool/call`、`tool/result`、`agent/inbox`、`title-request`、`todo`、`deliverables`、`web-search-request`、`compaction/summary`）。
 - 载体：多行文本用动态长度反引号围栏（语言标注 `text`，反引号长度 = 内容最长连续反引号串 + 1 且不小于 3）；单行文本用动态反引号行内代码跨度（表格单元格内 `|` 先转义）。
-- 归一化共四条：CR/CRLF 折叠为 LF；制表符 → 4 空格；行内载体首尾空白去除（全空白值保留原样）；行内载体与轮次大纲把内嵌换行替换为空格。围栏载荷各行逐字不变，仅当所有非空行都以 `$`+空白开头时末尾追加一行单个空格。
+- 归一化共四条，前两条作用于全部载体、后两条只作用于行内载体与轮次大纲：CR/CRLF 折叠为 LF；制表符 → 4 空格；行内载体首尾空白去除（全空白值保留原样）；行内载体与轮次大纲把内嵌换行替换为空格。围栏载荷保留原始换行（不做第四条折叠），仅当所有非空行都以 `$`+空白开头时在载荷末尾追加一行单个空格。控制字符、RTL/组合字符、零宽字符与 NUL 在载体内原样保留，超长单行不截断。
 - 截断：`--truncate N` 按 Unicode 码点截断并追加 `…`（长度可达 N+1），`0` 即不截断，作用于用户/助手正文、推理、工具参数、工具结果、系统消息、`--events` 载荷与轮次大纲；标签、ID、表格与列表列不受影响。命中分布表标题固定按码点截断 40，不随 `--truncate` 变化。
 - 空值显示裸 `-`，元数据不可用显示 `元数据不可用`。列表与命中行输出**完整 id**，可直接作为 `show`/`stats`/`check`/`search --session` 的目标参数。
 - 读取建议：按标题词表定位区块，用围栏/行内代码边界识别原始文本与字段值；子代理块只由路径编号表达父子关系，标题层级不随深度递进。
 
 ## JSON 与 JSONL 结构
 
-- `list --format json`：`{ sessions: [...], coverage }`。条目字段为 `id`、`type`（`main`/`subagent`）、`title`、`cwd`、`workspaceTitle`、`createdAt`、`lastActivityAt`、`lastPromptAt`、`turns`、`steps`、`blank`、`agentPreset`、`model`、`tokens`、`sizeBytes`、`metadata`。
+- `list --format json`：`{ sessions: [...], coverage }`。条目字段为 `id`、`type`（`main`/`subagent`）、`title`、`cwd`、`workspaceTitle`、`createdAt`、`lastActivityAt`、`lastPromptAt`、`turns`、`steps`、`blank`、`agentPreset`、`model`、`tokens`、`sizeBytes`、`metadata`（`metadata` 为 `{ available, reasons }`，不可用时其余字段为 `null`）。
 - `show --format json`：`{ session, meta, turns, messages, subagents, coverage }`。`messages` 只含五类事件（`user/message`、`assistant/message`、`tool/call`、`tool/result`、`system/message`），推理与工具调用内嵌在条目中，生命周期事件不出现而只计入 `meta` 的计数。`--summary` 时 `messages` 为 `[]` 而 `turns` 保留；`subagents` 仅在 `--subagents` 时非空。
 - `show --format jsonl`：首行为**逻辑 header**（官方库归一化后的产物，不是磁盘首行原文），其后每行一个已解码事件，行数 = 事件数 + 1；不含 `meta`/`turns`/`messages`/`subagents`/`coverage`，不含子代理。这是逐事件穷尽枚举的唯一入口。
-- `search --format json`：`{ matches, total, truncated, scope, totalIsExact, coverage, scan, distribution }`。
-- `stats --format json`：`kind` 为 `single` 或 `global`，两种形态各含 `coverage` 与 `scan`。
+- `search --format json`：`{ matches, total, truncated, scope, totalIsExact, coverage, scan, distribution }`；`matches[]` 为 `{ sessionId, seq, time, label, excerpt }`，`distribution[]` 为 `{ sessionId, type, title, hits }`，`scan` 为 `{ logsDecoded, eventsRead, decodeFailures, frameFailures, observedFrom, observedTo }`。
+- `stats --format json`：`kind` 为 `single` 或 `global`，两种形态各含 `coverage` 与 `scan`。`single` 另有 `session`：`id`、`title`、`blank`、`turns`、`steps`、`toolCalls`、`tokens`、`agentPreset`、`model`、`createdAt`、`lastActivityAt`、`logPath`、`logVersion`、`logCompressed`、`sizeBytes`、`metadata`。`global` 另有 `sessionCount`、`blankCount`、`turns`、`steps`、`toolCalls`、`tokens`、`earliestCreatedAt`、`latestActivityAt`、`totalSizeBytes`、`unavailable`（`[{ id, reasons }]`）；「N 个会话未计入」只出现在摘要行与 md，json 无该字段。
 - `check --format json`：`{ sessions, anomalyCount, coverage }`；会话字段为 `id`、`logPath`、`formatVersion`、`classification`、`structure`、`structureDetail`、`frames`、`lines`、`seqContiguous`、`badLines`、`anomalies`（`lines` 与 `badLines` 是渲染层键名）。
 - 时间：md 一律本地时区含数值偏移的秒级 ISO 8601（如 `2026-09-18T22:39:06+08:00`）；json 中 `createdAt`、`lastActivityAt`、事件 `time` 等为原始毫秒数。
 - 空值：文本为 `-`，json 为 `null`；元数据不可用时 json 另给 `metadata.reasons`。
@@ -112,7 +113,7 @@ node scripts/session-reader.ts check  [<id|唯一前缀|last>] --output-dir <pro
 - `--headers`：给时间线标签追加 `（seq N；<本地时间>）`。
 - `--full`：`list` 用逐会话块替代表格并改用 `# 会话列表（完整）`；与 `--format json` 同用时被接受但无效果。
 - `--include-blank`：`list` 专有。默认隐藏 `blank` 为真者；`blank` 为 null（元数据不可用）不隐藏。`search` 与 `stats` 没有该选项，恒包含空会话。
-- `--sort <time|created|title|size|turns>`：默认 `time`；`title` 升序、其余降序；并列按会话 id 排序且方向随主序取反（降序键的并列按 id 降序，`title` 的并列按 id 升序）。
+- `--sort <time|created|title|size|turns>`：默认 `time`；`title` 升序、其余降序；并列按会话 id 排序，方向与主序一致（降序键的并列按 id 降序，`title` 的并列按 id 升序）。
 - `--summary`：`show` 用轮次大纲替代时间线；其下 `--role`/`--thinking`/`--tools`/`--events`/`--headers` 被接受但无效果；与 `--probe` 同用时规模探测优先。
 - `--probe`：只落头部 KV、`- 预计字节数：`、`- 消息数：`；与其它呈现类开关可同用，按同一组开关渲染副本据实测字节。
 - `--session` / `--exclude-session`：与 `show` 目标同语法（含 `last`），作用为该会话及其子代理子树的正选与反选；两者可同时给出并取交集；目标不存在时退出 1。
@@ -168,7 +169,7 @@ node scripts/session-reader.ts check                     --output-dir <project_t
 
 ## 退出码与错误
 
-- `0` 成功（含 0 命中、空结果、`--help`、`check` 无异常）；`1` 目标不存在（含前缀歧义、`--workspace` 无匹配、`--dsh-home` 不存在、`sessions` 缺失）；`2` 参数错误（含 `--name` 非法、选项组合违规、缺 `--output-dir`、前缀短于 8 字符、未给 `--name` 时目标已存在）；`3` 数据/IO 错误（含 `check` 发现异常、输出目录创建失败、输出写入失败、输出移动失败、官方格式库加载失败）。
+- `0` 成功（含 0 命中、空结果、`--help`、`check` 无异常）；`1` 目标不存在（含前缀歧义、`--workspace` 无匹配、`--dsh-home` 不存在、`sessions` 缺失）；`2` 参数错误（含 `--name` 非法、选项组合违规、缺 `--output-dir`、`search` 关键词为空、前缀短于 8 字符、未给 `--name` 时目标已存在）；`3` 数据/IO 错误（含 `check` 发现异常、输出目录创建失败、输出写入失败、输出移动失败、官方格式库加载失败）。
 - stderr 唯一格式为 `错误: <分类>`，后可附 `（候选 N 个）` 或 `（<说明>）`。分类全集 8 个：`参数无效`、`目标不存在`、`数据不可读`、`内部错误`、`输出目录创建失败`、`输出文件已存在`、`输出写入失败`、`输出移动失败`。
 - `check` 发现异常时先落盘并打印两行 stdout，再以 3 结束，stderr 为空；退出码 3 因此不代表没有产物。
 - 失败路径 stdout 为空，只有 stderr 一行。说明的来源与边界见「选项互斥」，其中不含会话内容、会话 ID、用户名与 dsh 数据路径。
@@ -177,7 +178,7 @@ node scripts/session-reader.ts check                     --output-dir <project_t
 
 ## 使用要点
 
-- 目标可写完整 id、唯一前缀（大小写不敏感，按原 token 计最短 8 字符，可省略 `session-`）或 `last`。`last` 指**最近活动的主会话**：在所有可读会话中排除子代理，按有效最近活动时间取最大，并列取 id 较小者；没有主会话时退出 1。歧义时按候选数改用更长前缀。`list`/`search` 产物中的完整 id 必然可直接使用。
+- 目标可写完整 id、唯一前缀（大小写不敏感，按原 token 计最短 8 字符，可省略 `session-`）或 `last`。`last` 区分大小写（`LAST` 会被当作前缀而报前缀过短、退出 2）。`last` 指**最近活动的主会话**：在所有可读会话中排除子代理，按有效最近活动时间取最大，并列取 id 较小者；没有主会话时退出 1。歧义时按候选数改用更长前缀。`list`/`search` 产物中的完整 id 必然可直接使用。
 - 范围选择只改变呈现，不改变覆盖声明与统计。`--head`/`--tail` 只作用于根块，`--turn`/`--seq` 作用于每个块，因此后者会裁剪子代理块，且各块的 turn 与 seq 编号互不相干。
 - 先探测规模再决定是否读取：`show <目标> --probe` 只落头部 KV、`- 预计字节数：N`、`- 消息数：X 用户 / Y 助手`，不含会话正文；`N` 等于以同一组选项做完整导出的 UTF-8 字节数。
 - 检索时剔除调用方自己的语料：先看 `## 每会话命中分布` 定位来自自己会话与子代理的命中，再用 `--exclude-session <标识>` 整棵子树排除。
@@ -185,6 +186,6 @@ node scripts/session-reader.ts check                     --output-dir <project_t
 - `search` 与 `stats` 恒包含空会话，`list` 默认隐藏，做「list 定位会话、search 核对内容」时注意两者集合不同。
 - 推理、工具调用/结果与生命周期事件默认隐藏，分别用 `--thinking`、`--tools`、`--events` 显示；摘要行给出各类隐藏条数。
 - `check` 不带目标时走不读 header 的枚举，结构损坏与 header 不可读的会话也在诊断范围内；带目标时目标必须可读，否则退出 3 且无产物。要诊断损坏会话本身，去掉目标查全库。
-- 尾部截断、坏行等异常在产物中显式标注（`show` 的 `- 异常：` 与 `check` 的异常详情）。聚合命令遇解码失败逐条排除而不中断，单目标命令则以退出 3 报错。
+- 尾部截断、坏行等异常在产物中显式标注（`show` 的 `- 异常：` 与 `check` 的异常详情）；尾部的不完整帧及其后续内容整体丢弃，标注 `尾部未完整帧已丢弃（v1 不做前缀抢救）`。聚合命令遇解码失败逐条排除而不中断，单目标命令则以退出 3 报错。
 - `list`/`stats` 的元数据来自官方投影缓存（版本须为 7 且身份四项全等）；不可用时相关列标注 `元数据不可用` 并给出原因，json 中为 `null` 加 `metadata.reasons`。
 - 需要逐事件穷尽枚举时用 `show --format jsonl`；`--format json` 只含五类消息事件，不含生命周期事件。

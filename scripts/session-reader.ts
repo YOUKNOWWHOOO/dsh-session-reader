@@ -41,7 +41,6 @@ import {
 } from "./lib/render-json.ts";
 import { renderCheckMd, renderListMd, renderSearchMd, renderStatsMd } from "./lib/render-md.ts";
 import { renderShowMd } from "./lib/render-show-md.ts";
-import { formatStatsSummary } from "./lib/render-summary.ts";
 import { runCheck } from "./lib/store-check.ts";
 import { discoverReadableSessions } from "./lib/store-discovery.ts";
 import { buildList } from "./lib/store-list.ts";
@@ -751,10 +750,10 @@ function renderList(parsed: ParsedCommand, ctx: StoreContext, format: "md" | "js
     const mapped = mapStoreError(outcome.error);
     return { kind: "failure", failure: mapped };
   }
-  const summary = `匹配会话 ${outcome.data.matchedCount} 个，显示 ${outcome.data.entries.length} 个`;
-  if (format === "json")
-    return { kind: "rendered", content: renderListJson(outcome.data), summary, exitCode: 0 };
-  const rendered = renderListMd(outcome.data, { full: optionSwitch(parsed, "--full") });
+  const rendered =
+    format === "json"
+      ? renderListJson(outcome.data)
+      : renderListMd(outcome.data, { full: optionSwitch(parsed, "--full") });
   return { kind: "rendered", content: rendered.content, summary: rendered.summary, exitCode: 0 };
 }
 
@@ -795,16 +794,12 @@ function renderShow(
     return { kind: "rendered", content: rendered.content, summary: rendered.summary, exitCode: 0 };
   }
   if (format === "json") {
-    const eventCount = node.data.file.decoded.events.length;
-    const summary = summaryFlag
-      ? `会话 ${resolved.data.id}（摘要）`
-      : `会话 ${resolved.data.id}；事件 ${eventCount} 个`;
-    return {
-      kind: "rendered",
-      content: renderShowJson(node.data, { summary: summaryFlag, unattributable }),
-      summary,
-      exitCode: 0,
-    };
+    const rendered = renderShowJson(node.data, {
+      summary: summaryFlag,
+      subagents: includeSubagents,
+      unattributable,
+    });
+    return { kind: "rendered", content: rendered.content, summary: rendered.summary, exitCode: 0 };
   }
   const roleValue = optionValue(parsed, "--role");
   const showOptions: ShowMdOptions = {
@@ -847,10 +842,9 @@ function renderSearch(parsed: ParsedCommand, ctx: StoreContext, format: "md" | "
     optionValue(parsed, "--exclude-session"),
   );
   if (!outcome.success) return { kind: "failure", failure: mapStoreError(outcome.error) };
-  const summary = `命中 ${outcome.data.totalHits} 处，显示 ${outcome.data.hits.length} 处`;
-  const content =
-    format === "json" ? renderSearchJson(outcome.data) : renderSearchMd(outcome.data).content;
-  return { kind: "rendered", content, summary, exitCode: 0 };
+  const rendered =
+    format === "json" ? renderSearchJson(outcome.data) : renderSearchMd(outcome.data);
+  return { kind: "rendered", content: rendered.content, summary: rendered.summary, exitCode: 0 };
 }
 
 function renderStats(parsed: ParsedCommand, ctx: StoreContext, format: "md" | "json"): RunOutcome {
@@ -859,12 +853,8 @@ function renderStats(parsed: ParsedCommand, ctx: StoreContext, format: "md" | "j
   const outcome = runStats(ctx, parsed.positional[0], scopeFilters.data);
   if (!outcome.success) return { kind: "failure", failure: mapStoreError(outcome.error) };
   if (format === "json") {
-    return {
-      kind: "rendered",
-      content: renderStatsJson(outcome.data),
-      summary: formatStatsSummary(outcome.data),
-      exitCode: 0,
-    };
+    const rendered = renderStatsJson(outcome.data);
+    return { kind: "rendered", content: rendered.content, summary: rendered.summary, exitCode: 0 };
   }
   const rendered = renderStatsMd(outcome.data);
   return { kind: "rendered", content: rendered.content, summary: rendered.summary, exitCode: 0 };
@@ -873,10 +863,13 @@ function renderStats(parsed: ParsedCommand, ctx: StoreContext, format: "md" | "j
 function renderCheck(parsed: ParsedCommand, ctx: StoreContext, format: "md" | "json"): RunOutcome {
   const outcome = runCheck(ctx, parsed.positional[0]);
   if (!outcome.success) return { kind: "failure", failure: mapStoreError(outcome.error) };
-  const summary = `会话 ${outcome.data.sessions.length} 个；异常 ${outcome.data.anomalyCount} 项`;
-  const content =
-    format === "json" ? renderCheckJson(outcome.data) : renderCheckMd(outcome.data).content;
-  return { kind: "rendered", content, summary, exitCode: outcome.data.anomalyCount > 0 ? 3 : 0 };
+  const rendered = format === "json" ? renderCheckJson(outcome.data) : renderCheckMd(outcome.data);
+  return {
+    kind: "rendered",
+    content: rendered.content,
+    summary: rendered.summary,
+    exitCode: outcome.data.anomalyCount > 0 ? 3 : 0,
+  };
 }
 
 function dispatchCommand(

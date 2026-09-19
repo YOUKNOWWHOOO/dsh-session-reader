@@ -185,6 +185,16 @@ describe("validateOutputName", () => {
     for (const value of ["probe", "probe-2", "probe_2", "调查报告", "报告-2026_a"]) {
       assert.equal(validateOutputName(value), null, `期望合法: ${value}`);
     }
+    // 扩展平面的汉字同样是"中文"，不得因手写 \uXXXX 区间只覆盖基本平面而被误拒。
+    for (const value of ["𠮷", "𠮷野家"]) {
+      assert.equal(validateOutputName(value), null, `期望合法: ${value}`);
+    }
+  });
+
+  it("拒绝非 Han 的非 ASCII 字符", () => {
+    for (const value of ["Ω", "Ж", "한", "😀"]) {
+      assert.notEqual(validateOutputName(value), null, `期望非法: ${value}`);
+    }
   });
 
   it("拒绝空值与超长值", () => {

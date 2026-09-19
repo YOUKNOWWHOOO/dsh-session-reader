@@ -303,6 +303,32 @@ describe("main 进程内主流程", () => {
     assert.equal(check.code, 0);
   });
 
+  it("show 的 stdout 摘要不因 --format 变化（md 与 json 同源）", async () => {
+    const base = [
+      "show",
+      "inproc-main-01",
+      "--dsh-home",
+      HOME,
+      "--lib-root",
+      LIB_ROOT,
+      "--output-dir",
+      OUT_DIR,
+    ];
+    // 只比较 `；输出文件共 N 行` 之前的摘要：md 与 json 产物的行数本就不同。
+    const summaryOf = (stdout: string): string =>
+      (stdout.split("\n").filter((line) => line.length > 0)[1] ?? "").replace(
+        /；输出文件共 \d+ 行$/u,
+        "",
+      );
+    for (const extra of [[], ["--summary"], ["--subagents"]]) {
+      const md = await runMain([...base, ...extra]);
+      const json = await runMain([...base, ...extra, "--format", "json"]);
+      assert.equal(md.code, 0);
+      assert.equal(json.code, 0);
+      assert.equal(summaryOf(json.streams.stdout()), summaryOf(md.streams.stdout()));
+    }
+  });
+
   it("错误映射：目标不存在 → 1；lib 加载失败 → 3；sessions 缺失 → 1", async () => {
     const base = ["--dsh-home", HOME, "--lib-root", LIB_ROOT, "--output-dir", OUT_DIR];
     const missing = await runMain(["show", "zzzzzzzz", ...base]);

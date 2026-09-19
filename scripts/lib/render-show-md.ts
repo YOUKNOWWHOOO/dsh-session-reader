@@ -37,7 +37,7 @@ import {
   truncateText,
 } from "./render-core.ts";
 import { coverageSections } from "./render-md.ts";
-import { showSummary } from "./render-summary.ts";
+import { showProbeSummary, showSummary } from "./render-summary.ts";
 import type { SessionNode } from "./store-types.ts";
 
 // ------------------------- show -------------------------
@@ -420,7 +420,10 @@ export function renderShowMd(node: SessionNode, options: ShowMdOptions): Rendere
     );
   }
   const stats = computeEventStats(node.file);
-  const summary = showSummary(node, options, stats, () => probeSizeOf(node, options));
+  // 探测分支才量正文字节数：`probeSizeOf` 会再渲染一份完整副本，非探测路径不得提前求值。
+  const summary = options.probe
+    ? showProbeSummary(node, probeSizeOf(node, options))
+    : showSummary(node, options, stats);
   return { content: assembleDocument(sections), summary };
 }
 
