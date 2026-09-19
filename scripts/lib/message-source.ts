@@ -32,7 +32,7 @@ export interface SourceAttribution {
 /**
  * 本技能识别的 kind：词表内的值在 md 中裸写，词表外的值入行内载体。
  *
- * 词表的来源分三层，均取自本机安装的官方包（以下文件与行号为实测位置）：基础成员 4 个由
+ * 词表的来源分三层，均取自本机安装的官方包（下列文件为实测位置；不写行号，行号会随官方包升级漂移）：基础成员 4 个由
  * `@deepseek-ai/dsh-llm\lib\types\message.d.ts` 的 `MessageSourceMap` 声明（`user`、`plugin`、
  * `model`、`tool`）；`agent-message`、`subagent-settled`、`skill-invocation`、`goal`、
  * `session-reference` 由 `dsh-subagent`、`dsh-skill`、`dsh-goal`、`dsh-session-reference` 各自
