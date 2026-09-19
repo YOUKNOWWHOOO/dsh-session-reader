@@ -45,18 +45,19 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 
 ## 输出格式（md）
 
-骨架只用固定词表，会话来源文本一律经载体承载：
+骨架只用固定词表，会话来源文本一律经载体承载（来源标注中的会话 id 例外，见标签行一条）：
 
 - 文档标题：`# 会话列表`（`list`）、`# 会话列表（完整）`（`list --full`）、`# 会话记录`（`show`）、`# 检索结果`（`search`）、`# 统计`（`stats`）、`# 完整性校验`（`check`）。
 - 区块标题：`## 时间线`（根块）、`### 时间线`（子代理块）、`## 轮次大纲`（`--summary`）、`### 轮次大纲`（子代理块）、`## 子代理 <路径编号>`（恒 H2，编号如 `1`、`1.1`）、`## 每会话命中分布`（`search`）。路径编号是各层内子节点的 1 起序号、以 `.` 连接，因此 `1.2` 表示根的第 1 个子代理的第 2 个子代理。
-- 标签行恒以 `：` 收尾，穷尽 8 个：`**用户**`、`**助手**`、`**推理**`、`**工具调用**（<name>）`、`**工具结果**`、`**工具结果**（错误）`、`**系统消息**`、`**事件**`。`**事件**` 不是围栏，同一行为 `` **事件**：`<类型>` `<载荷 JSON>` ``。加 `--headers` 时标签变为 `（seq N；<本地时间>）：`。
+- 标签行恒以 `：` 收尾，穷尽 8 个：`**用户**`、`**助手**`、`**推理**`、`**工具调用**（<name>）`、`**工具结果**`、`**工具结果**（错误）`、`**系统消息**`、`**事件**`。`**事件**` 不是围栏，同一行为 `` **事件**：`<类型>` `<载荷 JSON>` ``。标签行括号内的标注项顺序固定为 `seq N` → `<本地时间>` → `来源 …`：前两项仅 `--headers` 出现，来源项恒出现且仅当该事件是 `user/message`、且来源不是用户本人（`**助手**`、`**推理**`、`**工具调用**`、`**工具结果**`、`**系统消息**`、`**事件**` 不加标注，用户本人的消息也不加）。
+- 来源标注的形态为 `来源 <kind>`：`agent-message` 与 `subagent-settled` 追加 `<senderSessionId>`（原样输出，可直接作为 `show` 的前缀目标），`plugin` 追加插件名（入行内载体），其余 kind 不加取值，`kind` 缺失或非字符串时为 `来源 未标注`。kind 是官方词表内的固定值（`user`、`plugin`、`model`、`tool`、`agent-message`、`subagent-settled`、`skill-catalog`、`skill-invocation`、`agent-instructions`、`goal`、`webhook`、`session-reference`）时裸写，词表外的值入行内载体原样呈现（来源种类是插件可扩展的联合，未知取值不得丢弃或改写）。`**用户**` 标签不能单独作为"这条消息是用户写的"的证据，来源标注才是判据。
 - `show` 头部字段：`- ID：`、`- 标题：`、`- 工作区：`、`- 创建：`、`- 类型：主会话|子代理`、`- 父会话：`（子代理）、`- 深度：`（子代理）、`- 预设：`、`- 日志：`（会话日志绝对路径）、`- 规模：<大小>；v<N>；<帧> 帧；<行> 行；<事件> 事件`、`- 轮次：<轮次>；步数：<步数>；工具调用：<数>`、`- 令牌：输入 A；输出 B；缓存读 C；推理 D`、`- 异常：…`（有异常时）。`--probe` 追加 `- 预计字节数：N（完整导出正文大小，按 UTF-8 计）` 与 `- 消息数：X 用户 / Y 助手`。
 - 表格只有两处：`list` 精简列的 `| ID | 标题 | 工作区 | 最近活动 | 轮次 | 类型 | 大小 |`，与命中分布的 `| 会话 | 类型 | 标题 | 命中 |`。
 - `list --full` 每个会话一个块：`- <完整 id>：<标题>（主|子）`，续行两空格缩进 `**工作区**`、`**最近活动**`、`**轮次**`、`**大小**`、`**创建**`、`**cwd**`、`**预设**`、`**模型**`（`provider/model`）、`**令牌**`（`未缓存输入/输出/缓存读/缓存写`，斜杠分隔）、`**元数据**`（`projcache`、`部分缺失`、`不可用`）。
 - `stats` 头部字段：单会话为 `会话`、`空会话`、`轮次`、`步数`、`工具调用`、`令牌：未缓存输入…`、`创建`、`最近活动`、`标题`、`预设`、`模型`、`日志`、`大小`；全局为 `会话数`、`空会话数`、`总轮次`、`总步数`、`工具调用总数`、`令牌-未缓存输入/输出/缓存读/缓存写`、`时间跨度`、`日志总大小`。
 - `check` 每个会话一行：`- <id>：v=<N>；结构=<完整|结构损坏|tornStart@<偏移>>；帧=<N>；行=<N>；seq=<连续|不连续|->；坏行=<N>；异常=<N>`，有异常时追加 `；异常详情：…`；末尾为 `结论：无异常` 或 `结论：发现 N 项异常`。
 - `show --summary` 的条目为 `- T<turn>（seq <seq>）：<prompt> → <response>`；会话无轮次事件时整段为 `无`。
-- `search` 命中行为 `` - `<完整 id>`（seq <N>）`<标签>`：`<片段>` ``。标签在事件载荷命中上是事件类型（如 `assistant/attempt`、`llm/retry`），在按字段枚举的命中上是工具自造的单元名（`user`、`assistant`、`assistant/reasoning`、`tool/call`、`tool/result`、`system`、`agent/inbox`、`title-request`、`command/run`、`command/done`、`todo`、`deliverables`、`web-search-request`、`compaction/summary`；事件类型为空时写作 `(未知类型)`）。
+- `search` 命中行为 `` - `<完整 id>`（seq <N>）`<标签>`：`<片段>` ``。命中所在事件为 `user/message` 且来源不是用户本人时，`（seq <N>）` 内追加 `；来源 …`，形态与标签行的来源标注完全同源。标签在事件载荷命中上是事件类型（如 `assistant/attempt`、`llm/retry`），在按字段枚举的命中上是工具自造的单元名（`user`、`assistant`、`assistant/reasoning`、`tool/call`、`tool/result`、`system`、`agent/inbox`、`title-request`、`command/run`、`command/done`、`todo`、`deliverables`、`web-search-request`、`compaction/summary`；事件类型为空时写作 `(未知类型)`）。
 - 载体：多行文本用动态长度反引号围栏（语言标注 `text`，反引号长度 = 内容最长连续反引号串 + 1 且不小于 3）；单行文本用动态反引号行内代码跨度（内容以反引号开头或结尾时，在跨度内两端各补一个空格作内边距；表格单元格内 `|` 先转义）。
 - 归一化共四条，前两条作用于全部载体、后两条只作用于行内载体与轮次大纲：CR/CRLF 折叠为 LF；制表符 → 4 空格；行内载体首尾空白去除（全空白值保留原样）；行内载体与轮次大纲把内嵌换行替换为空格。围栏载荷保留原始换行（不做第四条折叠），仅当所有非空行都以 `$`+空白开头时在载荷末尾追加一行单个空格。控制字符、RTL/组合字符、零宽字符与 NUL 在载体内原样保留，超长单行不截断。
 - 截断：`--truncate N` 按 Unicode 码点截断并追加 `…`（长度可达 N+1），`0` 即不截断，作用于用户/助手正文、推理、工具参数、工具结果、系统消息、`--events` 载荷与轮次大纲；标签、ID、表格与列表列不受影响。命中分布表标题固定按码点截断 40，不随 `--truncate` 变化。
@@ -66,9 +67,9 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 ## JSON 与 JSONL 结构
 
 - `list --format json`：`{ sessions: [...], coverage }`。条目字段为 `id`、`type`（`main`/`subagent`）、`title`、`cwd`、`workspaceTitle`、`createdAt`、`lastActivityAt`、`lastPromptAt`、`turns`、`steps`、`blank`、`agentPreset`、`model`、`tokens`、`sizeBytes`、`metadata`（`metadata` 为 `{ available, reasons }`，不可用时其余字段为 `null`）。
-- `show --format json`：`{ session, meta, turns, messages, subagents, coverage }`。`messages` 只含五类事件（`user/message`、`assistant/message`、`tool/call`、`tool/result`、`system/message`），推理与工具调用内嵌在条目中，生命周期事件不出现而只计入 `meta` 的计数。`--summary` 时 `messages` 为 `[]` 而 `turns` 保留；`subagents` 仅在 `--subagents` 时非空。
+- `show --format json`：`{ session, meta, turns, messages, subagents, coverage }`。`messages` 只含五类事件（`user/message`、`assistant/message`、`tool/call`、`tool/result`、`system/message`），推理与工具调用内嵌在条目中，生命周期事件不出现而只计入 `meta` 的计数。条目字段按类型给出：`user/message` 为 `seq`、`time`、`type`、`role`、`text`、`source`；`assistant/message` 为 `seq`、`time`、`type`、`role`、`text`、`reasoning`、`toolCalls`；`tool/call` 为 `seq`、`time`、`type`、`role`、`callId`、`name`、`arguments`；`tool/result` 为 `seq`、`time`、`type`、`role`、`callId`、`isError`、`text`；`system/message` 为 `seq`、`time`、`type`、`role`、`text`。`source` 是归属对象 `{ kind, form, senderSessionId, plugin }`（无值者为 `null`），是区分"用户本人"与"子代理中继、结算通知、插件注入"的唯一判据。`--summary` 时 `messages` 为 `[]` 而 `turns` 保留；`subagents` 仅在 `--subagents` 时非空。
 - `show --format jsonl`：首行为**逻辑 header**（官方库归一化后的产物，不是磁盘首行原文），其后每行一个已解码事件，行数 = 事件数 + 1；不含 `meta`/`turns`/`messages`/`subagents`/`coverage`，不含子代理。这是逐事件穷尽枚举的唯一入口。
-- `search --format json`：`{ matches, total, truncated, scope, totalIsExact, coverage, scan, distribution }`；`matches[]` 为 `{ sessionId, seq, time, label, excerpt }`，`distribution[]` 为 `{ sessionId, type, title, hits }`，`scan` 为 `{ logsDecoded, eventsRead, decodeFailures, frameFailures, observedFrom, observedTo }`。
+- `search --format json`：`{ matches, total, truncated, scope, totalIsExact, coverage, scan, distribution }`；`matches[]` 为 `{ sessionId, seq, time, label, excerpt, source }`，其中 `source` 是该命中所属事件的归属对象（形态与 `show` 的 `messages[].source` 同源；非 `user/message` 事件为 `null`），`distribution[]` 为 `{ sessionId, type, title, hits }`，`scan` 为 `{ logsDecoded, eventsRead, decodeFailures, frameFailures, observedFrom, observedTo }`。
 - `stats --format json`：`kind` 为 `single` 或 `global`，两种形态各含 `coverage` 与 `scan`。`single` 另有 `session`：`id`、`title`、`blank`、`turns`、`steps`、`toolCalls`、`tokens`、`agentPreset`、`model`、`createdAt`、`lastActivityAt`、`logPath`、`logVersion`、`logCompressed`、`sizeBytes`、`metadata`。`global` 另有 `sessionCount`、`blankCount`、`turns`、`steps`、`toolCalls`、`tokens`、`earliestCreatedAt`、`latestActivityAt`、`totalSizeBytes`、`unavailable`（`[{ id, reasons }]`）；「N 个会话未计入」只出现在摘要行与 md，json 无该字段。
 - `check --format json`：`{ sessions, anomalyCount, coverage }`；会话字段为 `id`、`logPath`、`formatVersion`、`classification`、`structure`、`structureDetail`、`frames`、`lines`、`seqContiguous`、`badLines`、`anomalies`（`lines` 与 `badLines` 是渲染层键名）。
 - 时间：md 一律本地时区含数值偏移的秒级 ISO 8601（如 `2026-09-18T22:39:06+08:00`）；json 中 `createdAt`、`lastActivityAt`、事件 `time` 等为原始毫秒数。
@@ -110,7 +111,7 @@ node scripts/session-reader.ts check  [<id|唯一前缀|last>] --output-dir <pro
 - `--workspace <路径|标题>`：路径归一化后全等匹配（`\` 转 `/`、去尾部 `/`、转小写）或工作区标题全等匹配，均非子串；无任何匹配时退出 1（分类 `目标不存在`），与 `--title` 无匹配时退出 0 不同。
 - `--origin <all|main|subagent>`：判据是会话 header 的 `origin` 为 `subagent`，缺失或其它值一律算主会话。
 - `--role <user|assistant>`：只过滤对话消息，工具与事件不受影响；只要给出该选项，摘要行就追加角色过滤说明。
-- `--headers`：给时间线标签追加 `（seq N；<本地时间>）`。
+- `--headers`：给时间线标签追加 `（seq N；<本地时间>）`，位置在来源标注之前。
 - `--full`：`list` 用逐会话块替代表格并改用 `# 会话列表（完整）`；与 `--format json` 同用时被接受但无效果。
 - `--include-blank`：`list` 专有。默认隐藏 `blank` 为真者；`blank` 为 null（元数据不可用）不隐藏。`search` 与 `stats` 没有该选项，恒包含空会话。
 - `--sort <time|created|title|size|turns>`：默认 `time`；`title` 升序、其余降序；并列按会话 id 排序，方向与主序一致（降序键的并列按 id 降序，`title` 的并列按 id 升序）。
@@ -185,6 +186,7 @@ node scripts/session-reader.ts check                     --output-dir <project_t
 - `--since`/`--until` 按会话的最近活动时间过滤整会话，不筛选事件时间；产物中的 `事件时间范围` 才是事件时间口径，两者可能不一致。
 - `search` 与 `stats` 恒包含空会话，`list` 默认隐藏，做「list 定位会话、search 核对内容」时注意两者集合不同。
 - 推理、工具调用/结果与生命周期事件默认隐藏，分别用 `--thinking`、`--tools`、`--events` 显示；摘要行给出各类隐藏条数。`**系统消息**` 与生命周期事件同受 `--events` 控制，并合并计入「已隐藏 N 条生命周期事件（--events 显示）」，因此不给出 `--events` 时系统消息也整条不可见。
+- `**用户**` 只表示该事件的模型可见角色，不代表"由人类用户写下"：真正的判据是同一行括号内的来源标注（形如 `来源 agent-message <子代理 id>`、`来源 subagent-settled <子代理 id>`、`来源 plugin <插件名>`、`来源 skill-catalog`）。用户本人的消息没有来源项，因此"有来源项 ⇒ 不是用户写的"是可依赖的读法；需要按来源逐条筛选时用 json 的 `source` 归属对象。
 - `check` 不带目标时走不读 header 的枚举，结构损坏与 header 不可读的会话也在诊断范围内；带目标时目标必须可读，否则退出 3 且无产物。要诊断损坏会话本身，去掉目标查全库。
 - 尾部截断、坏行等异常在产物中显式标注（`show` 的 `- 异常：` 与 `check` 的异常详情）；尾部的不完整帧及其后续内容整体丢弃，标注 `尾部未完整帧已丢弃（v1 不做前缀抢救）`。聚合命令遇解码失败逐条排除而不中断，单目标命令则以退出 3 报错。
 - `list`/`stats` 的元数据来自官方投影缓存（版本须为 7 且身份四项全等）；不可用时相关列标注 `元数据不可用` 并给出原因，json 中为 `null` 加 `metadata.reasons`。

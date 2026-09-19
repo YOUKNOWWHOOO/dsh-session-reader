@@ -24,6 +24,7 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
           time: 10,
           label: "user",
           excerpt: "…命中片段…",
+          source: null,
         },
       ],
       totalHits: 4,
