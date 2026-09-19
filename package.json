@@ -5,8 +5,8 @@
   "type": "module",
   "description": "dsh session-reader 技能：列出/读取/检索/统计/校验 dsh 会话历史（开发期工程文件；运行时不依赖任何安装）",
   "devDependencies": {
-    "@biomejs/biome": "^2.5.13",
-    "@types/node": "^26.5.1",
+    "@biomejs/biome": "^2.5.14",
+    "@types/node": "^26.6.2",
     "markdownlint-cli": "^0.49.1",
     "typescript": "^7.0.2"
   }
