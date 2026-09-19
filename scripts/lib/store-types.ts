@@ -236,12 +236,13 @@ export interface SearchOutcome {
   readonly searchedSessions: number;
   readonly scope: "text" | "tools" | "all";
   /**
-   * 命中总数是否为精确值。恒为 true 的证据链：① 检索阶段对纳入会话不做任何提前终止
+   * 命中总数是否为精确值。类型为字面量 `true`：证据链 ① 检索阶段对纳入会话不做任何提前终止
    * （`totalHits` 全量计数，`--limit` 只限制 `hits` 数组的收集）；② `scope=all` 时每个事件的
    * 完整 JSON 载荷都是检索单元，任意事件的任意字符串必然可命中；③ 未纳入的会话逐条列入
-   * `coverage.excluded` 并给出原因，属于"显式排除"而非"未确定"。
+   * `coverage.excluded` 并给出原因，属于"显式排除"而非"未确定"。因此不存在"下界"形态，
+   * 渲染层不得保留对应的分支（保留即为不可达代码）。
    */
-  readonly totalIsExact: boolean;
+  readonly totalIsExact: true;
   readonly coverage: SessionCoverage;
   readonly scan: ScanSummary;
   /**

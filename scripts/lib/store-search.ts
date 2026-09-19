@@ -322,8 +322,9 @@ export function runSearch(
       searchedSessions: views.length,
       scope: options.scope,
       totalIsExact: true,
-      // 恒等式 `scannedCount = includedCount + excluded.length` 必须成立：纳入数是本次实际检索成功的
-      // 会话数，排除项是发现阶段跳过与解码阶段失败两类，调用方据此核对是否存在未列出的漏读。
+      // `scannedCount` 由 `includedCount + excluded.length` 构造（`list`/`stats` 同此），因此恒等式
+      // 必然成立、**不具备核对能力**：核对覆盖范围只能依据逐条列出的排除项。禁止把它表述为
+      // "调用方据此核对是否存在未列出的漏读"（见 doc\开发规范.md 的覆盖声明契约）。
       coverage: {
         scannedCount: includedCount + excluded.length,
         includedCount,

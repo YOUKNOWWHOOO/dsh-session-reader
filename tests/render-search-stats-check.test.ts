@@ -113,7 +113,7 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
     assert.equal(md.content.includes("- 会话数：3"), true);
     assert.equal(md.content.includes("- 工具调用总数：9"), true);
     assert.equal(
-      md.content.includes("元数据不可用：`session-bbb-02`（`projcache 记录缺失`）"),
+      md.content.includes("元数据不完整：`session-bbb-02`（`projcache 记录缺失`）"),
       true,
     );
     assert.equal(md.summary, "会话 3 个；总轮次 5；工具调用 9");

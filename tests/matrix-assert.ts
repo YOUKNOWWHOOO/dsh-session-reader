@@ -360,7 +360,14 @@ function checkDistribution(caseId: string, value: unknown, problems: string[]): 
   }
 }
 
-/** 覆盖声明结构断言：scannedCount = includedCount + excluded.length，且排除项含 id 与 reason。 */
+/**
+ * 覆盖声明结构断言：`scannedCount`、`includedCount` 为数值、`excluded` 每项含 id 与 reason。
+ *
+ * 这里同时检查 `scannedCount === includedCount + excluded.length`，但要注意它**只是字段自洽性**
+ * 检查：实现就是按 `N = M + K` 构造这三个数（见 store-discovery.ts 的 coverageOf 与各命令的
+ * 覆盖计算），因此该等式恒成立、不能用来发现漏读。核对覆盖范围只能依据逐条列出的排除项——
+ * 这正是断言 `excluded` 每项都带 id 与 reason 的原因。
+ */
 function checkCoverage(caseId: string, value: unknown, problems: string[]): void {
   const coverage = asRecord(value);
   if (coverage === undefined) {

@@ -156,8 +156,9 @@ export function buildList(
       scannedCount: selection.data.scannedCount,
       hiddenBlankCount: selection.data.hiddenBlankCount,
       // 覆盖声明描述"本次检查了哪些会话"，与 `--limit` 无关（`--limit` 只影响产物列出多少条，
-      // 由 `matchedCount` 与产物行数表达）。把 includedCount 绑到"列出条数"会让恒等式
-      // `scanned = included + excluded` 被 `--limit` 打破，调用方也就无法据此核对漏读。
+      // 由 `matchedCount` 与产物行数表达）。把 includedCount 绑到"列出条数"会让三个数不再自洽。
+      // 注意：`scanned = included + excluded` 由本函数所在层构造（见 store-discovery.ts 的
+      // coverageOf），恒成立但不具备核对能力——核对覆盖范围只能依据逐条列出的排除项。
       coverage: selection.data.coverage,
     },
   };
