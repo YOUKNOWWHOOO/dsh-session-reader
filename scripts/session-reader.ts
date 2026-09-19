@@ -623,7 +623,8 @@ function readScopeFilters(parsed: ParsedCommand): Result<ScopeFilters, string> {
 
 /**
  * 校验命令级选项组合：`--name` 取值；呈现类开关仅 md；内容范围开关 jsonl 禁止；stats 单会话不接受范围过滤。
- * 所有 detail 都必须给出合法替代写法（调用方只有一次调用机会，禁止只报冲突不报出路）。
+ * 其中只有组合冲突分支需要给出合法替代写法（调用方只有一次调用机会，禁止只报冲突不报出路）；
+ * 取值诊断分支（`--name`、`--turn`、`--seq` 等）按规范只说明合法格式，不提供替代写法。
  */
 export function validateCommandOptions(parsed: ParsedCommand): RunFailure | null {
   const outputName = optionValue(parsed, "--name");

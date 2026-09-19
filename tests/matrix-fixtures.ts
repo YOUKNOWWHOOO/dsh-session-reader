@@ -130,7 +130,17 @@ function mainEvents(): FixtureEvent[] {
       "user/message",
       3,
       13,
-      { role: "user", content: [{ type: "text", text: "needle ALPHA plain text" }] },
+      {
+        role: "user",
+        content: [{ type: "text", text: "needle ALPHA plain text" }],
+        // 该夹具是"用户消息"位，但刻意给出非用户来源：门禁因此会 lint 到带来源标注的标签行
+        // （含入行内载体的 senderSessionId），使标注的载体规则也在全组合层面受检。
+        source: {
+          kind: "agent-message",
+          form: "relay",
+          senderSessionId: "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+        },
+      },
       { surfaceOp: "append" },
     ),
     ev(

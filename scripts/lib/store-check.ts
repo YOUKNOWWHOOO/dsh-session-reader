@@ -7,7 +7,13 @@
 // 不静默吞掉。数据契约见 store-types.ts 文件头。
 
 import { readFileSync } from "node:fs";
-import { asRecord, readNumber, readString, type SessionFormatCatalog } from "./decode.ts";
+import {
+  asRecord,
+  classifyHeader,
+  readNumber,
+  readString,
+  type SessionFormatCatalog,
+} from "./decode.ts";
 import { extractLogText, splitLines } from "./frames.ts";
 import type { Result } from "./paths.ts";
 import { enumerateSessionFiles, errorMessage } from "./store-discovery.ts";
@@ -56,7 +62,7 @@ function checkOneSession(ref: SessionFileRef, catalog: SessionFormatCatalog): Ch
     } else {
       try {
         const headerValue = JSON.parse(lines[0]);
-        const result = catalog.readHeader(headerValue);
+        const result = classifyHeader(catalog, headerValue);
         formatVersion = result.storedVersion ?? null;
         classification = result.status;
         const headerId = readString(result.header ?? {}, "id");

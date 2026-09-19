@@ -3,8 +3,8 @@
 // 依据：SKILL.md「输出格式（md）」的标签行契约与「JSON 与 JSONL 结构」的 messages/matches 条目；
 // 实现：scripts\lib\message-source.ts（唯一真值源）。
 import assert from "node:assert/strict";
-import { join } from "node:path";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import { renderSearchJson, renderShowJson } from "../scripts/lib/render-json.ts";
 import { renderSearchMd } from "../scripts/lib/render-md.ts";
 import { renderShowMd } from "../scripts/lib/render-show-md.ts";
@@ -124,8 +124,9 @@ describe("md 标签行的来源标注", () => {
   it("用户本人的消息不标注，其它来源逐一标注，未知 kind 入行内载体", () => {
     const content = showMd();
     assert.equal(content.includes("**用户**：\n\n```text\n正文 USER-OWN\n```"), true);
-    assert.equal(content.includes(`**用户**（来源 agent-message ${SENDER}）：`), true);
-    assert.equal(content.includes(`**用户**（来源 subagent-settled ${SENDER}）：`), true);
+    assert.equal(content.includes("**用户**（来源 agent-message："), false);
+    assert.equal(content.includes(`**用户**（来源 agent-message \`${SENDER}\`）：`), true);
+    assert.equal(content.includes(`**用户**（来源 subagent-settled \`${SENDER}\`）：`), true);
     assert.equal(
       content.includes("**用户**（来源 plugin `@deepseek-ai/dsh-system-prompt`）："),
       true,
@@ -142,11 +143,60 @@ describe("md 标签行的来源标注", () => {
     assert.equal(content.includes("来源 plugin bad"), false);
   });
 
+  it("空串按无字段处理、新 kind 裸写、含换行的会话 id 入载体", () => {
+    const events: Record<string, unknown>[] = [
+      {
+        type: "user/message",
+        seq: 0,
+        time: 10,
+        data: { role: "user", content: [{ type: "text", text: "空 kind" }], source: { kind: "" } },
+      },
+      {
+        type: "user/message",
+        seq: 1,
+        time: 11,
+        data: {
+          role: "user",
+          content: [{ type: "text", text: "空 plugin" }],
+          source: { kind: "plugin", plugin: "" },
+        },
+      },
+      {
+        type: "user/message",
+        seq: 2,
+        time: 12,
+        data: {
+          role: "user",
+          content: [{ type: "text", text: "团队消息" }],
+          source: { kind: "team-message" },
+        },
+      },
+      {
+        type: "user/message",
+        seq: 3,
+        time: 13,
+        data: {
+          role: "user",
+          content: [{ type: "text", text: "敌意 id" }],
+          source: { kind: "agent-message", form: "relay", senderSessionId: "bad\nid`x" },
+        },
+      },
+    ];
+    const content = renderShowMd(node([], events), showOptions()).content;
+    // 空串是无信息量的值：kind 空串等同于缺失，plugin 空串等同于没有该字段，都不产出空载体。
+    assert.equal(content.includes("**用户**（来源 未标注）："), true);
+    assert.equal(content.includes("**用户**（来源 plugin）："), true);
+    // 官方联合是合并可扩展的，词表内的成员裸写、词表外的成员入载体。
+    assert.equal(content.includes("**用户**（来源 team-message）："), true);
+    // 含换行的会话 id 被载体吸收：换行折叠为空格、反引号使跨度加长，标签行仍是单行。
+    assert.match(content, /^\*\*用户\*\*（来源 agent-message ``bad id`x``）：$/mu);
+  });
+
   it("--headers 时括号内顺序为 seq → 本地时间 → 来源", () => {
     const content = showMd({ headers: true });
     assert.match(
       content,
-      new RegExp(`^\\*\\*用户\\*\\*（seq 2；[^；]+；来源 agent-message ${SENDER}）：$`, "mu"),
+      new RegExp(`^\\*\\*用户\\*\\*（seq 2；[^；]+；来源 agent-message \`${SENDER}\`）：$`, "mu"),
     );
     assert.match(content, /^\*\*用户\*\*（seq 1；[^；]+）：$/mu);
   });
@@ -291,7 +341,7 @@ describe("检索命中行的来源标注", () => {
     const content = renderSearchMd(outcome).content;
     assert.equal(
       content.includes(
-        `- \`session-aaa-01\`（seq 2；来源 subagent-settled ${SENDER}）\`user\`：\`命中片段\``,
+        `- \`session-aaa-01\`（seq 2；来源 subagent-settled \`${SENDER}\`）\`user\`：\`命中片段\``,
       ),
       true,
     );
@@ -301,7 +351,9 @@ describe("检索命中行的来源标注", () => {
 
 describe("store 层来源挂载", () => {
   it("runSearch 把事件级来源随命中传出，非 user/message 事件为 null", () => {
-    const root = join("tests", ".tmp", "source-annotation");
+    // 路径按测试文件位置解析（与 store 系列测试的 `tests\.tmp\store` 同口径）：CWD 相对路径
+    // 会让"夹具只落在 tests\.tmp"这一不变量取决于调用方的工作目录。
+    const root = fileURLToPath(new URL("./.tmp/source-annotation", import.meta.url));
     const home = writeFixtureHome(resetTempDir(root), {
       sessions: [
         {

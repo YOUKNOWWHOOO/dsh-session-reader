@@ -21,7 +21,13 @@ import {
   statSync,
 } from "node:fs";
 import { join } from "node:path";
-import { decodeSessionLog, eventTime, readString, type SessionFormatCatalog } from "./decode.ts";
+import {
+  classifyHeader,
+  decodeSessionLog,
+  eventTime,
+  readString,
+  type SessionFormatCatalog,
+} from "./decode.ts";
 import {
   decompressFrame,
   extractLogText,
@@ -254,7 +260,7 @@ export function discoverReadableSessions(
       skipped.push({ idFromDir: ref.idFromDir, error: "header 行不是合法 JSON" });
       continue;
     }
-    const classification = catalog.readHeader(headerValue);
+    const classification = classifyHeader(catalog, headerValue);
     if (classification.status === "malformed" || classification.status === "unsupported") {
       skipped.push({ idFromDir: ref.idFromDir, error: `header 分类 ${classification.status}` });
       continue;

@@ -187,14 +187,14 @@ function collectSearchUnits(event: EventRecord, scope: "text" | "tools" | "all")
 
 /**
  * 事件记录的完整 JSON 序列化载荷。
- * 循环引用等无法序列化的记录返回空串（该事件由按类型枚举的单元覆盖），不抛错也不伪造占位文本。
+ *
+ * 序列化失败不做兜底、直接抛出：`scope=all` 的穷尽性（"0 命中 ⇒ 不存在"）正是建立在"每个事件的
+ * 完整记录都成为一个检索单元"之上，静默返回空串会让该承诺在没有任何信号的情况下失效——调用方
+ * 会把"检索不到"读成"不存在"。这与 `render-show-md.ts` 的 `eventDataJson` 是同一选择（异常显性
+ * 暴露，由 CLI 顶层映射为 `内部错误`）；官方库解码出的事件都是纯 JSON 值，异常在当前数据下不可达。
  */
 function eventPayloadJson(event: EventRecord): string {
-  try {
-    return JSON.stringify(event);
-  } catch {
-    return "";
-  }
+  return JSON.stringify(event);
 }
 
 /**
