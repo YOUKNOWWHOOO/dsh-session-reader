@@ -1067,6 +1067,20 @@ describe("CLI show 对异常数据", () => {
     assert.equal(content.includes("尾部未完整帧已丢弃"), true);
   });
 
+  it("show --subagents：header 不可读的会话以「归属未知」声明，不静默消失", () => {
+    const result = runCli([
+      "show",
+      "session-broken-torn-06",
+      ...baseArgs(BROKEN_HOME),
+      "--subagents",
+    ]);
+    assert.equal(result.status, 0, `stderr=${result.stderr}`);
+    const content = readFileSync(readContract(result.stdout).path, "utf8");
+    // 归属未知项不计入 N/M/K：作用域内的节点只有目标自身。
+    assert.equal(content.includes("扫描会话 1 个；纳入 1 个；排除 0 个"), true);
+    assert.match(content, /归属未知：`session-broken-corrupt-08`（`[^`]+`）/u);
+  });
+
   it("seq 缺口：一致性失败 → 退出 3 数据不可读", () => {
     const result = runCli(["show", "session-broken-gap-07", ...baseArgs(BROKEN_HOME)]);
     assert.equal(result.status, 3);

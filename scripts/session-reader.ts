@@ -30,34 +30,25 @@ import {
   resolveOutputFileName,
   validateOutputName,
 } from "./lib/paths.ts";
+import type { ShowMdOptions } from "./lib/render-core.ts";
 import {
-  formatStatsSummary,
   renderCheckJson,
-  renderCheckMd,
   renderListJson,
-  renderListMd,
   renderSearchJson,
-  renderSearchMd,
   renderShowJson,
   renderShowJsonl,
-  renderShowMd,
   renderStatsJson,
-  renderStatsMd,
-  type ShowMdOptions,
-} from "./lib/render.ts";
-import {
-  buildList,
-  buildSessionNode,
-  discoverReadableSessions,
-  type ListFilters,
-  resolveSessionTarget,
-  runCheck,
-  runSearch,
-  runStats,
-  type ScopeFilters,
-  type StoreContext,
-  type StoreError,
-} from "./lib/store.ts";
+} from "./lib/render-json.ts";
+import { renderCheckMd, renderListMd, renderSearchMd, renderStatsMd } from "./lib/render-md.ts";
+import { renderShowMd } from "./lib/render-show-md.ts";
+import { formatStatsSummary } from "./lib/render-summary.ts";
+import { runCheck } from "./lib/store-check.ts";
+import { discoverReadableSessions } from "./lib/store-discovery.ts";
+import { buildList } from "./lib/store-list.ts";
+import { runSearch } from "./lib/store-search.ts";
+import { runStats } from "./lib/store-stats.ts";
+import { buildSessionNode, resolveSessionTarget } from "./lib/store-target.ts";
+import type { ListFilters, ScopeFilters, StoreContext, StoreError } from "./lib/store-types.ts";
 
 interface OptionSpec {
   readonly name: string;
@@ -288,7 +279,7 @@ export const COMMANDS: readonly CommandSpec[] = [
         valueKind: "enum",
         values: SCOPE_VALUES,
         description:
-          "检索范围（text=用户/助手正文；tools=另含工具参数与结果；all=另含推理/系统/压缩/命令/标题请求/web 请求/交付物）",
+          "检索范围（text=用户/助手正文；tools=另含工具参数与结果；all=另含推理/系统/压缩/命令/标题请求/web 请求/交付物/待办/代理信箱与每条事件载荷）",
         defaultText: "text",
       },
       { name: "--case-sensitive", kind: "switch", description: "区分大小写（默认不区分）" },
@@ -789,6 +780,15 @@ function renderShow(
     new Set(),
   );
   if (!node.success) return { kind: "failure", failure: mapStoreError(node.error) };
+  // header 不可读的会话既取不到逻辑 id，也无从取得 parentSession，因此无法判定它是否属于本目标子树：
+  // 它不能进 `coverage.excluded`（那会污染 N/M/K 恒等式的含义），只能作为「归属未知」显式声明。
+  const unattributable =
+    allEntries === null
+      ? []
+      : allEntries.data.skipped.map((skipped) => ({
+          id: skipped.idFromDir,
+          reason: skipped.error,
+        }));
   const summaryFlag = optionSwitch(parsed, "--summary");
   if (format === "jsonl") {
     const rendered = renderShowJsonl(node.data);
@@ -801,7 +801,7 @@ function renderShow(
       : `会话 ${resolved.data.id}；事件 ${eventCount} 个`;
     return {
       kind: "rendered",
-      content: renderShowJson(node.data, { summary: summaryFlag }),
+      content: renderShowJson(node.data, { summary: summaryFlag, unattributable }),
       summary,
       exitCode: 0,
     };
@@ -816,6 +816,7 @@ function renderShow(
     headers: optionSwitch(parsed, "--headers"),
     truncate: optionInteger(parsed, "--truncate", 0),
     subagents: includeSubagents,
+    unattributable,
     probe: optionSwitch(parsed, "--probe"),
     turnRange: readRange(parsed, "--turn", 1),
     seqRange: readRange(parsed, "--seq", 0),
