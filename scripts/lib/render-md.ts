@@ -9,6 +9,8 @@
 // 设计约束：结构骨架只用固定词表，任意会话来源文本一律经载体承载；覆盖声明必须逐条列出排除项
 // （`N = M + K` 是"未被列出者即为已覆盖"的唯一依据，禁止合并成计数）；摘要文案不在本模块内联，
 // 统一取自 render-summary.ts，避免 md 与 json 两条路径的措辞漂移。
+
+import { describeSource } from "./message-source.ts";
 import { formatLocalIso } from "./paths.ts";
 import {
   assembleDocument,
@@ -215,8 +217,12 @@ export function renderSearchMd(outcome: SearchOutcome): RenderedOutput {
   const sections = ["# 检索结果"];
   for (const hit of outcome.hits) {
     const seqText = hit.seq === null ? EMPTY_VALUE : String(hit.seq);
+    // 来源标注与时间线同源同形（message-source.ts）：命中行的 `user` 标签会把子代理中继与
+    // 插件注入显示成用户消息，标注是调用方区分它们的唯一依据。`user` 来源不标注。
+    const sourceText = hit.source === null ? null : describeSource(hit.source);
+    const metaText = sourceText === null ? `seq ${seqText}` : `seq ${seqText}；${sourceText}`;
     sections.push(
-      `- ${inlineValue(hit.sessionId)}（seq ${seqText}）${inlineValue(hit.label)}：${inlineValue(hit.excerpt)}`,
+      `- ${inlineValue(hit.sessionId)}（${metaText}）${inlineValue(hit.label)}：${inlineValue(hit.excerpt)}`,
     );
   }
   const truncatedNote = outcome.truncated

@@ -20,6 +20,7 @@ import {
   textFromBlocks,
   toolResultText,
 } from "./decode.ts";
+import { attributeSource } from "./message-source.ts";
 import {
   computeEventStats,
   computeTurns,
@@ -91,7 +92,9 @@ function buildMessageEntries(file: DecodedSessionFile): Record<string, unknown>[
         time: eventTime(event) ?? null,
         type,
         role: "user",
-        source: readString(asRecord(data.source) ?? {}, "kind") ?? null,
+        // 来源归属必须是对象而非 kind 字符串：调用方要能区分"用户本人"与"子代理中继/插件注入"，
+        // 且对 `agent-message`/`subagent-settled` 还要能定位是哪个子代理（senderSessionId）。
+        source: attributeSource(data.source),
         text: textFromBlocks(data.content),
       });
     } else if (type === "assistant/message") {
@@ -257,6 +260,7 @@ export function renderSearchJson(outcome: SearchOutcome): RenderedOutput {
       time: hit.time,
       label: hit.label,
       excerpt: hit.excerpt,
+      source: hit.source,
     })),
     total: outcome.totalHits,
     truncated: outcome.truncated,

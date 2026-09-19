@@ -11,6 +11,7 @@
 // 每个 outcome 都自带覆盖声明与（检索/统计的）扫描摘要，调用方无需读源码即可判断结论强度。
 
 import type { DecodedSession, SessionFormatCatalog } from "./decode.ts";
+import type { SourceAttribution } from "./message-source.ts";
 
 /** 数据层错误：CLI 据此映射退出码与 stderr 分类。 */
 export interface StoreError {
@@ -224,6 +225,12 @@ export interface SearchHit {
   readonly time: number | null;
   readonly label: string;
   readonly excerpt: string;
+  /**
+   * 该命中所属事件的来源归属：`user/message` 事件恒给出（`kind` 为 `user` 表示用户本人），
+   * 其它事件类型为 null。存在理由是"`**用户**`/`user` 标签会把子代理中继与插件注入显示成用户消息"，
+   * 调用方必须能仅凭产物区分消息由谁提供。
+   */
+  readonly source: SourceAttribution | null;
 }
 
 /** 检索结果。 */

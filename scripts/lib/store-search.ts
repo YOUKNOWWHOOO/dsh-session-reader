@@ -19,6 +19,7 @@ import {
   textFromBlocks,
   toolResultText,
 } from "./decode.ts";
+import { attributeSource, type SourceAttribution } from "./message-source.ts";
 import type { Result } from "./paths.ts";
 import {
   accumulateScanSummary,
@@ -41,6 +42,14 @@ import type {
 } from "./store-types.ts";
 
 interface SearchUnit {
+  readonly label: string;
+  readonly text: string;
+  /** 该单元所属事件的来源归属（仅 `user/message` 事件有值），随命中传给渲染层。 */
+  readonly source: SourceAttribution | null;
+}
+
+/** 挂载来源前的中间形态：来源是事件级事实，`collectSearchUnits` 出口处统一挂载到全部单元。 */
+interface TextUnit {
   readonly label: string;
   readonly text: string;
 }
@@ -66,10 +75,13 @@ function messageContent(event: EventRecord): unknown {
  * `all` 档的穷尽性是"检索 0 命中 ⇒ 不存在"这一推断成立的前提：按类型枚举字段必然有遗漏
  * （实测 `assistant/attempt` 与 `llm/retry` 的 `data.failure` 内嵌上游错误体，此前任何 scope 都检索不到），
  * 只有把整条记录纳入检索才能保证任意事件的任意字符串都可命中。
+ *
+ * 返回的每个单元都带上所属事件的来源归属（仅 `user/message` 事件非 null）：命中行的 `user` 标签
+ * 会把子代理中继与插件注入显示成用户消息，来源归属是调用方区分它们的唯一依据。
  */
 function collectSearchUnits(event: EventRecord, scope: "text" | "tools" | "all"): SearchUnit[] {
   const type = eventType(event);
-  const units: SearchUnit[] = [];
+  const units: TextUnit[] = [];
   if (type === "user/message") {
     const text = textFromBlocks(asRecord(event.data)?.content);
     if (text.length > 0) units.push({ label: "user", text });
@@ -167,7 +179,10 @@ function collectSearchUnits(event: EventRecord, scope: "text" | "tools" | "all")
     const raw = eventPayloadJson(event);
     if (raw.length > 0) units.push({ label: type.length === 0 ? "(未知类型)" : type, text: raw });
   }
-  return units;
+  // 来源归属是**事件级**事实，一条事件的所有检索单元（含 all 档的整条载荷单元）共享同一份归属，
+  // 因此在此统一挂载，避免各单元各自判别来源而产生不一致的答案。
+  const source = type === "user/message" ? attributeSource(asRecord(event.data)?.source) : null;
+  return units.map((unit) => ({ label: unit.label, text: unit.text, source }));
 }
 
 /**
@@ -290,6 +305,7 @@ export function runSearch(
               label: unit.label,
               // 文本输出要求“每命中一条”独占一行：片段内换行折叠为空格。
               excerpt: excerpt.replaceAll("\n", " "),
+              source: unit.source,
             });
           }
           from = at + needle.length;

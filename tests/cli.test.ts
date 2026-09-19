@@ -682,7 +682,7 @@ describe("CLI show", () => {
     assert.equal(content.includes("```text\nthink GAMMA\n```"), true);
     assert.match(content, /\*\*工具调用\*\*（`read`）（seq 4；[0-9T:+-]+）：/u);
     assert.equal(content.includes("```text\nfile alpha content\n```"), true);
-    assert.match(content, /\*\*用户\*\*（seq 2；[0-9T:+-]+）：/u);
+    assert.match(content, /\*\*用户\*\*（seq 2；[0-9T:+-]+；来源 未标注）：/u);
     assert.match(content, /\*\*事件\*\*（seq \d+；[0-9T:+-]+）：`turn\/start`/u);
   });
 

@@ -20,6 +20,7 @@ import {
   textFromBlocks,
   toolResultText,
 } from "./decode.ts";
+import { attributeSource, describeSource } from "./message-source.ts";
 import { formatLocalIso } from "./paths.ts";
 import {
   assembleDocument,
@@ -110,13 +111,31 @@ function nodeKvBlock(node: SessionNode, estimatedBytes?: number): string {
   return lines.join("\n");
 }
 
-/** 加粗标签行：禁止独立成段（MD036），恒以 `：` 收尾；--headers 时附 seq 与时间（f2 R1-4）。 */
-function labelLine(base: string, event: EventRecord, headers: boolean): string {
-  if (!headers) return `${base}：`;
-  const seq = eventSeq(event);
-  const time = eventTime(event);
-  const timeText = time === undefined ? EMPTY_VALUE : formatLocalIso(time);
-  return `${base}（seq ${seq === undefined ? EMPTY_VALUE : String(seq)}；${timeText}）：`;
+/**
+ * 加粗标签行：禁止独立成段（MD036），恒以 `：` 收尾。
+ * 括号内的标注项顺序固定为 `seq N` → 本地时间 → 来源；前两项仅 `--headers` 出现，来源项恒出现
+ * （仅 `user/message` 事件、且来源不是用户本人时）。无任何标注项时括号整体不出现。
+ */
+function labelLine(base: string, event: EventRecord, options: ShowMdOptions): string {
+  const items: string[] = [];
+  if (options.headers) {
+    const seq = eventSeq(event);
+    const time = eventTime(event);
+    items.push(`seq ${seq === undefined ? EMPTY_VALUE : String(seq)}`);
+    items.push(time === undefined ? EMPTY_VALUE : formatLocalIso(time));
+  }
+  const source = sourceAnnotationOf(event);
+  if (source !== null) items.push(source);
+  return items.length === 0 ? `${base}：` : `${base}（${items.join("；")}）：`;
+}
+
+/**
+ * 事件的来源标注：只有 `user/message` 事件需要它——它被渲染成 `**用户**`，会把子代理中继、
+ * 插件注入等显示成用户消息；`**工具结果**`、`**系统消息**`、`**事件**` 各有独立标签，不存在该歧义。
+ */
+function sourceAnnotationOf(event: EventRecord): string | null {
+  if (eventType(event) !== "user/message") return null;
+  return describeSource(attributeSource(asRecord(event.data)?.source));
 }
 
 function fencedItem(
@@ -125,7 +144,7 @@ function fencedItem(
   options: ShowMdOptions,
   payloadRaw: string,
 ): string[] {
-  return [labelLine(base, event, options.headers), fenceBlock(payloadRaw)];
+  return [labelLine(base, event, options), fenceBlock(payloadRaw)];
 }
 
 /**
@@ -294,9 +313,7 @@ function timelineItem(
   // 事件载荷的截断口径与其它文本一致：由 `--truncate` 单独决定，`0` 即不截断。
   // 此前固定截到 200 字符且不读 `--truncate`，使"默认不截断"的契约在事件视图下静默失效。
   const payload = truncateText(eventDataJson(event), options.truncate);
-  return [
-    `${labelLine("**事件**", event, options.headers)}${inlineValue(type)} ${inlineValue(payload)}`,
-  ];
+  return [`${labelLine("**事件**", event, options)}${inlineValue(type)} ${inlineValue(payload)}`];
 }
 
 /**
