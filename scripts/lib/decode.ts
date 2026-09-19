@@ -48,6 +48,22 @@ export interface SessionFormatCatalog {
   createRestore(headerValue: unknown, options: RestoreOptions): CatalogRestore;
 }
 
+/**
+ * header 分类的唯一入口：官方库 `readHeader` 的全部调用点（含只读 header 的轻量路径）必须经此函数，
+ * 使"官方库 API 变化只允许修改 decode.ts 单点适配"这一兼容性约束成立（`doc\开发规范.md` 的数据契约）。
+ * 直接调用 `catalog.readHeader` 会让其它模块各自耦合官方签名，升级 dsh 时必然漏改。
+ *
+ * @param catalog 已加载的官方格式库。
+ * @param headerValue 已解析的 header 值（首行 JSON 的产物，可能不是对象）。
+ * @returns 官方库的分类结果，原样返回不做任何改写或兜底。
+ */
+export function classifyHeader(
+  catalog: SessionFormatCatalog,
+  headerValue: unknown,
+): HeaderClassification {
+  return catalog.readHeader(headerValue);
+}
+
 /** 解码异常（可继续的物理/行级问题；输出必须显式标注）。 */
 export interface DecodeAnomaly {
   readonly kind: "torn-tail" | "bad-line";
@@ -114,7 +130,7 @@ export function decodeSessionLog(
   } catch {
     return { success: false, error: "header 行不是合法 JSON" };
   }
-  const classification = catalog.readHeader(headerValue);
+  const classification = classifyHeader(catalog, headerValue);
   if (classification.status === "malformed" || classification.status === "unsupported") {
     return {
       success: false,

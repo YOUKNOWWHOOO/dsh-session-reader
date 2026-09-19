@@ -7,13 +7,15 @@
 // 2. `kind` 由官方 MessageSourceMap 定义，且该联合是"合并可扩展"的（`@deepseek-ai/dsh-llm` 的 message.d.ts：
 //    "Merge-extensible sum type — plugins add their own kinds"）。因此未知 kind 必须原样呈现，禁止丢弃，
 //    也禁止归入最接近的已知类别——那会把"未知"伪装成"已知"。
-// 3. 骨架里只有固定词"来源"与词表内的 kind 裸写；词表外的 kind 与一切取自日志的取值（plugin 名）经
-//    行内载体承载（inlineValue）。原因：日志内容可能含反引号或换行，裸写会破坏骨架，并被
-//    tests\matrix-assert.ts 的"数据标记必须处于代码载体"断言拦下。会话 id 是唯一例外，原样输出，
-//    与 `- ID：`、`- 父会话：`、列表与命中行的完整 id 同一惯例。
-// 4. 真实数据实测（307 个会话、2319 条 user/message 事件）：`source` 零缺失、`kind` 零非字符串，
-//    取值只有 user(502)/plugin(562)/agent-message(396)/subagent-settled(287)/skill-catalog(312)/
-//    agent-instructions(259)/goal(1) 七种，其中 agent-message 与 subagent-settled 恒带 senderSessionId。
+// 3. 骨架里只有固定词"来源"与词表内的 kind 裸写；词表外的 kind 与一切取自日志的取值（plugin 名、
+//    会话 id 等）一律经行内载体承载（inlineValue）。原因：日志的字段值可能含反引号或换行，
+//    裸写会把标签行拆成两行并让裸文本进入骨架（违反 md 输出契约 R2 载体隔离），也会被
+//    tests\matrix-assert.ts 的"数据标记必须处于代码载体"断言拦下。产品里其它会话 id（`- ID：`、
+//    `- 父会话：`、列表行、命中行）本来就经载体承载，这里的处理与之同惯例。
+// 4. 本机真实数据的实测性质（不写具体计数：该计数随会话增长而变化，写死必然过时）：`user/message`
+//    事件的 `source` 恒存在、`kind` 恒为非空字符串，出现的取值集中在 user/plugin/agent-message/
+//    subagent-settled/skill-catalog/agent-instructions/goal。空串与缺失一律按"无该字段"处理——空串
+//    没有任何信息量，若当成取值渲染会产出空载体（`来源 ``` ），既有损可读性也失去标注意义。
 //    `来源 未标注` 分支是为违反 schema 的日志保留的显式标注，不是为不可能发生的场景加兜底逻辑。
 
 import { asRecord, readString } from "./decode.ts";
@@ -28,8 +30,16 @@ export interface SourceAttribution {
 }
 
 /**
- * 已知 kind：词表内的值在 md 中裸写，词表外的值入行内载体。
- * 前六项来自官方基础类型（`@deepseek-ai/dsh-llm`）、后六项来自本机安装的各插件扩展。
+ * 本技能识别的 kind：词表内的值在 md 中裸写，词表外的值入行内载体。
+ *
+ * 词表的来源分三层，均取自本机安装的官方包：基础成员 4 个由 `@deepseek-ai/dsh-llm` 的
+ * `MessageSourceMap` 声明（`user`、`plugin`、`model`、`tool`）；`agent-message`、`subagent-settled`、
+ * `skill-invocation`、`team-message`、`goal`、`session-reference` 由 `dsh-subagent`、`dsh-skill`、
+ * `dsh-router`（内嵌声明）等包各自 `declare module` 增补；`skill-catalog`、`agent-instructions`、
+ * `webhook` 由对应插件包增补。`coordinator`、`subagent-report` 只出现在官方 v2→v3 适配器的
+ * `SOURCE_KINDS` 白名单里（`dsh-session-format-v2-to-v3`），并没有本包的合并声明，但它们是该适配器
+ * 承认的合法取值，故一并视为已知。该词表**不是**对官方词表的完整声明——联合是合并可扩展的，
+ * 任何未列入的取值都会走载体分支原样呈现，这正是设计意图。
  */
 const KNOWN_KINDS: readonly string[] = [
   "user",
@@ -41,10 +51,19 @@ const KNOWN_KINDS: readonly string[] = [
   "skill-catalog",
   "skill-invocation",
   "agent-instructions",
+  "team-message",
+  "coordinator",
+  "subagent-report",
   "goal",
   "webhook",
   "session-reference",
 ];
+
+/** 取非空字符串字段：缺失、非字符串与空串一律视为"无该字段"。 */
+function readNonEmptyString(record: Record<string, unknown>, key: string): string | null {
+  const value = readString(record, key);
+  return value === undefined || value === "" ? null : value;
+}
 
 /** 携带定位取值的 kind → 该取值在归属对象中的字段名。 */
 const DETAIL_FIELD: Readonly<Record<string, keyof SourceAttribution>> = {
@@ -62,19 +81,21 @@ const DETAIL_FIELD: Readonly<Record<string, keyof SourceAttribution>> = {
 export function attributeSource(source: unknown): SourceAttribution {
   const record = asRecord(source) ?? {};
   return {
-    kind: readString(record, "kind") ?? null,
-    form: readString(record, "form") ?? null,
-    senderSessionId: readString(record, "senderSessionId") ?? null,
-    plugin: readString(record, "plugin") ?? null,
+    kind: readNonEmptyString(record, "kind"),
+    form: readNonEmptyString(record, "form"),
+    senderSessionId: readNonEmptyString(record, "senderSessionId"),
+    plugin: readNonEmptyString(record, "plugin"),
   };
 }
 
 /**
  * 生成 md 标注片段：`来源 <kind>[ <取值>]`。
  *
+ * 取值（`senderSessionId`、`plugin`）与词表外的 kind 一律经行内载体承载（见文件头第 3 条）。
+ *
  * @param attribution 归属对象（`attributeSource` 的产物）。
  * @returns 标注片段；`kind` 为 `user`（用户本人的消息）时返回 null，表示不标注；
- *          `kind` 缺失时返回 `来源 未标注`，使违反 schema 的日志同样可辨。
+ *          `kind` 缺失、非字符串或空串时返回 `来源 未标注`，使违反 schema 的日志同样可辨。
  */
 export function describeSource(attribution: SourceAttribution): string | null {
   const kind = attribution.kind;
@@ -85,7 +106,5 @@ export function describeSource(attribution: SourceAttribution): string | null {
   const field = DETAIL_FIELD[kind];
   const detail = field === undefined ? null : attribution[field];
   if (detail === null) return `来源 ${head}`;
-  // 取值一律入载体，唯一例外是会话 id（见文件头第 3 条）。
-  const detailText = field === "senderSessionId" ? detail : inlineValue(detail);
-  return `来源 ${head} ${detailText}`;
+  return `来源 ${head} ${inlineValue(detail)}`;
 }
