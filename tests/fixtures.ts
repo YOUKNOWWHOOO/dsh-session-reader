@@ -41,6 +41,8 @@ export interface FixtureSessionSpec {
   readonly tornTail?: boolean;
   /** 结构损坏：首帧魔数替换为无效值。 */
   readonly corrupt?: boolean;
+  /** 尾部帧结构损坏：header 帧完好、其后首个正文帧魔数替换为无效值（用于"header 可读但解码失败"）。 */
+  readonly corruptTail?: boolean;
   /** projcache 形态：有效/缺失/版本不符/identity 不符/部分行缺失。 */
   readonly projcache?: "valid" | "missing" | "version" | "identity" | "partial";
   readonly title?: string | null;
@@ -90,8 +92,13 @@ function headerLine(spec: FixtureSessionSpec): string {
   return JSON.stringify(header);
 }
 
-/** 把行数组压缩为多帧 zstd（帧 0=header；其后每 3 行一帧），可选撕裂尾。 */
-function buildZstdLog(header: string, lines: readonly string[], tornTail: boolean): Buffer {
+/** 把行数组压缩为多帧 zstd（帧 0=header；其后每 3 行一帧），可选撕裂尾与正文帧损坏。 */
+function buildZstdLog(
+  header: string,
+  lines: readonly string[],
+  tornTail: boolean,
+  corruptTail: boolean,
+): Buffer {
   const frames: Buffer[] = [zstdCompressSync(Buffer.from(`${header}\n`, "utf8"))];
   const batches: string[][] = [];
   for (let index = 0; index < lines.length; index += 3) {
@@ -99,6 +106,14 @@ function buildZstdLog(header: string, lines: readonly string[], tornTail: boolea
   }
   for (const batch of batches) {
     frames.push(zstdCompressSync(Buffer.from(`${batch.join("\n")}\n`, "utf8")));
+  }
+  if (corruptTail) {
+    const target = frames[1];
+    if (target === undefined) {
+      // 显式失败而非静默降级：没有正文帧时该夹具开关无意义，夹具必须让调用方立刻知道。
+      throw new Error("夹具 corruptTail 需要至少一个正文帧：请为该会话提供事件");
+    }
+    target.writeUInt32LE(0xdeadbeef, 0);
   }
   if (tornTail) {
     const last = frames.pop();
@@ -178,7 +193,7 @@ export function writeFixtureHome(root: string, spec: FixtureHomeSpec): string {
     const lines = session.events.map((event) => eventLine(event));
     for (const extra of session.extraLines ?? []) lines.push(extra);
     if (session.corrupt) {
-      const buffer = buildZstdLog(header, lines, false);
+      const buffer = buildZstdLog(header, lines, false, false);
       buffer.writeUInt32LE(0xdeadbeef, 0);
       writeFileSync(join(dirPath, session.fileName ?? "session.v3.jsonl.zstd"), buffer);
     } else if (session.plaintext) {
@@ -188,7 +203,7 @@ export function writeFixtureHome(root: string, spec: FixtureHomeSpec): string {
       const fileName = session.fileName ?? "session.v3.jsonl.zstd";
       writeFileSync(
         join(dirPath, fileName),
-        buildZstdLog(header, lines, session.tornTail ?? false),
+        buildZstdLog(header, lines, session.tornTail ?? false, session.corruptTail ?? false),
       );
     }
     for (const extra of session.extraFiles ?? []) {
