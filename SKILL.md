@@ -11,7 +11,7 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 
 - 平台：Windows；PATH 中需有 Node（v26 线，原生执行 TypeScript，无需构建）。
 - 本机需有 dsh 安装（提供官方格式库与会话数据）。主目录默认 `$DSH_HOME`，否则 `~\.dsh`，可用 `--dsh-home` 覆盖；该路径不存在、或其下缺 `sessions\` 时退出 1。
-- 官方格式库解析锚点默认 `<dsh-home>\profiles\node_modules`，可用 `--lib-root` 覆盖；解析失败退出 3，分类 `内部错误`。
+- 官方格式库的默认解析锚点按 dsh 自身的安装锚点探测：在 npm 缓存的 npx 目录下找同时含 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-session-format-catalog` 的 `node_modules`，命中数必须恰好 1；`<dsh-home>\profiles\node_modules` 只在它同时含这两个包时才参与（该目录自 dsh `0.1.7-rc.2` 起不再由 dsh 创建）。可用 `--lib-root <目录>` 覆盖（取值必须是含 `@deepseek-ai` 的 `node_modules`）；无法唯一定位或库加载失败时退出 3，分类 `内部错误`，并在错误说明里给出锚点或可执行的下一步。
 - 全部命令必须显式指定 `--output-dir`，缺省退出 2。
 
 ## 输出使用规定
@@ -97,7 +97,7 @@ node scripts/session-reader.ts stats  [<id|唯一前缀|last>] --output-dir <pro
 node scripts/session-reader.ts check  [<id|唯一前缀|last>] --output-dir <project_tmp> [--name <basename>] [--format md|json]
 ```
 
-全局选项：`--dsh-home <路径>`（默认 `$DSH_HOME`，否则 `~\.dsh`）、`--lib-root <目录>`（默认 `<dsh-home>\profiles\node_modules`）、`--output-dir`、`--name`、`--format`、`-h/--help`。选项不可重复（重复即退出 2），开关不接受值，支持 `--opt=value`，位置参数不终止选项解析，`-h` 出现在 `--` 之前即短路为帮助。
+全局选项：`--dsh-home <路径>`（默认 `$DSH_HOME`，否则 `~\.dsh`）、`--lib-root <目录>`（默认按 dsh 自身的安装锚点探测，见「运行前提」；取值必须是含 `@deepseek-ai` 的 `node_modules`）、`--output-dir`、`--name`、`--format`、`-h/--help`。选项不可重复（重复即退出 2），开关不接受值，支持 `--opt=value`，位置参数不终止选项解析，`-h` 出现在 `--` 之前即短路为帮助。
 
 ## 选项语义
 

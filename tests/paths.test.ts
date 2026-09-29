@@ -1,5 +1,7 @@
 // paths.ts 单元测试：DSH_HOME 解析、路径归一化、时间解析/格式化、输出文件名、行计数。
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import {
@@ -39,11 +41,43 @@ describe("resolveDshHome", () => {
   });
 });
 
-describe("sessionsRoot / defaultLibRoot", () => {
-  it("sessions 根与 lib 锚点路径正确", () => {
+describe("sessionsRoot", () => {
+  it("sessions 根路径正确", () => {
     const dshHome = join("C:\\", "home", ".dsh");
     assert.equal(sessionsRoot(dshHome), join(dshHome, "sessions"));
-    assert.equal(defaultLibRoot(dshHome), join(dshHome, "profiles", "node_modules"));
+  });
+});
+
+describe("defaultLibRoot 的安装锚点探测", () => {
+  it("候选不唯一或完全缺失时返回 undefined，唯一命中时返回该 node_modules", () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "session-reader-paths-"));
+    try {
+      const fakeDshHome = join(sandbox, "dsh-home");
+      mkdirSync(fakeDshHome, { recursive: true });
+
+      // 缺少 npm 缓存的定位信息（既无 npm_config_cache，也无 LOCALAPPDATA），且旧布局不存在：
+      // 探测无法唯一确定，应返回 undefined 而不是猜一个。
+      assert.equal(defaultLibRoot(fakeDshHome, {}), undefined);
+
+      // 构造两个含探针包的 checkout：命中数不是 1，同样返回 undefined。
+      const npxRoot = join(sandbox, "cache", "_npx");
+      const scopeOf = (checkout: string) => join(npxRoot, checkout, "node_modules", "@deepseek-ai");
+      for (const checkout of ["aaaa1111", "bbbb2222"]) {
+        const scope = scopeOf(checkout);
+        for (const pkg of ["dsh", "dsh-session-format-catalog"]) {
+          mkdirSync(join(scope, pkg), { recursive: true });
+          writeFileSync(join(scope, pkg, "package.json"), "{}\n", "utf8");
+        }
+      }
+      const env = { npm_config_cache: join(sandbox, "cache") };
+      assert.equal(defaultLibRoot(fakeDshHome, env), undefined);
+
+      // 移除一个候选后唯一命中，应返回该 checkout 的 node_modules。
+      rmSync(join(npxRoot, "bbbb2222"), { recursive: true, force: true });
+      assert.equal(defaultLibRoot(fakeDshHome, env), join(npxRoot, "aaaa1111", "node_modules"));
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
   });
 });
 

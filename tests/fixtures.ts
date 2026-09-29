@@ -29,9 +29,9 @@ export interface FixtureSessionSpec {
   readonly parentSession?: string;
   readonly origin?: "subagent";
   readonly agentPreset?: string;
-  /** 日志文件名（默认 session.v3.jsonl.zstd）。 */
+  /** 日志文件名（默认 session.v4.jsonl.zstd）。 */
   readonly fileName?: string;
-  /** 是否以明文写入（fileName 默认 session.v3.jsonl）。 */
+  /** 是否以明文写入（fileName 默认 session.v4.jsonl）。 */
   readonly plaintext?: boolean;
   /** 额外文件（多代并存等场景）。 */
   readonly extraFiles?: readonly { readonly fileName: string; readonly content: Buffer | string }[];
@@ -79,7 +79,10 @@ function eventLine(event: FixtureEvent): string {
 function headerLine(spec: FixtureSessionSpec): string {
   const header: Record<string, unknown> = {
     type: "session",
-    version: 3,
+    // 夹具一律写当前版本（v4）。写旧版本会让解码器走 v3→v4 迁移分支，而该分支要求传入
+    // 「显式历史子事实」（含无子会话时的空数组），夹具没有这些事实，迁移必定失败，
+    // 表现为整批用例以「数据不可读」失败。旧版本日志的读取由专门用例覆盖。
+    version: 4,
     id: spec.id,
     createdAt: spec.createdAt,
     isSeeded: false,
@@ -164,7 +167,9 @@ function projcacheDocument(spec: FixtureSessionSpec): unknown {
   let rows = allRows;
   let version = 7;
   let identity: Record<string, unknown> = {
-    formatVersion: 3,
+    // projcache 的 identity 与日志 header 同源：都取当前会话格式版本（v4），两处必须一致，
+    // 否则投影缓存被判为 identity 不符而被丢弃。
+    formatVersion: 4,
     createdAt: spec.createdAt,
     cwd: spec.cwd,
     isSeeded: false,
@@ -195,12 +200,12 @@ export function writeFixtureHome(root: string, spec: FixtureHomeSpec): string {
     if (session.corrupt) {
       const buffer = buildZstdLog(header, lines, false, false);
       buffer.writeUInt32LE(0xdeadbeef, 0);
-      writeFileSync(join(dirPath, session.fileName ?? "session.v3.jsonl.zstd"), buffer);
+      writeFileSync(join(dirPath, session.fileName ?? "session.v4.jsonl.zstd"), buffer);
     } else if (session.plaintext) {
-      const fileName = session.fileName ?? "session.v3.jsonl";
+      const fileName = session.fileName ?? "session.v4.jsonl";
       writeFileSync(join(dirPath, fileName), `${[header, ...lines].join("\n")}\n`, "utf8");
     } else {
-      const fileName = session.fileName ?? "session.v3.jsonl.zstd";
+      const fileName = session.fileName ?? "session.v4.jsonl.zstd";
       writeFileSync(
         join(dirPath, fileName),
         buildZstdLog(header, lines, session.tornTail ?? false, session.corruptTail ?? false),

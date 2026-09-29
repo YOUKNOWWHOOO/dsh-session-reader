@@ -18,6 +18,10 @@ import {
 
 const SCRIPT = fileURLToPath(new URL("../scripts/session-reader.ts", import.meta.url));
 const LIB_ROOT = defaultLibRoot(resolveDshHome(undefined, process.env, homedir()));
+// 该套用例要用真实的官方格式库；定位不到时立刻失败并给出原因，不进入后续以 undefined 为入参的路径。
+if (LIB_ROOT === undefined) {
+  throw new Error("默认锚点未能唯一确定官方格式库，cli.test.ts 无法运行；请用 --lib-root 或修复安装树定位");
+}
 const TEMP_ROOT = fileURLToPath(new URL("./.tmp/cli", import.meta.url));
 const HEALTHY_HOME = join(TEMP_ROOT, "healthy-dsh");
 const BROKEN_HOME = join(TEMP_ROOT, "broken-dsh");
