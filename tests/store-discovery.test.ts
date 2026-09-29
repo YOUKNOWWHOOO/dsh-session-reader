@@ -8,6 +8,7 @@ import { before, describe, it } from "node:test";
 import { discoverReadableSessions, enumerateSessionFiles } from "../scripts/lib/store-discovery.ts";
 import { buildMetadata, loadProjCache, loadWorkspaceIndex } from "../scripts/lib/store-metadata.ts";
 import {
+  CURRENT_LOG_VERSION,
   fakeCatalog,
   findEntry,
   initStoreFixtures,
@@ -31,7 +32,7 @@ describe("enumerateSessionFiles / discoverReadableSessions", () => {
     if (!refs.success) return;
     assert.equal(refs.data.length, 9);
     const multigen = refs.data.find((ref) => ref.idFromDir === "session-fixture-multigen-04");
-    assert.equal(multigen?.logVersion, 3);
+    assert.equal(multigen?.logVersion, CURRENT_LOG_VERSION);
     assert.equal(multigen?.logCompressed, true);
     const plain = refs.data.find((ref) => ref.idFromDir === "session-fixture-plain-03");
     assert.equal(plain?.logCompressed, false);

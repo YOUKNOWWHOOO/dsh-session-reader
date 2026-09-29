@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { countLines, defaultLibRoot, resolveDshHome } from "../scripts/lib/paths.ts";
 import { writeOutputFile } from "../scripts/session-reader.ts";
 import {
+  CURRENT_LOG_VERSION,
   type FixtureEvent,
   type FixtureHomeSpec,
   resetTempDir,
@@ -20,7 +21,9 @@ const SCRIPT = fileURLToPath(new URL("../scripts/session-reader.ts", import.meta
 const LIB_ROOT = defaultLibRoot(resolveDshHome(undefined, process.env, homedir()));
 // 该套用例要用真实的官方格式库；定位不到时立刻失败并给出原因，不进入后续以 undefined 为入参的路径。
 if (LIB_ROOT === undefined) {
-  throw new Error("默认锚点未能唯一确定官方格式库，cli.test.ts 无法运行；请用 --lib-root 或修复安装树定位");
+  throw new Error(
+    "默认锚点未能唯一确定官方格式库，cli.test.ts 无法运行；请用 --lib-root 或修复安装树定位",
+  );
 }
 const TEMP_ROOT = fileURLToPath(new URL("./.tmp/cli", import.meta.url));
 const HEALTHY_HOME = join(TEMP_ROOT, "healthy-dsh");
@@ -66,8 +69,18 @@ function readContract(stdout: string): OutputContract {
   return { path: outputPath, summary: summaryMatch[1], fileLines: Number(summaryMatch[2]) };
 }
 
+/** 官方格式库锚点：取不到时直接失败（本文件所有用例都依赖真实库）。 */
+function requireLibRoot(): string {
+  if (LIB_ROOT === undefined) {
+    throw new Error(
+      "默认锚点未能唯一确定官方格式库，cli.test.ts 无法运行；请修复安装树定位或用 --lib-root 指定",
+    );
+  }
+  return LIB_ROOT;
+}
+
 function baseArgs(home: string): string[] {
-  return ["--dsh-home", home, "--lib-root", LIB_ROOT, "--output-dir", OUT_DIR];
+  return ["--dsh-home", home, "--lib-root", requireLibRoot(), "--output-dir", OUT_DIR];
 }
 
 function ev(
@@ -124,16 +137,13 @@ function mainEvents(): FixtureEvent[] {
         turn: 1,
         step: 1,
         message: {
-          role: "user",
+          // v4 的工具结果是「工具」角色的一级消息：toolCallId 与 isError 是消息字段。
+          role: "tool",
+          id: "fixture-tool-result-1",
+          toolCallId: "call_1",
+          isError: false,
           source: { kind: "tool", callId: "call_1" },
-          content: [
-            {
-              type: "tool-result",
-              toolCallId: "call_1",
-              content: [{ type: "text", text: "file alpha content" }],
-              isError: false,
-            },
-          ],
+          content: [{ type: "text", text: "file alpha content" }],
         },
       },
       { surfaceOp: "append", sourceEventSeqs: [4] },
@@ -402,7 +412,7 @@ before(() => {
   const fixtureLibParent = join(HEALTHY_HOME, "profiles", "node_modules", "@deepseek-ai");
   mkdirSync(fixtureLibParent, { recursive: true });
   symlinkSync(
-    join(LIB_ROOT, "@deepseek-ai", "dsh-session-format-catalog"),
+    join(requireLibRoot(), "@deepseek-ai", "dsh-session-format-catalog"),
     join(fixtureLibParent, "dsh-session-format-catalog"),
     "junction",
   );
@@ -714,7 +724,7 @@ describe("CLI show", () => {
     assert.equal(lines.length, 1 + 19);
     const header = JSON.parse(lines[0]) as Record<string, unknown>;
     assert.equal(header.id, "session-fixture-main-01");
-    assert.equal(header.version, 3);
+    assert.equal(header.version, CURRENT_LOG_VERSION);
     const firstEvent = JSON.parse(lines[1]) as Record<string, unknown>;
     assert.equal(firstEvent.seq, 0);
   });

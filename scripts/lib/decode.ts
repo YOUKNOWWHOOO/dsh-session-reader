@@ -212,6 +212,18 @@ export function readString(record: Record<string, unknown>, key: string): string
   return typeof value === "string" ? value : undefined;
 }
 
+/**
+ * 读取非空字符串字段；缺失、类型不符或空串一律返回 undefined。
+ *
+ * 存在的理由是消除「取值可能 undefined 却直接当字符串用」这一类静默缺陷：本技能的工具结果
+ * 抽取曾因对 `readString(...)` 的结果直接取 `.length` 而在缺字段的输入上抛 TypeError。
+ * 调用方用「返回值是否为 undefined」判分支，就同时表达了「字段存在」与「字段非空」。
+ */
+function readNonEmptyString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = readString(record, key);
+  return value === undefined || value.length === 0 ? undefined : value;
+}
+
 /** 读取数字字段；类型不符返回 undefined。 */
 export function readNumber(record: Record<string, unknown>, key: string): number | undefined {
   const value = record[key];
@@ -244,7 +256,7 @@ export function eventData(event: EventRecord): Record<string, unknown> {
   return asRecord(event.data) ?? {};
 }
 
-/** 拼接 content 块中的 text 文本。 */
+/** 拼接 content 块中的 text 文本；只计 type 为 text 且 text 为非空字符串的块。 */
 export function textFromBlocks(blocks: unknown): string {
   const array = asArray(blocks);
   if (array === undefined) return "";
@@ -254,7 +266,7 @@ export function textFromBlocks(blocks: unknown): string {
     if (record === undefined) continue;
     if (readString(record, "type") !== "text") continue;
     const text = readString(record, "text");
-    if (text !== undefined) parts.push(text);
+    if (text !== undefined && text.length > 0) parts.push(text);
   }
   return parts.join("\n");
 }
@@ -298,7 +310,16 @@ export function toolCallsFromBlocks(blocks: unknown): ToolCallBlock[] {
   return calls;
 }
 
-/** 从 tool/result 事件 data.message.content 中抽取工具结果文本。 */
+/**
+ * 从 tool/result 事件 data.message.content 中抽取工具结果文本。
+ *
+ * 必须兼容两种内容形态，否则对某一代的日志会**静默抽不到任何文本**（实测踩过：只认
+ * `tool-result` 嵌套块时，对当前 v4 日志的 410 个工具结果事件全部返回空串，表现为
+ * `show --tools` 不显示工具输出、`search --scope tools` 检索不到工具结果）：
+ * - 当前 v4：内容块是普通的 `{type:"text", text}`，与消息正文同形；
+ * - 旧版本日志：内容是 `{type:"tool-result", content:[…]}` 的嵌套块。
+ * 两种都取，互不影响（同一事件不会同时出现两种形态）。
+ */
 export function toolResultText(event: EventRecord): string {
   const data = eventData(event);
   const message = asRecord(data.message);
@@ -309,6 +330,11 @@ export function toolResultText(event: EventRecord): string {
   for (const block of content) {
     const record = asRecord(block);
     if (record === undefined) continue;
+    const own = readNonEmptyString(record, "text");
+    if (own !== undefined) {
+      parts.push(own);
+      continue;
+    }
     if (readString(record, "type") !== "tool-result") continue;
     const nested = textFromBlocks(record.content);
     if (nested.length > 0) parts.push(nested);

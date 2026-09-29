@@ -37,7 +37,7 @@ import {
 import { listCases, type MatrixCase, mcase, showCases } from "./matrix-cases.ts";
 import { checkCases, searchCases, statsCases } from "./matrix-cases-query.ts";
 import { buildFixtureHomes, MAIN_ID } from "./matrix-fixtures.ts";
-import { DEFAULT_LINT_CONFIG, LIB_ROOT, RUN_TIMEOUT_MS, SESSION_READER } from "./matrix-paths.ts";
+import { DEFAULT_LINT_CONFIG, libRoot, RUN_TIMEOUT_MS, SESSION_READER } from "./matrix-paths.ts";
 
 // ------------------------- 执行与断言 -------------------------
 
@@ -222,6 +222,8 @@ function parseOptions(argv: readonly string[]): MatrixOptions | null {
 /** 确定性复跑产生的额外 md 产物数（list 与 show 各跑两次）。 */
 const DETERMINISM_MD_ARTIFACTS = 4;
 
+// ------------------------- 官方库锚点 -------------------------
+
 async function main(argv: readonly string[]): Promise<number> {
   const options = parseOptions(argv);
   if (options === null) {
@@ -230,8 +232,9 @@ async function main(argv: readonly string[]): Promise<number> {
     );
     return 2;
   }
+  const resolvedLibRoot = libRoot();
   for (const [label, path] of [
-    ["官方格式库锚点", join(LIB_ROOT, "@deepseek-ai", "dsh-session-format-catalog")],
+    ["官方格式库锚点", join(resolvedLibRoot, "@deepseek-ai", "dsh-session-format-catalog")],
     ["lint 配置", options.lintConfig],
   ] as const) {
     if (!existsSync(path)) throw new Error(`${label}不存在: ${path}`);
@@ -239,7 +242,7 @@ async function main(argv: readonly string[]): Promise<number> {
   if (!options.skipReal && !existsSync(options.realHome)) {
     throw new Error(`真实 dsh 主目录不存在: ${options.realHome}`);
   }
-  const { healthyHome, brokenHome, outDir } = buildFixtureHomes(options.workdir, LIB_ROOT);
+  const { healthyHome, brokenHome, outDir } = buildFixtureHomes(options.workdir, resolvedLibRoot);
 
   const ctx: MatrixContext = {
     workdir: options.workdir,
@@ -277,7 +280,7 @@ async function main(argv: readonly string[]): Promise<number> {
     "--dsh-home",
     healthyHome,
     "--lib-root",
-    LIB_ROOT,
+    resolvedLibRoot,
     "--output-dir",
     outDir,
   ];
@@ -296,7 +299,7 @@ async function main(argv: readonly string[]): Promise<number> {
     "--dsh-home",
     healthyHome,
     "--lib-root",
-    LIB_ROOT,
+    resolvedLibRoot,
     "--output-dir",
     outDir,
   ];
@@ -415,7 +418,7 @@ function compareDeterministic(
 }
 
 async function runRealCases(ctx: MatrixContext, options: MatrixOptions): Promise<void> {
-  const base = ["--dsh-home", options.realHome, "--lib-root", LIB_ROOT];
+  const base = ["--dsh-home", options.realHome, "--lib-root", libRoot()];
   const listCase = mcase(
     "real-list-json",
     ["list", ...base, "--format", "json"],

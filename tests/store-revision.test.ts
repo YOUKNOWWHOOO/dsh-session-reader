@@ -20,7 +20,12 @@ import { runSearch } from "../scripts/lib/store-search.ts";
 import { runStats } from "../scripts/lib/store-stats.ts";
 import { resolveSessionTarget } from "../scripts/lib/store-target.ts";
 import type { StoreContext } from "../scripts/lib/store-types.ts";
-import { createFakeCatalog, resetTempDir, writeFixtureHome } from "./fixtures.ts";
+import {
+  CURRENT_LOG_VERSION,
+  createFakeCatalog,
+  resetTempDir,
+  writeFixtureHome,
+} from "./fixtures.ts";
 import {
   contextOf,
   event,
@@ -46,19 +51,19 @@ describe("审查修订补充：不可用口径 / 码点切片 / 边界分支", (
   }
 
   function plainHeader(id: string): string {
-    return `${JSON.stringify({ type: "session", version: 3, id, createdAt: 1, isSeeded: false, delegationDepth: 0 })}\n`;
+    return `${JSON.stringify({ type: "session", version: CURRENT_LOG_VERSION, id, createdAt: 1, isSeeded: false, delegationDepth: 0 })}\n`;
   }
 
   function writePlainSession(root: string, id: string, content: string): void {
     const dir = join(root, "sessions", PROJECT_OTHER, id);
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "session.v3.jsonl"), content, "utf8");
+    writeFileSync(join(dir, `session.v${CURRENT_LOG_VERSION}.jsonl`), content, "utf8");
   }
 
   function writeZstdSession(root: string, id: string, buffer: Buffer): void {
     const dir = join(root, "sessions", PROJECT_OTHER, id);
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "session.v3.jsonl.zstd"), buffer);
+    writeFileSync(join(dir, `session.v${CURRENT_LOG_VERSION}.jsonl.zstd`), buffer);
   }
 
   /** 手工构造"结构完整但解压必然失败"的单帧（compressed 块 + 全 0xFF 垃圾载荷）。 */
@@ -407,7 +412,7 @@ describe("审查修订补充：不可用口径 / 码点切片 / 边界分支", (
           lastPromptAt: null,
           extraFiles: [
             {
-              fileName: "session.v3.jsonl",
+              fileName: `session.v${CURRENT_LOG_VERSION}.jsonl`,
               content: Buffer.from(plainHeader("session-samever-01"), "utf8"),
             },
           ],

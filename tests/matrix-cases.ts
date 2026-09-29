@@ -5,7 +5,7 @@
 //           禁止用"跳过/容忍"代替判定。查询类与校验类组合见 ./matrix-cases-query.ts。
 
 import { CHILD_ID, healthySpec, MAIN_CWD, MAIN_ID } from "./matrix-fixtures.ts";
-import { LIB_ROOT } from "./matrix-paths.ts";
+import { libRoot } from "./matrix-paths.ts";
 
 // ------------------------- 组合矩阵定义 -------------------------
 
@@ -83,7 +83,7 @@ export function mcase(
 
 /** 健康夹具的公共参数前缀（--lib-root 显式锚定官方库，避免使用真实 dsh 主目录）。 */
 export function healthyBase(): string[] {
-  return ["--dsh-home", "HEALTHY", "--lib-root", LIB_ROOT];
+  return ["--dsh-home", "HEALTHY", "--lib-root", libRoot()];
 }
 
 /** list 组合：20 条开关交叉 + 显式边界 + json 形态 + 错误路径。 */
@@ -156,7 +156,7 @@ export function listCases(): MatrixCase[] {
     }),
     mcase(
       "err-list-missing-home",
-      ["list", "--dsh-home", "NO_SUCH_HOME", "--lib-root", LIB_ROOT],
+      ["list", "--dsh-home", "NO_SUCH_HOME", "--lib-root", libRoot()],
       "none",
       null,
       1,

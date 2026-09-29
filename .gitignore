@@ -1,2 +1,12 @@
 node_modules/
 tests/.tmp/
+
+# 全组合 lint 门禁（tests/lint-matrix.ts）按 --workdir 落盘的中间产物：合成 DSH_HOME 夹具
+# （fixture-healthy/、fixture-broken/）、逐组合结果、markdownlint 原始输出与九百余份产物。
+# 规范要求它们落在临时位置（调用时把 --workdir 指向 tests/.tmp/matrix 即可），这里再兜一层忽略，
+# 避免误用技能根作为 --workdir 时污染工作区与静态分析（biome ci 会因这些产物直接失败）。
+lint-output.txt
+matrix-summary.json
+out/
+fixture-healthy/
+fixture-broken/

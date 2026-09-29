@@ -11,7 +11,7 @@ import { buildList } from "../scripts/lib/store-list.ts";
 import { buildMetadata } from "../scripts/lib/store-metadata.ts";
 import { runSearch } from "../scripts/lib/store-search.ts";
 import { runStats } from "../scripts/lib/store-stats.ts";
-import { writeFixtureHome } from "./fixtures.ts";
+import { CURRENT_LOG_VERSION, writeFixtureHome } from "./fixtures.ts";
 import {
   contextOf,
   defaultFilters,
@@ -60,7 +60,7 @@ describe("边界与分支", () => {
       "sessions",
       PROJECT_OTHER,
       "session-edge-empty-01",
-      "session.v3.jsonl.zstd",
+      `session.v${CURRENT_LOG_VERSION}.jsonl.zstd`,
     );
     writeFileSync(emptyLog, Buffer.alloc(0));
     const empty = discoverReadableSessions(emptyHome, fakeCatalog);
@@ -86,11 +86,11 @@ describe("边界与分支", () => {
       "sessions",
       PROJECT_OTHER,
       "session-edge-torn-02",
-      "session.v3.jsonl.zstd",
+      `session.v${CURRENT_LOG_VERSION}.jsonl.zstd`,
     );
     const fullFrame = zstdCompressSync(
       Buffer.from(
-        '{"type":"session","version":3,"id":"session-edge-torn-02","createdAt":1,"isSeeded":false,"delegationDepth":0}\n',
+        `${JSON.stringify({ type: "session", version: CURRENT_LOG_VERSION, id: "session-edge-torn-02", createdAt: 1, isSeeded: false, delegationDepth: 0 })}\n`,
         "utf8",
       ),
     );

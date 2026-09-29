@@ -8,7 +8,16 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ListFilters, SessionEntry, StoreContext } from "../scripts/lib/store-types.ts";
 import type { FixtureEvent, FixtureHomeSpec, FixtureSessionSpec } from "./fixtures.ts";
-import { createFakeCatalog, resetTempDir, writeFixtureHome } from "./fixtures.ts";
+import {
+  CURRENT_LOG_VERSION,
+  createFakeCatalog,
+  resetTempDir,
+  writeFixtureHome,
+} from "./fixtures.ts";
+
+// 会话日志格式版本由夹具单一维护，这里为其提供与本模块同源的出口：只依赖 store-helpers 的测试
+// 文件不必再单独引 fixtures，也不会把版本号写死。
+export { CURRENT_LOG_VERSION };
 
 const TEMP_BASE = fileURLToPath(new URL("./.tmp/store", import.meta.url));
 
@@ -120,7 +129,9 @@ export function mainEvents(): FixtureEvent[] {
         step: 1,
         message: {
           role: "system",
-          source: { kind: "plugin", plugin: "fixture-plugin" },
+          // kind 用具体生产者取值：v4 不存在 `plugin` 这一万能类，写它会让真实库解码失败——
+          // 本文件用假 catalog 跑，因此这类错误不会被本文件的用例发现，但换成真实库就会立刻暴露。
+          source: { kind: "time-context", plugin: "fixture-plugin" },
           content: [{ type: "text", text: "System Needle prompt" }],
         },
       },

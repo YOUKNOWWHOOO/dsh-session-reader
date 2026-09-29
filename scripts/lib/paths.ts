@@ -53,6 +53,15 @@ function npmCacheDir(env: NodeJS.ProcessEnv): string | undefined {
   return join(localAppData, "npm-cache");
 }
 
+/** 判定一个 npx checkout 目录是否是「同时含安装锚点包与官方格式库」的安装树，是则返回其 node_modules。 */
+function checkoutNodeModules(npxRoot: string, checkout: string): string | undefined {
+  const nodeModules = join(npxRoot, checkout, "node_modules");
+  const scope = join(nodeModules, "@deepseek-ai");
+  const hasAnchor = existsSync(join(scope, INSTALL_ANCHOR_PACKAGE, "package.json"));
+  const hasLibrary = existsSync(join(scope, LIBRARY_PACKAGE, "package.json"));
+  return hasAnchor && hasLibrary ? nodeModules : undefined;
+}
+
 /**
  * 在 npm 缓存的 npx 目录下找出「同时含安装锚点包与官方格式库」的 node_modules 目录。
  *
@@ -63,29 +72,26 @@ function npmCacheDir(env: NodeJS.ProcessEnv): string | undefined {
 function installNodeModulesCandidates(dshHome: string, env: NodeJS.ProcessEnv): readonly string[] {
   const hits: string[] = [];
   const legacy = profilesScopeDir(dshHome);
-  const caches: string[] = [];
   const cacheRoot = npmCacheDir(env);
-  if (cacheRoot !== undefined) caches.push(cacheRoot);
-  for (const cache of caches) {
-    const npxRoot = join(cache, NPX_CACHE_DIR);
-    if (!existsSync(npxRoot)) continue;
-    let entries;
-    try {
-      entries = readdirSync(npxRoot, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const nodeModules = join(npxRoot, entry.name, "node_modules");
-      const scope = join(nodeModules, "@deepseek-ai");
-      const hasAnchor = existsSync(join(scope, INSTALL_ANCHOR_PACKAGE, "package.json"));
-      const hasLibrary = existsSync(join(scope, LIBRARY_PACKAGE, "package.json"));
-      if (hasAnchor && hasLibrary) hits.push(nodeModules);
+  if (cacheRoot !== undefined) {
+    const npxRoot = join(cacheRoot, NPX_CACHE_DIR);
+    if (existsSync(npxRoot)) {
+      try {
+        for (const entry of readdirSync(npxRoot, { withFileTypes: true })) {
+          if (!entry.isDirectory()) continue;
+          const nodeModules = checkoutNodeModules(npxRoot, entry.name);
+          if (nodeModules !== undefined) hits.push(nodeModules);
+        }
+      } catch {
+        // 读不到该缓存不影响其它候选：继续走后面的旧布局判定，不静默返回空。
+      }
     }
   }
   // 旧布局（`<dsh-home>/profiles/node_modules`）只在其作用域目录同时含这两个包时才参与。
-  if (existsSync(join(legacy, INSTALL_ANCHOR_PACKAGE, "package.json")) && existsSync(join(legacy, LIBRARY_PACKAGE, "package.json"))) {
+  if (
+    existsSync(join(legacy, INSTALL_ANCHOR_PACKAGE, "package.json")) &&
+    existsSync(join(legacy, LIBRARY_PACKAGE, "package.json"))
+  ) {
     hits.push(join(dshHome, "profiles", "node_modules"));
   }
   return hits;
@@ -102,7 +108,10 @@ function installNodeModulesCandidates(dshHome: string, env: NodeJS.ProcessEnv): 
  * 用错版本的格式库，而那时错误已经离根因很远。调用方也可用 `--lib-root` 显式指定。
  * @returns 可直接作为 `libRoot` 的目录，或 undefined（本环境未能唯一确定）。
  */
-export function defaultLibRoot(dshHome: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
+export function defaultLibRoot(
+  dshHome: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
   const hits = installNodeModulesCandidates(dshHome, env);
   if (hits.length !== 1) return undefined;
   return hits[0];

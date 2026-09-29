@@ -7,7 +7,7 @@
 
 import { healthyBase, type MatrixCase, mcase, ORIGINS } from "./matrix-cases.ts";
 import { CHILD_ID, MAIN_ID } from "./matrix-fixtures.ts";
-import { LIB_ROOT } from "./matrix-paths.ts";
+import { libRoot } from "./matrix-paths.ts";
 
 /** search 组合：关键词×作用域×大小写×来源交叉 + 位置参数边界 + 会话限定/反选 + 错误路径。 */
 export function searchCases(): MatrixCase[] {
@@ -227,7 +227,7 @@ export function searchCases(): MatrixCase[] {
     ),
     mcase(
       "err-search-unknown-target",
-      ["search", "needle", "--dsh-home", "NO_SUCH_HOME", "--lib-root", LIB_ROOT],
+      ["search", "needle", "--dsh-home", "NO_SUCH_HOME", "--lib-root", libRoot()],
       "none",
       null,
       1,
@@ -363,35 +363,35 @@ export function checkCases(): MatrixCase[] {
     ),
     mcase(
       "check-md-broken",
-      ["check", "--dsh-home", "BROKEN", "--lib-root", LIB_ROOT],
+      ["check", "--dsh-home", "BROKEN", "--lib-root", libRoot()],
       "md",
       null,
       3,
     ),
     mcase(
       "check-md-broken-torn",
-      ["check", "session-brk-torn-14", "--dsh-home", "BROKEN", "--lib-root", LIB_ROOT],
+      ["check", "session-brk-torn-14", "--dsh-home", "BROKEN", "--lib-root", libRoot()],
       "md",
       null,
       3,
     ),
     mcase(
       "check-json-broken",
-      ["check", "--dsh-home", "BROKEN", "--lib-root", LIB_ROOT, "--format", "json"],
+      ["check", "--dsh-home", "BROKEN", "--lib-root", libRoot(), "--format", "json"],
       "json",
       "check",
       3,
     ),
     mcase(
       "show-md-broken-torn",
-      ["show", "session-brk-torn-14", "--dsh-home", "BROKEN", "--lib-root", LIB_ROOT],
+      ["show", "session-brk-torn-14", "--dsh-home", "BROKEN", "--lib-root", libRoot()],
       "md",
       null,
       0,
     ),
     mcase(
       "err-show-broken-gap",
-      ["show", "session-brk-gap-15", "--dsh-home", "BROKEN", "--lib-root", LIB_ROOT],
+      ["show", "session-brk-gap-15", "--dsh-home", "BROKEN", "--lib-root", libRoot()],
       "none",
       null,
       3,
@@ -399,7 +399,7 @@ export function checkCases(): MatrixCase[] {
     ),
     mcase(
       "err-show-broken-corrupt",
-      ["show", "session-brk-corrupt-16", "--dsh-home", "BROKEN", "--lib-root", LIB_ROOT],
+      ["show", "session-brk-corrupt-16", "--dsh-home", "BROKEN", "--lib-root", libRoot()],
       "none",
       null,
       3,
@@ -409,7 +409,7 @@ export function checkCases(): MatrixCase[] {
     ),
     mcase(
       "err-show-broken-corrupt-unknown",
-      ["show", "session-brk-zzzz", "--dsh-home", "BROKEN", "--lib-root", LIB_ROOT],
+      ["show", "session-brk-zzzz", "--dsh-home", "BROKEN", "--lib-root", libRoot()],
       "none",
       null,
       1,
@@ -417,7 +417,7 @@ export function checkCases(): MatrixCase[] {
     ),
     mcase(
       "list-md-broken-tolerant",
-      ["list", "--dsh-home", "BROKEN", "--lib-root", LIB_ROOT],
+      ["list", "--dsh-home", "BROKEN", "--lib-root", libRoot()],
       "md",
       null,
       0,

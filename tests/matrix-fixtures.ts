@@ -120,7 +120,11 @@ function mainEvents(): FixtureEvent[] {
         message: {
           id: "sys-1",
           role: "system",
-          source: { kind: "plugin", plugin: "@deepseek-ai/dsh-system-prompt" },
+          // 该夹具刻意携带插件名（含会破坏骨架的反引号与换行由 CONTENTS 注入）：来源标注必须把
+          // 插件名放进行内载体。**kind 不能写 plugin**——v4 要求 source.kind 由具体生产者声明，
+          // 不存在万能类，写 plugin 会让整条日志解码失败（实测报错「requires a producer-owned
+          // source kind」），门禁因此会把夹具问题当成产品缺陷。
+          source: { kind: "time-context", plugin: "@deepseek-ai/dsh-system-prompt" },
           content: [{ type: "text", text: CONTENTS[22] }],
         },
       },
@@ -175,16 +179,13 @@ function mainEvents(): FixtureEvent[] {
         turn: 1,
         step: 1,
         message: {
-          role: "user",
+          // v4 的工具结果是「工具」角色的一级消息：toolCallId 与 isError 是消息字段。
+          role: "tool",
+          id: "fixture-tool-result-1",
+          toolCallId: "call_1",
+          isError: false,
           source: { kind: "tool", callId: "call_1" },
-          content: [
-            {
-              type: "tool-result",
-              toolCallId: "call_1",
-              content: [{ type: "text", text: CONTENTS[7] }],
-              isError: false,
-            },
-          ],
+          content: [{ type: "text", text: CONTENTS[7] }],
         },
       },
       { surfaceOp: "append", sourceEventSeqs: [5] },
