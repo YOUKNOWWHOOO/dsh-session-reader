@@ -84,8 +84,8 @@ describe("defaultLibRoot 的安装锚点探测", () => {
 describe("normalizePathForCompare", () => {
   it("反斜杠转正斜杠、去尾斜杠、小写化", () => {
     assert.equal(
-      normalizePathForCompare("C:\\Users\\ZHANG\\user_projects\\"),
-      "c:/users/zhang/user_projects",
+      normalizePathForCompare("C:\\Users\\Alice\\user_projects\\"),
+      "c:/users/alice/user_projects",
     );
   });
 

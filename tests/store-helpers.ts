@@ -55,10 +55,10 @@ export function event(
   return { type, seq, time, data, ...extra };
 }
 
-export const MAIN_CWD = "C:\\Users\\ZHANG\\user_projects";
-export const OTHER_CWD = "C:\\Users\\ZHANG";
-export const PROJECT_MAIN = "--C-Users-ZHANG-user_projects--";
-export const PROJECT_OTHER = "--C-Users-ZHANG--";
+export const MAIN_CWD = "C:\\Users\\Alice\\user_projects";
+export const OTHER_CWD = "C:\\Users\\Alice";
+export const PROJECT_MAIN = "--C-Users-Alice-user_projects--";
+export const PROJECT_OTHER = "--C-Users-Alice--";
 
 export function mainEvents(): FixtureEvent[] {
   return [

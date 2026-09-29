@@ -46,7 +46,7 @@ export function listEntry(
   return {
     id,
     type: "main",
-    cwd: "C:\\Users\\ZHANG\\user_projects",
+    cwd: "C:\\Users\\Alice\\user_projects",
     workspaceTitle: "user_projects",
     createdAt: 1000,
     lastActivityAt: 2000,
@@ -84,7 +84,7 @@ export const HEADER = {
   version: 3,
   id: "session-render-01",
   createdAt: 1000,
-  cwd: "C:\\Users\\ZHANG\\user_projects",
+  cwd: "C:\\Users\\Alice\\user_projects",
   isSeeded: false,
   delegationDepth: 0,
   agentPreset: "standard",

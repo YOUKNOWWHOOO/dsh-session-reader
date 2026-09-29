@@ -46,8 +46,8 @@ function spec(): FixtureHomeSpec {
     sessions: [
       {
         id: "session-inproc-main-01",
-        projectDir: "--C-Users-ZHANG-user_projects--",
-        cwd: "C:\\Users\\ZHANG\\user_projects",
+        projectDir: "--C-Users-Alice-user_projects--",
+        cwd: "C:\\Users\\Alice\\user_projects",
         createdAt: 1000,
         events: [
           ev("turn/start", 0, 10, { turn: 1 }),
@@ -87,8 +87,8 @@ function spec(): FixtureHomeSpec {
       },
       {
         id: "dddd1111-2222-3333-4444-555566667777",
-        projectDir: "--C-Users-ZHANG-user_projects--",
-        cwd: "C:\\Users\\ZHANG\\user_projects",
+        projectDir: "--C-Users-Alice-user_projects--",
+        cwd: "C:\\Users\\Alice\\user_projects",
         createdAt: 1500,
         events: [ev("permission/preset", 0, 10, { preset: "workspace-write" })],
         parentSession: "session-inproc-main-01",
@@ -100,7 +100,7 @@ function spec(): FixtureHomeSpec {
       },
     ],
     workspace: {
-      path: "C:\\Users\\ZHANG\\user_projects",
+      path: "C:\\Users\\Alice\\user_projects",
       title: "user_projects",
       sessionIds: ["session-inproc-main-01"],
     },

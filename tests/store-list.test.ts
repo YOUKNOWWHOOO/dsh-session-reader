@@ -69,7 +69,7 @@ describe("buildList", () => {
     ]);
     const byPath = buildList(
       contextOf(HEALTHY_HOME),
-      defaultFilters({ workspace: "c:\\users\\zhang" }),
+      defaultFilters({ workspace: "c:\\users\\alice" }),
     );
     assert.equal(byPath.success, true);
     if (!byPath.success) return;

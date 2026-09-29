@@ -358,7 +358,7 @@ describe("store 层来源挂载", () => {
       sessions: [
         {
           id: "session-src-anno-01",
-          projectDir: "--C-Users-ZHANG--",
+          projectDir: "--C-Users-Alice--",
           createdAt: 1000,
           events: [
             { type: "turn/start", seq: 0, time: 10, data: { turn: 1 } },

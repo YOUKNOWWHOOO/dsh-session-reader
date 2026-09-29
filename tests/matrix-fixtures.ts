@@ -85,7 +85,7 @@ const CONTENTS: readonly string[] = [
 
 // ------------------------- 夹具定义 -------------------------
 
-const PROJECT_DIR = "--C-Users-ZHANG-user-projects--";
+const PROJECT_DIR = "--C-Users-Alice-user-projects--";
 const GRAND_ID = "session-adv-grand-08";
 
 /** 夹具主会话 id：组合矩阵的 show/stats 目标与前缀歧义候选数都基于它。 */
@@ -93,7 +93,7 @@ export const MAIN_ID = "session-adv-main-01";
 /** 夹具子代理会话 id（continuable，带子代）。 */
 export const CHILD_ID = "session-adv-child-07";
 /** 夹具主/子会话共用的工作目录（含空格、方括号与井号）。 */
-export const MAIN_CWD = "C:\\Users\\ZHANG\\user projects [v2] #tag_under";
+export const MAIN_CWD = "C:\\Users\\Alice\\user projects [v2] #tag_under";
 
 function ev(
   type: string,

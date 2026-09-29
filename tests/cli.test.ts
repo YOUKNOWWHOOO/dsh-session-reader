@@ -29,10 +29,10 @@ const TEMP_ROOT = fileURLToPath(new URL("./.tmp/cli", import.meta.url));
 const HEALTHY_HOME = join(TEMP_ROOT, "healthy-dsh");
 const BROKEN_HOME = join(TEMP_ROOT, "broken-dsh");
 const OUT_DIR = join(TEMP_ROOT, "out");
-const PROJECT_MAIN = "--C-Users-ZHANG-user_projects--";
-const PROJECT_OTHER = "--C-Users-ZHANG--";
-const MAIN_CWD = "C:\\Users\\ZHANG\\user_projects";
-const OTHER_CWD = "C:\\Users\\ZHANG";
+const PROJECT_MAIN = "--C-Users-Alice-user_projects--";
+const PROJECT_OTHER = "--C-Users-Alice--";
+const MAIN_CWD = "C:\\Users\\Alice\\user_projects";
+const OTHER_CWD = "C:\\Users\\Alice";
 
 interface CliResult {
   readonly status: number | null;
@@ -581,7 +581,7 @@ describe("CLI list", () => {
     assert.equal(content.includes("**轮次**：2"), true);
     assert.equal(content.includes("**大小**："), true);
     assert.equal(content.includes("100/50/25/5"), true);
-    assert.equal(content.includes("**cwd**：`C:\\Users\\ZHANG\\user_projects`"), true);
+    assert.equal(content.includes("**cwd**：`C:\\Users\\Alice\\user_projects`"), true);
     assert.equal(content.includes("session-fixture-blank-05"), true);
   });
 
