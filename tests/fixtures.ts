@@ -19,6 +19,15 @@ export interface FixtureEvent {
   readonly sourceEventSeqs?: readonly number[];
 }
 
+/**
+ * 夹具写出的会话日志格式版本（当前库的 `currentVersion`）。
+ *
+ * 测试不得写死这个数字：dsh 升级会同时改变文件名版本段与 header 的 `version`，写死会让
+ * 每次升级都打红一整批与版本无关的用例（本技能已因此实际失败过一次）。需要文件名或
+ * header 版本时一律引用本常量。
+ */
+export const CURRENT_LOG_VERSION = 4;
+
 /** 夹具会话定义。 */
 export interface FixtureSessionSpec {
   readonly id: string;
@@ -29,9 +38,9 @@ export interface FixtureSessionSpec {
   readonly parentSession?: string;
   readonly origin?: "subagent";
   readonly agentPreset?: string;
-  /** 日志文件名（默认 session.v4.jsonl.zstd）。 */
+  /** 日志文件名（默认 `session.v<当前版本>.jsonl.zstd`，版本见 `CURRENT_LOG_VERSION`）。 */
   readonly fileName?: string;
-  /** 是否以明文写入（fileName 默认 session.v4.jsonl）。 */
+  /** 是否以明文写入（fileName 默认 `session.v<当前版本>.jsonl`）。 */
   readonly plaintext?: boolean;
   /** 额外文件（多代并存等场景）。 */
   readonly extraFiles?: readonly { readonly fileName: string; readonly content: Buffer | string }[];
@@ -62,16 +71,56 @@ export interface FixtureHomeSpec {
   } | null;
 }
 
-/** 构建事件行文本。 */
+/** 判定非 null、非数组对象。 */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * 由事件位置派生稳定的消息 id。
+ *
+ * 结构上派生而不是随机生成：同一次夹具写入必须每次产生逐字节相同的日志，
+ * 否则依赖"确定性复跑"的门禁会假失败。
+ */
+function messageIdFor(seq: number, suffix: string): string {
+  return `fixture-msg-${seq}-${suffix}`;
+}
+
+/** 构建事件行文本（当前会话格式 v4 的形态）。 */
 function eventLine(event: FixtureEvent): string {
   const record: Record<string, unknown> = {
     type: event.type,
     seq: event.seq,
-    time: event.time,
+    // v4 要求时间戳是安全整数；非整数会让该行被解码器丢弃，进而以「输入 N 行、解码得到 M 个事件」
+    // 的一致性校验失败告终，而报错位置离根因很远。
+    time: Math.trunc(Number(event.time)),
     data: event.data,
   };
   if (event.surfaceOp !== undefined) record.surfaceOp = event.surfaceOp;
   if (event.sourceEventSeqs !== undefined) record.sourceEventSeqs = event.sourceEventSeqs;
+
+  // v4 要求带一级消息对象的事件携带字符串 id；消息 id 在真实日志里由落账侧铸成，夹具按事件位置派生。
+  const data = record.data;
+  if (isPlainObject(data) && isPlainObject(data.message)) {
+    const compact: Record<string, unknown> = { ...data.message };
+    if (typeof compact.id !== "string" || compact.id.length === 0) {
+      compact.id = messageIdFor(event.seq, compact.role === "tool" ? "result" : "message");
+    }
+    // tool/result 的消息在 v4 里是「工具」角色的一级消息：toolCallId 与 isError 是消息字段，
+    // 而 v3 把它们放在 content 内的 tool-result 块里。两者在同一事件里给出，v4 才接受。
+    if (typeof compact.role !== "string" || compact.role.length === 0) compact.role = "tool";
+    if (compact.toolCallId === undefined && Array.isArray(compact.content)) {
+      for (const block of compact.content) {
+        if (isPlainObject(block) && typeof block.toolCallId === "string") {
+          compact.toolCallId = block.toolCallId;
+          if (compact.isError === undefined && typeof block.isError === "boolean")
+            compact.isError = block.isError;
+          break;
+        }
+      }
+    }
+    data.message = compact;
+  }
   return JSON.stringify(record);
 }
 
@@ -79,10 +128,10 @@ function eventLine(event: FixtureEvent): string {
 function headerLine(spec: FixtureSessionSpec): string {
   const header: Record<string, unknown> = {
     type: "session",
-    // 夹具一律写当前版本（v4）。写旧版本会让解码器走 v3→v4 迁移分支，而该分支要求传入
-    // 「显式历史子事实」（含无子会话时的空数组），夹具没有这些事实，迁移必定失败，
-    // 表现为整批用例以「数据不可读」失败。旧版本日志的读取由专门用例覆盖。
-    version: 4,
+    // 夹具一律写当前版本。写旧版本会让解码器走迁移分支，而迁移要求传入「显式历史子事实」
+    // （含无子会话时的空数组），夹具没有这些事实，迁移必定失败，表现为整批用例以
+    // 「数据不可读」失败。旧版本日志的读取由专门用例覆盖。
+    version: CURRENT_LOG_VERSION,
     id: spec.id,
     createdAt: spec.createdAt,
     isSeeded: false,
@@ -167,9 +216,9 @@ function projcacheDocument(spec: FixtureSessionSpec): unknown {
   let rows = allRows;
   let version = 7;
   let identity: Record<string, unknown> = {
-    // projcache 的 identity 与日志 header 同源：都取当前会话格式版本（v4），两处必须一致，
-    // 否则投影缓存被判为 identity 不符而被丢弃。
-    formatVersion: 4,
+    // projcache 的 identity 与日志 header 同源：都取当前会话格式版本（见 CURRENT_LOG_VERSION），
+    // 两处必须一致，否则投影缓存被判为 identity 不符而被丢弃。
+    formatVersion: CURRENT_LOG_VERSION,
     createdAt: spec.createdAt,
     cwd: spec.cwd,
     isSeeded: false,
@@ -200,12 +249,15 @@ export function writeFixtureHome(root: string, spec: FixtureHomeSpec): string {
     if (session.corrupt) {
       const buffer = buildZstdLog(header, lines, false, false);
       buffer.writeUInt32LE(0xdeadbeef, 0);
-      writeFileSync(join(dirPath, session.fileName ?? "session.v4.jsonl.zstd"), buffer);
+      writeFileSync(
+        join(dirPath, session.fileName ?? `session.v${CURRENT_LOG_VERSION}.jsonl.zstd`),
+        buffer,
+      );
     } else if (session.plaintext) {
-      const fileName = session.fileName ?? "session.v4.jsonl";
+      const fileName = session.fileName ?? `session.v${CURRENT_LOG_VERSION}.jsonl`;
       writeFileSync(join(dirPath, fileName), `${[header, ...lines].join("\n")}\n`, "utf8");
     } else {
-      const fileName = session.fileName ?? "session.v4.jsonl.zstd";
+      const fileName = session.fileName ?? `session.v${CURRENT_LOG_VERSION}.jsonl.zstd`;
       writeFileSync(
         join(dirPath, fileName),
         buildZstdLog(header, lines, session.tornTail ?? false, session.corruptTail ?? false),
