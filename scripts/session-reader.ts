@@ -982,9 +982,11 @@ async function runParsedCommand(parsed: ParsedCommand): Promise<RunOutcome> {
   if (outputDir === undefined) return failure("参数无效", 2, "缺少 --output-dir");
   const dshHome = resolveDshHome(optionValue(parsed, "--dsh-home"), process.env, homedir());
   if (!existsSync(dshHome)) return failure("目标不存在", 1);
-  const libRoot = optionValue(parsed, "--lib-root") ?? defaultLibRoot(dshHome);
+  const libRootOption = optionValue(parsed, "--lib-root");
+  const libRoot = libRootOption ?? defaultLibRoot(dshHome);
+  if (libRoot === undefined) return failure("内部错误", 3, "找不到官方格式库：默认锚点处（安装树的 @deepseek-ai 作用域目录）未能唯一确定，请用 --lib-root <目录> 指定含 @deepseek-ai 的 node_modules 目录");
   const catalogResult = await loadCatalog(libRoot);
-  if (!catalogResult.success) return failure("内部错误", 3);
+  if (!catalogResult.success) return failure("内部错误", 3, `官方格式库加载失败，解析锚点为 ${libRoot}`);
   const catalog: SessionFormatCatalog = catalogResult.data;
   const ctx: StoreContext = { dshHome, catalog };
   const formatRaw = optionValue(parsed, "--format") ?? "md";
