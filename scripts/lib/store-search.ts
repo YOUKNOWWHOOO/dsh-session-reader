@@ -1,12 +1,18 @@
 // 检索层：检索单元构造（text/tools/all 三档单调包含）、逐会话全量计数检索、上下文切片、每会话命中分布。
 // 主要入口：runSearch（search 命令数据）；collectSearchUnits 定义三档覆盖范围。
-// 关键依赖：decode.ts（事件类型与正文/推理/工具结果取值）、store-discovery.ts（发现、读取与扫描摘要）、
-// store-list.ts（会话视图收集）、store-target.ts（--session/--exclude-session 子树展开）、store-types.ts。
+// 关键依赖：ask-user.ts（提问与回答的可读文本抽取，与 md 条目同源）、decode.ts（事件类型与正文/推理/
+// 工具结果取值）、store-discovery.ts（发现、读取与扫描摘要）、store-list.ts（会话视图收集）、
+// store-target.ts（--session/--exclude-session 子树展开）、store-types.ts。
 // 设计约束：--limit 只限制 hits 数组的收集上限，totalHits 对纳入会话全量计数且不做任何提前终止
 // （totalIsExact 恒为 true）；单会话解码失败记入 coverage.excluded 并继续，而不是让整次检索失败；
 // scope=all 必须把整条事件记录的完整 JSON 载荷纳入检索单元（按类型枚举字段必然有遗漏）；
 // 上下文章节按 Unicode 码点切片，避免在代理对中间切片。数据契约见 store-types.ts 文件头。
 
+import {
+  ASK_USER_PAYLOAD_MISMATCH_REASON,
+  type AskUserEntry,
+  analyzeAskUserEvents,
+} from "./ask-user.ts";
 import {
   asArray,
   asRecord,
@@ -68,10 +74,14 @@ function messageContent(event: EventRecord): unknown {
  * 收集单个事件的可检索文本单元。
  *
  * 三档语义（单调包含）：
- * - `text`：用户/助手正文；
- * - `tools`：另含工具调用参数与工具结果；
+ * - `text`：用户/助手正文，以及 `ask` 给出的提问/回答可读文本；
+ * - `tools`：另含工具调用参数与工具结果（含问答的原始载荷——问答事件本身就是工具的调用与结果）；
  * - `all`：另含推理、系统消息、压缩摘要、命令、标题请求、web 检索请求、交付物、待办、代理信箱，
  *   **以及整条事件记录的完整 JSON 载荷**（label 取事件类型）。
+ *
+ * `ask` 必须由调用方从 `ask-user.ts` 的分析结果里按事件取回，而不是在这里自行解析载荷：
+ * 检索单元与 md 条目必须是同一份抽取的产物，否则调用方会读到"呈现里有、检索里没有"这类不一致
+ * （或反过来）。三档都包含问答可读文本，是 `text ⊆ tools ⊆ all` 这一单调包含关系的要求。
  *
  * `all` 档的穷尽性是"检索 0 命中 ⇒ 不存在"这一推断成立的前提：按类型枚举字段必然有遗漏
  * （实测 `assistant/attempt` 与 `llm/retry` 的 `data.failure` 内嵌上游错误体，此前任何 scope 都检索不到），
@@ -80,7 +90,11 @@ function messageContent(event: EventRecord): unknown {
  * 返回的每个单元都带上所属事件的来源归属（仅 `user/message` 事件非 null）：命中行的 `user` 标签
  * 会把子代理中继与插件注入显示成用户消息，来源归属是调用方区分它们的唯一依据。
  */
-function collectSearchUnits(event: EventRecord, scope: "text" | "tools" | "all"): SearchUnit[] {
+function collectSearchUnits(
+  event: EventRecord,
+  scope: "text" | "tools" | "all",
+  ask: AskUserEntry | null,
+): SearchUnit[] {
   const type = eventType(event);
   const units: TextUnit[] = [];
   if (type === "user/message") {
@@ -98,6 +112,8 @@ function collectSearchUnits(event: EventRecord, scope: "text" | "tools" | "all")
     const text = toolResultText(event);
     if (text.length > 0) units.push({ label: "tool/result", text });
   }
+  // 问答可读文本：单元名即时间线标签（`提问`/`回答`），文本与 md 条目逐字同源。
+  if (ask !== null) units.push({ label: ask.label, text: ask.text });
   if (scope === "all") {
     if (type === "assistant/message") {
       const reasoning = reasoningFromBlocks(messageContent(event));
@@ -205,8 +221,9 @@ function eventPayloadJson(event: EventRecord): string {
  * 1. `--limit` 只限制 `hits` 数组的收集上限，`totalHits` 对纳入会话全量计数且不做任何提前终止，
  *    因此"命中总数"不是显示条数的副产品（`totalIsExact` 恒为 true，证据见该字段注释）。
  * 2. 单个会话解码失败不会让整次检索失败，而是记入 `coverage.excluded`（原因="解码失败"）并继续。
- *    这是"未被列出者即为已覆盖"这一推断成立的前提——静默跳过或整体失败都会让调用方无法判断
- *    "0 命中"到底是"不存在"还是"没读到"。
+ *    问答载荷结构不符的会话同样逐条列入排除项（原因=固定文本 `问答载荷结构不符合预期`）。两种情况
+ *    都继续而不是整体失败，这是"未被列出者即为已覆盖"这一推断成立的前提——静默跳过或整体失败
+ *    都会让调用方无法判断"0 命中"到底是"不存在"还是"没读到"。
  * 3. `distribution` 逐会话给出命中数（含 0 命中的纳入会话），使调用方能把自己会话与子代理会话的
  *    命中从结论中剔除；`excludeSessionTarget` 提供同一件事的自动化形式。
  *
@@ -265,7 +282,7 @@ export function runSearch(
   const needle = options.caseSensitive ? keyword : keyword.toLowerCase();
   const hits: SearchHit[] = [];
   let totalHits = 0;
-  const decodeFailures: { id: string; reason: string }[] = [];
+  const excludedSessions: { id: string; reason: string }[] = [];
   const distribution: SessionHitCount[] = [];
   let scan = emptyScanSummary();
   for (const view of views) {
@@ -273,7 +290,7 @@ export function runSearch(
       historicalChildFailures: ctx.historicalChildFailuresBySessionId.get(view.entry.id),
     });
     if (!file.success) {
-      decodeFailures.push({ id: view.entry.id, reason: "解码失败" });
+      excludedSessions.push({ id: view.entry.id, reason: "解码失败" });
       scan = accumulateScanSummary(scan, {
         success: false,
         frameFailures: file.error.frameFailures ?? 0,
@@ -281,9 +298,19 @@ export function runSearch(
       continue;
     }
     scan = accumulateScanSummary(scan, file.data.metrics);
+    // 问答载荷结构不符：该会话不能进入本次结论（它的可读文本没被算出来，检索覆盖面因此不完整），
+    // 但**不中断整条检索**——一份有问题的载荷不该让调用方无法检索其余会话。它与解码失败一样逐条
+    // 列入 `coverage.excluded` 并排除出 `M`；日志本身解码成功，因此扫描摘要仍照常计入它。
+    const askAnalysis = analyzeAskUserEvents(file.data.decoded.events);
+    if (!askAnalysis.success) {
+      excludedSessions.push({ id: view.entry.id, reason: ASK_USER_PAYLOAD_MISMATCH_REASON });
+      continue;
+    }
+    const askEntries = new Map<EventRecord, AskUserEntry>();
+    for (const entry of askAnalysis.data.entries) askEntries.set(entry.event, entry);
     let sessionHits = 0;
     for (const event of file.data.decoded.events) {
-      for (const unit of collectSearchUnits(event, options.scope)) {
+      for (const unit of collectSearchUnits(event, options.scope, askEntries.get(event) ?? null)) {
         const haystack = options.caseSensitive ? unit.text : unit.text.toLowerCase();
         let from = 0;
         for (;;) {
@@ -327,10 +354,11 @@ export function runSearch(
     return left.sessionId < right.sessionId ? -1 : left.sessionId > right.sessionId ? 1 : 0;
   });
   const shown = hits.length;
-  const excluded = [...discoveryCoverage.excluded, ...decodeFailures];
-  // 解码失败的会话已逐条进入 `excluded`，`includedCount` 必须扣除它们：同一会话同时出现在
-  // "纳入"与"排除"两个数字里，会让 `N = M + K` 虽成立却失去"未被列出者即为已覆盖"的含义。
-  const includedCount = views.length - decodeFailures.length;
+  const excluded = [...discoveryCoverage.excluded, ...excludedSessions];
+  // 被排除的会话（解码失败或问答载荷结构不符）已逐条进入 `excluded`，`includedCount` 必须扣除它们：
+  // 同一会话同时出现在"纳入"与"排除"两个数字里，会让 `N = M + K` 虽成立却失去"未被列出者即为
+  // 已覆盖"的含义。两种排除各自只记一条，因此扣除条数即扣除会话数。
+  const includedCount = views.length - excludedSessions.length;
   return {
     success: true,
     data: {

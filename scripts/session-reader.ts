@@ -211,7 +211,7 @@ export const COMMANDS: readonly CommandSpec[] = [
       {
         name: "--summary",
         kind: "switch",
-        description: "仅摘要（头部+统计+轮次大纲；jsonl 禁止）",
+        description: "仅摘要（头部+统计+轮次大纲；不含提问与回答条目；jsonl 禁止）",
       },
       {
         name: "--role",
@@ -222,7 +222,11 @@ export const COMMANDS: readonly CommandSpec[] = [
         description: "仅显示指定角色（仅 md）",
       },
       { name: "--thinking", kind: "switch", description: "显示推理内容（仅 md；默认隐藏）" },
-      { name: "--tools", kind: "switch", description: "显示工具调用与结果（仅 md；默认隐藏）" },
+      {
+        name: "--tools",
+        kind: "switch",
+        description: "显示工具调用与结果（仅 md；默认隐藏）；提问与回答条目恒显示，不受本开关控制",
+      },
       { name: "--events", kind: "switch", description: "显示生命周期事件（仅 md；默认隐藏）" },
       { name: "--subagents", kind: "switch", description: "追加导出子代理会话（jsonl 禁止）" },
       { name: "--headers", kind: "switch", description: "显示每条消息的 seq 与时间（仅 md）" },
@@ -265,7 +269,7 @@ export const COMMANDS: readonly CommandSpec[] = [
       {
         name: "--probe",
         kind: "switch",
-        description: "只给规模摘要（轮次/消息数/预计字节数），不落正文（仅 md）",
+        description: "只给规模摘要（轮次/消息数/问答数/预计字节数），不落正文（仅 md）",
       },
     ],
   },
@@ -282,7 +286,7 @@ export const COMMANDS: readonly CommandSpec[] = [
         valueKind: "enum",
         values: SCOPE_VALUES,
         description:
-          "检索范围（text=用户/助手正文；tools=另含工具参数与结果；all=另含推理/系统/压缩/命令/标题请求/web 请求/交付物/待办/代理信箱与每条事件载荷）",
+          "检索范围（text=用户/助手正文与提问/回答的可读文本；tools=另含工具参数与结果，含问答原始载荷；all=另含推理/系统/压缩/命令/标题请求/web 请求/交付物/待办/代理信箱与每条事件载荷）",
         defaultText: "text",
       },
       { name: "--case-sensitive", kind: "switch", description: "区分大小写（默认不区分）" },
@@ -824,7 +828,15 @@ function renderShow(
     tail: optionInteger(parsed, "--tail", 0),
   };
   const rendered = renderShowMd(node.data, showOptions);
-  return { kind: "rendered", content: rendered.content, summary: rendered.summary, exitCode: 0 };
+  // 问答载荷结构不符合预期时整条命令失败（退出 3、stderr `错误: 数据不可读`、不产出文件）：
+  // 契约禁止任何降级形态，因此这里不做"跳过错处继续渲染"的处理（那正是被禁止的静默丢弃）。
+  if (!rendered.success) return failure("数据不可读", 3);
+  return {
+    kind: "rendered",
+    content: rendered.data.content,
+    summary: rendered.data.summary,
+    exitCode: 0,
+  };
 }
 
 function renderSearch(parsed: ParsedCommand, ctx: StoreContext, format: "md" | "json"): RunOutcome {

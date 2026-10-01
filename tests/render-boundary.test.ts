@@ -25,6 +25,7 @@ import {
   RENDER_EVENTS,
   scanSummary,
   sessionEntry,
+  showMd,
   showOptions,
 } from "./render-helpers.ts";
 
@@ -36,7 +37,7 @@ describe("render 边界与分支", () => {
       children: [],
     };
     const parent = node([child]);
-    const md = renderShowMd(parent, showOptions({ role: "assistant" }));
+    const md = showMd(parent, showOptions({ role: "assistant" }));
     assert.equal(md.content.includes("助手内容 ASSIST-TEXT"), true);
     assert.equal(md.content.includes("用户内容 USER-TEXT"), false);
     const document = JSON.parse(
@@ -292,8 +293,8 @@ describe("render 边界与分支", () => {
 
   it("--probe：只给规模摘要，正文不落盘且预计字节数等于完整导出的字节数", () => {
     // 预计字节数必须等于"以同一组选项做完整导出"的字节数，因此对照物要用默认选项渲染。
-    const full = renderShowMd(node(), showOptions());
-    const probed = renderShowMd(node(), showOptions({ probe: true }));
+    const full = showMd(node(), showOptions());
+    const probed = showMd(node(), showOptions({ probe: true }));
     assertDocumentShape(probed.content);
     assert.equal(probed.content.includes("- 预计字节数："), true);
     assert.equal(probed.content.includes("- 消息数：1 用户 / 1 助手"), true);
@@ -320,8 +321,8 @@ describe("render 边界与分支", () => {
         data: { role: "user", content: [{ type: "text", text: `第 ${turn} 轮正文`.repeat(40) }] },
       });
     }
-    const full = renderShowMd(node([], manyEvents), showOptions());
-    const probed = renderShowMd(node([], manyEvents), showOptions({ probe: true }));
+    const full = showMd(node([], manyEvents), showOptions());
+    const probed = showMd(node([], manyEvents), showOptions({ probe: true }));
     assert.equal(probed.content.length * 10 < full.content.length, true);
     assert.equal(
       probed.content.includes(
@@ -358,10 +359,7 @@ describe("render 边界与分支", () => {
       },
       { type: "turn/end", seq: 5, time: 15, data: { turn: 2 } },
     ];
-    const turnFiltered = renderShowMd(
-      node([], events),
-      showOptions({ turnRange: { from: 2, to: 2 } }),
-    );
+    const turnFiltered = showMd(node([], events), showOptions({ turnRange: { from: 2, to: 2 } }));
     assertDocumentShape(turnFiltered.content);
     assert.equal(turnFiltered.content.includes("T2-PROMPT"), true);
     assert.equal(turnFiltered.content.includes("T1-PROMPT"), false);
@@ -373,10 +371,7 @@ describe("render 边界与分支", () => {
       true,
     );
 
-    const seqFiltered = renderShowMd(
-      node([], events),
-      showOptions({ seqRange: { from: 1, to: 4 } }),
-    );
+    const seqFiltered = showMd(node([], events), showOptions({ seqRange: { from: 1, to: 4 } }));
     assert.equal(seqFiltered.content.includes("T1-PROMPT"), true);
     assert.equal(seqFiltered.content.includes("T2-PROMPT"), true);
     assert.equal(
@@ -386,7 +381,7 @@ describe("render 边界与分支", () => {
       true,
     );
 
-    const seqNarrow = renderShowMd(node([], events), showOptions({ seqRange: { from: 0, to: 1 } }));
+    const seqNarrow = showMd(node([], events), showOptions({ seqRange: { from: 0, to: 1 } }));
     assert.equal(seqNarrow.content.includes("T1-PROMPT"), true);
     assert.equal(seqNarrow.content.includes("T2-PROMPT"), false);
     assert.equal(
@@ -396,7 +391,7 @@ describe("render 边界与分支", () => {
       true,
     );
 
-    const headFiltered = renderShowMd(node([], events), showOptions({ head: 1 }));
+    const headFiltered = showMd(node([], events), showOptions({ head: 1 }));
     // 首 1 条是**完整**的一条：标签行与其正文围栏必须同时保留（禁止截出孤立标签行）。
     assert.equal(headFiltered.content.includes("T1-PROMPT"), true);
     assert.equal(headFiltered.content.includes("**用户**："), true);
@@ -408,7 +403,7 @@ describe("render 边界与分支", () => {
       true,
     );
 
-    const tailFiltered = renderShowMd(node([], events), showOptions({ tail: 1 }));
+    const tailFiltered = showMd(node([], events), showOptions({ tail: 1 }));
     // 末 1 条同样是完整条目：正文围栏与它的标签行都必须保留（禁止截出无标签围栏块）。
     assert.equal(tailFiltered.content.includes("T2-PROMPT"), true);
     assert.equal(tailFiltered.content.includes("**用户**："), true);
@@ -420,7 +415,7 @@ describe("render 边界与分支", () => {
       true,
     );
 
-    const both = renderShowMd(
+    const both = showMd(
       node([], events),
       showOptions({ turnRange: { from: 1, to: 2 }, seqRange: { from: 4, to: 5 } }),
     );
@@ -429,7 +424,7 @@ describe("render 边界与分支", () => {
   });
 
   it("show 未筛选时不输出筛选说明行", () => {
-    const plain = renderShowMd(node(), showOptions());
+    const plain = showMd(node(), showOptions());
     assert.equal(plain.content.includes("筛选："), false);
   });
 
@@ -440,7 +435,7 @@ describe("render 边界与分支", () => {
       children: [],
     };
     const parent = node([child]);
-    const filtered = renderShowMd(parent, showOptions({ head: 1, subagents: true }));
+    const filtered = showMd(parent, showOptions({ head: 1, subagents: true }));
     // `--head` 只裁剪根块：子代理块既没有被裁剪，就不得在同一行里声称"首 1 条"，
     // 否则会出现「首 1 条；显示 N 条时间线条目」这种自相矛盾的外观。
     const filterLines = filtered.content.split("\n").filter((line) => line.startsWith("筛选："));
@@ -455,9 +450,9 @@ describe("render 边界与分支", () => {
     const events: Record<string, unknown>[] = [
       { type: "custom/unknown", seq: 0, time: 10, data: { blob: payload } },
     ];
-    const unlimited = renderShowMd(node([], events), showOptions({ events: true }));
+    const unlimited = showMd(node([], events), showOptions({ events: true }));
     assert.equal(unlimited.content.includes(payload), true);
-    const limited = renderShowMd(node([], events), showOptions({ events: true, truncate: 10 }));
+    const limited = showMd(node([], events), showOptions({ events: true, truncate: 10 }));
     assert.equal(limited.content.includes(payload), false);
     assert.equal(limited.content.includes("…"), true);
   });
@@ -473,7 +468,7 @@ describe("render 边界与分支", () => {
         data: { role: "user", content: [{ type: "text", text: "line1\r\nline2\rline3" }] },
       },
     ];
-    const rendered = renderShowMd(node([], events), showOptions());
+    const rendered = showMd(node([], events), showOptions());
     assert.equal(rendered.content.includes("\r"), false);
     assert.equal(rendered.content.includes("line1\nline2\nline3"), true);
   });

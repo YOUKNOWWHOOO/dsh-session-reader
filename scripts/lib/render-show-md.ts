@@ -1,13 +1,16 @@
-// 用途：show 的 Markdown 渲染——头部 KV 块、时间线（推理/工具/生命周期可见性、turn/seq 范围筛选、
-// head/tail 首尾截取、按码点截断、隐藏计数摘要）、轮次大纲，以及以 H2 序列 + 路径编号表达父子关系的
-// 子代理块；`--probe` 只落头部 KV 与两项规模数字。
-// 主要入口：renderShowMd；范围筛选入口 selectEvents（供时间线取"呈现哪些事件"）。
-// 关键依赖：render-core.ts（载体、ShowMdOptions/RenderedOutput、会话派生事实）、render-md.ts（覆盖声明
-// 片段）、render-summary.ts（摘要文案）、decode.ts、paths.ts、store-types.ts。
+// 用途：show 的 Markdown 渲染——头部 KV 块、时间线（推理/工具/生命周期可见性、问答条目、turn/seq
+// 范围筛选、head/tail 首尾截取、按码点截断、隐藏计数摘要）、轮次大纲，以及以 H2 序列 + 路径编号
+// 表达父子关系的子代理块；`--probe` 只落头部 KV 与三项规模数字。
+// 主要入口：renderShowMd（返回 Result：问答载荷结构不符时以错误上抛，由 CLI 映射为 `数据不可读`）；
+// 范围筛选入口 selectEvents（供时间线取"呈现哪些事件"）。
+// 关键依赖：ask-user.ts（问答条目的唯一抽取真值源）、render-core.ts（载体、ShowMdOptions/RenderedOutput、
+// 会话派生事实）、render-md.ts（覆盖声明片段）、render-summary.ts（摘要文案）、decode.ts、paths.ts、
+// store-types.ts。
 // 设计约束：范围选择只改变"呈现哪些事件"，不改变 KV 块与轮次大纲所描述的整会话统计，并由筛选说明行
 // 显式给出"显示 M 条 / 区间内 N 个 / 共 K 个"三个数字；`--turn`/`--seq` 作用于每个节点（子代理按自身
 // 事件流计轮次），`--head`/`--tail` 只作用于根节点，`--probe` 只作用于根节点；任何会话来源文本都必须经
 // 载体承载，禁止直接拼进骨架。层规则见 render-core.ts 文件头。
+import { type AskUserAnalysis, type AskUserEntry, analyzeAskUserEvents } from "./ask-user.ts";
 import {
   asRecord,
   type EventRecord,
@@ -21,7 +24,7 @@ import {
   toolResultText,
 } from "./decode.ts";
 import { attributeSource, describeSource } from "./message-source.ts";
-import { formatLocalIso } from "./paths.ts";
+import { formatLocalIso, type Result } from "./paths.ts";
 import {
   assembleDocument,
   computeEventStats,
@@ -50,6 +53,21 @@ interface HiddenCounts {
 }
 
 /**
+ * 规模探测的三项读数。
+ *
+ * 三项都由调用方先量或先算后传入，而不是在这里内联求值：`estimatedBytes` 需要真的渲染一份
+ * 完整副本（CPU 换确定性），问答计数需要先跑一遍问答抽取，两者都只在探测分支才值得付出。
+ */
+interface ProbeReadout {
+  /** 以同一组选项渲染完整导出的正文字节数（UTF-8）。 */
+  readonly estimatedBytes: number;
+  /** 本会话的提问事件数（`P`）。 */
+  readonly askQuestions: number;
+  /** 本会话产出回答条目的结果数（`Q`；未配对或提问被中止/取消时小于 `P`）。 */
+  readonly askAnswers: number;
+}
+
+/**
  * 事件载荷的 JSON 文本。
  *
  * 这里**不**捕获 `JSON.stringify` 的异常：一旦出现不可序列化的载荷，就说明上一步（官方库解码
@@ -67,11 +85,10 @@ function optionalInline(valueText: string | undefined): string {
 /**
  * show 头部 KV 块（一个多行段落；值经载体隔离；f2 R2-4）。
  *
- * `estimatedBytes` 仅在已知时输出：`--probe` 会先做一次完整渲染来量出正文字节数
- * （以"它自己的完整副本"为准，而不是估算公式），此时该字段必填；
- * 常规导出不需要它（产物本身就是正文），传 undefined 即不输出，避免"顺手算一遍完整正文"的隐性成本。
+ * `probe` 仅在规模探测时为非 null：探测会先做一次完整渲染来量出正文字节数（以"它自己的完整副本"
+ * 为准，而不是估算公式），并给出问答事件计数；常规导出传 null，避免"顺手算一遍完整正文"的隐性成本。
  */
-function nodeKvBlock(node: SessionNode, estimatedBytes?: number): string {
+function nodeKvBlock(node: SessionNode, probe: ProbeReadout | null): string {
   const header = node.file.decoded.header;
   const usage = sumUsage(node.file);
   const stats = computeEventStats(node.file);
@@ -102,9 +119,11 @@ function nodeKvBlock(node: SessionNode, estimatedBytes?: number): string {
   lines.push(
     `- 令牌：输入 ${usage.input}；输出 ${usage.output}；缓存读 ${usage.cacheRead}；推理 ${usage.reasoning}`,
   );
-  if (estimatedBytes !== undefined) {
-    lines.push(`- 预计字节数：${estimatedBytes}（完整导出正文大小，按 UTF-8 计）`);
+  if (probe !== null) {
+    lines.push(`- 预计字节数：${probe.estimatedBytes}（完整导出正文大小，按 UTF-8 计）`);
     lines.push(`- 消息数：${stats.userMessages} 用户 / ${stats.assistantMessages} 助手`);
+    // 事件数口径：未配对、或提问被中止/取消时回答数小于提问数。计数只作用于主会话块（探测只作用于根块）。
+    lines.push(`- 问答数：${probe.askQuestions} 提问 / ${probe.askAnswers} 回答`);
   }
   const anomalyDetails = node.file.decoded.anomalies.map((anomaly) => inlineValue(anomaly.detail));
   if (anomalyDetails.length > 0) lines.push(`- 异常：${anomalyDetails.join("；")}`);
@@ -131,7 +150,8 @@ function labelLine(base: string, event: EventRecord, options: ShowMdOptions): st
 
 /**
  * 事件的来源标注：只有 `user/message` 事件需要它——它被渲染成 `**用户**`，会把子代理中继、
- * 插件注入等显示成用户消息；`**工具结果**`、`**系统消息**`、`**事件**` 各有独立标签，不存在该歧义。
+ * 插件注入等显示成用户消息；`**工具结果**`、`**系统消息**`、`**事件**`、`**提问**`、`**回答**`
+ * 各有独立标签，不存在该歧义（问答条目的标签已表达"这是提问工具说的"）。
  */
 function sourceAnnotationOf(event: EventRecord): string | null {
   if (eventType(event) !== "user/message") return null;
@@ -229,18 +249,25 @@ function filterSummaryMd(
 }
 
 /**
- * 渲染一条时间线条目（标签行 ＋ 正文载体），或计入隐藏计数。
+ * 渲染一条时间线条目（标签行 ＋ 正文载体），或计入隐藏计数，或返回 null（该事件不产出条目）。
  *
  * 拆分动机：`--head`/`--tail` 按"呈现条目数"截取，而不是按"事件数"截取——`turn/start`、
  * `turn/end`、`session/title` 等事件不产生条目，若先按事件截取会出现"要 5 条却一条都没显示"。
+ *
+ * 问答条目（`ask` 非 null）与原始工具条目是同一事件的两种形态：`--tools` 打开时先出原始条目、
+ * 再出问答条目；关闭时该事件仍然产出问答条目。因此问答事件在 `--tools` 关闭时**不得**计入
+ * `已隐藏 N 条工具调用/结果`——那会让调用方以为问答条目也被藏起来了，而它其实就在下一行。
+ * `--role` 只过滤对话消息，工具与事件（含问答）不受影响。
  */
 function timelineItem(
   event: EventRecord,
   options: ShowMdOptions,
   hidden: HiddenCounts,
+  ask: AskUserEntry | null,
 ): string[] | null {
   const type = eventType(event);
   const data = asRecord(event.data) ?? {};
+  const items: string[] = [];
   if (type === "user/message") {
     if (options.role === "assistant") return null;
     const text = textFromBlocks(data.content);
@@ -250,7 +277,6 @@ function timelineItem(
   if (type === "assistant/message") {
     if (options.role === "user") return null;
     const content = asRecord(data.message)?.content;
-    const items: string[] = [];
     const text = textFromBlocks(content);
     if (text.length > 0) {
       items.push(...fencedItem("**助手**", event, options, truncateText(text, options.truncate)));
@@ -268,33 +294,35 @@ function timelineItem(
     return items.length > 0 ? items : null;
   }
   if (type === "tool/call") {
-    if (!options.tools) {
+    if (options.tools) {
+      const name = readString(data, "name") ?? EMPTY_VALUE;
+      const argumentsText = readString(data, "arguments") ?? "";
+      items.push(
+        ...fencedItem(
+          `**工具调用**（${inlineValue(name)}）`,
+          event,
+          options,
+          truncateText(argumentsText, options.truncate),
+        ),
+      );
+    } else if (ask === null) {
       hidden.tools += 1;
-      return null;
     }
-    const name = readString(data, "name") ?? EMPTY_VALUE;
-    const argumentsText = readString(data, "arguments") ?? "";
-    return fencedItem(
-      `**工具调用**（${inlineValue(name)}）`,
-      event,
-      options,
-      truncateText(argumentsText, options.truncate),
-    );
-  }
-  if (type === "tool/result") {
-    if (!options.tools) {
+  } else if (type === "tool/result") {
+    if (options.tools) {
+      const isError = asRecord(data.error) !== undefined;
+      items.push(
+        ...fencedItem(
+          `**工具结果**${isError ? "（错误）" : ""}`,
+          event,
+          options,
+          truncateText(toolResultText(event), options.truncate),
+        ),
+      );
+    } else if (ask === null) {
       hidden.tools += 1;
-      return null;
     }
-    const isError = asRecord(data.error) !== undefined;
-    return fencedItem(
-      `**工具结果**${isError ? "（错误）" : ""}`,
-      event,
-      options,
-      truncateText(toolResultText(event), options.truncate),
-    );
-  }
-  if (type === "system/message") {
+  } else if (type === "system/message") {
     if (!options.events) {
       hidden.events += 1;
       return null;
@@ -305,15 +333,34 @@ function timelineItem(
       options,
       truncateText(textFromBlocks(asRecord(data.message)?.content), options.truncate),
     );
+  } else {
+    if (!options.events) {
+      hidden.events += 1;
+      return null;
+    }
+    // 事件载荷的截断口径与其它文本一致：由 `--truncate` 单独决定，`0` 即不截断。
+    // 此前固定截到 200 字符且不读 `--truncate`，使"默认不截断"的契约在事件视图下静默失效。
+    const payload = truncateText(eventDataJson(event), options.truncate);
+    return [`${labelLine("**事件**", event, options)}${inlineValue(type)} ${inlineValue(payload)}`];
   }
-  if (!options.events) {
-    hidden.events += 1;
-    return null;
+  if (ask !== null) {
+    items.push(
+      ...fencedItem(`**${ask.label}**`, event, options, truncateText(ask.text, options.truncate)),
+    );
   }
-  // 事件载荷的截断口径与其它文本一致：由 `--truncate` 单独决定，`0` 即不截断。
-  // 此前固定截到 200 字符且不读 `--truncate`，使"默认不截断"的契约在事件视图下静默失效。
-  const payload = truncateText(eventDataJson(event), options.truncate);
-  return [`${labelLine("**事件**", event, options)}${inlineValue(type)} ${inlineValue(payload)}`];
+  return items.length > 0 ? items : null;
+}
+
+/**
+ * 问答条目按"事件身份"索引。
+ *
+ * 键取事件对象本身而不是 seq：`--turn`/`--seq` 筛选返回的是同一批事件引用，因此按身份取回
+ * 就自动继承事件级筛选，不需要为问答条目另写一套范围判断（另写一套必然会与事件筛选漂移）。
+ */
+function askEntriesByEvent(analysis: AskUserAnalysis): ReadonlyMap<EventRecord, AskUserEntry> {
+  const map = new Map<EventRecord, AskUserEntry>();
+  for (const entry of analysis.entries) map.set(entry.event, entry);
+  return map;
 }
 
 /**
@@ -328,11 +375,12 @@ function renderTimelineMd(
   options: ShowMdOptions,
   events: readonly EventRecord[],
   limitItems: boolean,
+  askEntries: ReadonlyMap<EventRecord, AskUserEntry>,
 ): { sections: string[]; hidden: HiddenCounts; shownItems: number } {
   const hidden: HiddenCounts = { reasoning: 0, tools: 0, events: 0 };
   const items: string[][] = [];
   for (const event of events) {
-    const item = timelineItem(event, options, hidden);
+    const item = timelineItem(event, options, hidden, askEntries.get(event) ?? null);
     if (item !== null) items.push(item);
   }
   let shown = items;
@@ -386,6 +434,10 @@ function outlineSections(node: SessionNode, options: ShowMdOptions): string[] {
  * "导出了全部子代理"这一预期落空，且产物中无从察觉。该不对称由 SKILL.md 显式声明。
  *
  * `--probe` 只作用于根节点：探测规模是一次"读之前"的动作，对子代理再各给一份正文就失去了意义。
+ *
+ * 返回 Result 而不是 `string[]` 的理由：问答载荷结构不符必须让整条命令失败（契约要求不产出任何
+ * 降级内容），而失败可能来自任意一个子代理块，因此必须沿递归原路上抛，不能就地吞掉或跳过
+ * ——那正是"静默丢弃"。
  */
 function renderNodeSections(
   node: SessionNode,
@@ -393,10 +445,28 @@ function renderNodeSections(
   level: number,
   childPath: string,
   isRoot: boolean,
-): string[] {
-  const sections: string[] = [
-    nodeKvBlock(node, isRoot && options.probe ? probeSizeOf(node, options) : undefined),
-  ];
+): Result<string[], string> {
+  const timelineMode = !options.probe && !options.summary;
+  const probeMode = isRoot && options.probe;
+  let askEntries: ReadonlyMap<EventRecord, AskUserEntry> = new Map();
+  let probe: ProbeReadout | null = null;
+  // 问答抽取只在"会用到"时进行：时间线模式需要条目；探测模式需要计数（并会连带渲染完整副本，
+  // 因此结构不符同样要在探测阶段暴露）。`--summary` 不输出这两类条目，`json`/`jsonl` 不走本函数。
+  if (timelineMode || probeMode) {
+    const computed = analyzeAskUserEvents(node.file.decoded.events);
+    if (!computed.success) return computed;
+    if (probeMode) {
+      const measured = probeSizeOf(node, options);
+      if (!measured.success) return measured;
+      probe = {
+        estimatedBytes: measured.data,
+        askQuestions: computed.data.questionCount,
+        askAnswers: computed.data.answerCount,
+      };
+    }
+    if (timelineMode) askEntries = askEntriesByEvent(computed.data);
+  }
+  const sections: string[] = [nodeKvBlock(node, probe)];
   if (options.probe) {
     // 探测模式下不输出任何会话正文：产物只回答"有多大、有多少条"。
   } else if (options.summary) {
@@ -405,7 +475,7 @@ function renderNodeSections(
   } else {
     sections.push(`${"#".repeat(level)} 时间线`);
     const ranged = selectEvents(node.file.decoded.events, options);
-    const timeline = renderTimelineMd(options, ranged, isRoot);
+    const timeline = renderTimelineMd(options, ranged, isRoot, askEntries);
     sections.push(...timeline.sections);
     const filterText = filterSummaryMd(
       options,
@@ -419,23 +489,31 @@ function renderNodeSections(
     if (summaryText.length > 0) sections.push(summaryText);
   }
   if (options.subagents) {
-    node.children.forEach((child, index) => {
+    for (let index = 0; index < node.children.length; index += 1) {
+      const child = node.children[index];
       const path = childPath.length === 0 ? String(index + 1) : `${childPath}.${index + 1}`;
+      const childSections = renderNodeSections(child, options, 3, path, false);
+      if (!childSections.success) return childSections;
       sections.push(`## 子代理 ${path}`);
-      sections.push(...renderNodeSections(child, options, 3, path, false));
-    });
+      sections.push(...childSections.data);
+    }
   }
-  return sections;
+  return { success: true, data: sections };
 }
 
 /** show Markdown：头部 KV + 时间线/轮次大纲 + 覆盖声明；子代理可选追加。 */
-export function renderShowMd(node: SessionNode, options: ShowMdOptions): RenderedOutput {
-  const sections = ["# 会话记录", ...renderNodeSections(node, options, 2, "", true)];
+export function renderShowMd(
+  node: SessionNode,
+  options: ShowMdOptions,
+): Result<RenderedOutput, string> {
+  const nodeSections = renderNodeSections(node, options, 2, "", true);
+  if (!nodeSections.success) return nodeSections;
+  const sections = ["# 会话记录", ...nodeSections.data];
   if (!options.probe) {
     // 覆盖声明属于"边界可自证"契约，show 同样必须给出（开发规范「覆盖声明契约」）。作用域是本目标
     // 及其子树，纳入数即渲染出的节点数；子代理解码失败会让整条命令显式失败（退出 3），因此可归属的
     // 排除项恒为空，header 不可读的子代理只能以「归属未知」声明。`--probe` 产物按规模探测条款
-    // 只含头部 KV 与两项，故不追加。
+    // 只含头部 KV 与三项，故不追加。
     const nodes = countNodes(node);
     sections.push(
       ...coverageSections({
@@ -448,10 +526,21 @@ export function renderShowMd(node: SessionNode, options: ShowMdOptions): Rendere
   }
   const stats = computeEventStats(node.file);
   // 探测分支才量正文字节数：`probeSizeOf` 会再渲染一份完整副本，非探测路径不得提前求值。
-  const summary = options.probe
-    ? showProbeSummary(node, probeSizeOf(node, options))
-    : showSummary(node, options, stats);
-  return { content: assembleDocument(sections), summary };
+  if (!options.probe) {
+    return {
+      success: true,
+      data: { content: assembleDocument(sections), summary: showSummary(node, options, stats) },
+    };
+  }
+  const measured = probeSizeOf(node, options);
+  if (!measured.success) return measured;
+  return {
+    success: true,
+    data: {
+      content: assembleDocument(sections),
+      summary: showProbeSummary(node, measured.data),
+    },
+  };
 }
 
 /**
@@ -460,8 +549,11 @@ export function renderShowMd(node: SessionNode, options: ShowMdOptions): Rendere
  * 实现取"以同一组选项渲染一份不探测的副本"的字节长度，而不是估算公式：
  * 估算要重复渲染规则（含围栏动态长度、截断、归一化），必然与真实产出漂移，
  * 而"预计 N 字节"一旦漂移就会让调用方的容量判断失效。代价是探测时多做一次渲染（CPU 换确定性）。
+ * 副本渲染同样是单目标渲染，因此问答载荷结构不符时它也失败——"预计字节数"不能建立在一份
+ * 本来就不该产出的正文之上。
  */
-function probeSizeOf(node: SessionNode, options: ShowMdOptions): number {
+function probeSizeOf(node: SessionNode, options: ShowMdOptions): Result<number, string> {
   const full = renderShowMd(node, { ...options, probe: false });
-  return Buffer.byteLength(full.content, "utf8");
+  if (!full.success) return full;
+  return { success: true, data: Buffer.byteLength(full.data.content, "utf8") };
 }
