@@ -40,6 +40,7 @@ import type {
   StoreContext,
   StoreError,
 } from "./store-types.ts";
+import { catalogForEntry } from "./store-types.ts";
 
 interface SearchUnit {
   readonly label: string;
@@ -268,7 +269,9 @@ export function runSearch(
   const distribution: SessionHitCount[] = [];
   let scan = emptyScanSummary();
   for (const view of views) {
-    const file = readSessionFile(view.entry, ctx.catalog);
+    const file = readSessionFile(view.entry, catalogForEntry(ctx, view.entry), {
+      historicalChildFailures: ctx.historicalChildFailuresBySessionId.get(view.entry.id),
+    });
     if (!file.success) {
       decodeFailures.push({ id: view.entry.id, reason: "解码失败" });
       scan = accumulateScanSummary(scan, {

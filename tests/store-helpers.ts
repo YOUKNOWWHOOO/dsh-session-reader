@@ -401,7 +401,12 @@ function brokenSpec(): FixtureHomeSpec {
 export const fakeCatalog = createFakeCatalog();
 
 export function contextOf(home: string): StoreContext {
-  return { dshHome: home, catalog: fakeCatalog };
+  return {
+    dshHome: home,
+    catalog: fakeCatalog,
+    catalogsBySessionId: new Map(),
+    historicalChildFailuresBySessionId: new Map(),
+  };
 }
 
 export function defaultFilters(overrides: Partial<ListFilters> = {}): ListFilters {

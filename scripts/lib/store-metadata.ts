@@ -78,6 +78,16 @@ function readProjCacheRow(cache: ProjCacheState, rowName: string): RowRead {
   }
   const row = asRecord(cache.rows[rowName]);
   if (row === undefined) return { ok: false, value: null, reason: `缺少 ${rowName} 记录` };
+  const version = readNumber(row, "ver");
+  if (version === undefined || !Number.isSafeInteger(version) || version < 0) {
+    return { ok: false, value: null, reason: `${rowName}.ver 无效` };
+  }
+  if (readNumber(row, "seq") === undefined) {
+    return { ok: false, value: null, reason: `${rowName}.seq 无效` };
+  }
+  if (!Object.hasOwn(row, "val")) {
+    return { ok: false, value: null, reason: `${rowName}.val 缺失` };
+  }
   return { ok: true, value: row.val, reason: "" };
 }
 

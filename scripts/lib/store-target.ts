@@ -24,6 +24,7 @@ import type {
   StoreError,
   TolerantDiscovery,
 } from "./store-types.ts";
+import { catalogForEntry } from "./store-types.ts";
 
 const MIN_PREFIX_LENGTH = 8;
 
@@ -159,7 +160,9 @@ export function buildSessionNode(
   allEntries: SessionEntry[],
   visited: Set<string>,
 ): Result<SessionNode, StoreError> {
-  const file = readSessionFile(entry, ctx.catalog);
+  const file = readSessionFile(entry, catalogForEntry(ctx, entry), {
+    historicalChildFailures: ctx.historicalChildFailuresBySessionId.get(entry.id),
+  });
   if (!file.success) return file;
   visited.add(entry.id);
   const children: SessionNode[] = [];

@@ -1,8 +1,8 @@
 // 官方格式库接入（readHeader/createRestore/decodeRow/finish）＋事件模型工具。
 // 兼容性设计：官方库 API 收敛在本文件单点适配；不静态 import 外部包（tsc 解析不到），
 // 一律经 createRequire 锚点解析后动态 import（spike 已验证的机制）。
-// 解码策略（P0 spike 结论）：生产读取 = { recovery: 'recoverable', validation: 'transformed' }；
-// 强制一致性校验：输入事件行数必须等于 artifact.events.length，否则视为数据不完整（致命）。
+// 解码策略：生产读取固定为 { recovery: 'recoverable', validation: 'transformed' }。
+// 物理 JSON 行与迁移后的逻辑事件是不同计量，不能用它们的数量相等作为完整性判据。
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -42,10 +42,24 @@ export interface RestoreOptions {
 }
 
 /** 官方 catalog 对象的最小本地镜像（仅使用本技能需要的成员）。 */
+export interface HistoricalChildCatalogSource {
+  readonly childId: string;
+  readonly childCreatedAt: number;
+  readonly descriptorCount: number;
+  readonly descriptor: Record<string, unknown> | null;
+  readonly sourcePath?: string;
+}
+
 export interface SessionFormatCatalog {
   readonly currentVersion: number;
   readHeader(headerValue: unknown): HeaderClassification;
   createRestore(headerValue: unknown, options: RestoreOptions): CatalogRestore;
+  createSessionFormatCatalogWithChildren?: (
+    children: readonly HistoricalChildCatalogSource[],
+  ) => SessionFormatCatalog;
+  historicalSessionFormatCatalog?: SessionFormatCatalog;
+  historicalBound?: boolean;
+  historicalChildCatalogSource?: (artifact: RestoreArtifact) => HistoricalChildCatalogSource;
 }
 
 /**
@@ -66,7 +80,7 @@ export function classifyHeader(
 
 /** 解码异常（可继续的物理/行级问题；输出必须显式标注）。 */
 export interface DecodeAnomaly {
-  readonly kind: "torn-tail" | "bad-line";
+  readonly kind: "torn-tail" | "bad-line" | "historical-child-unreadable";
   readonly detail: string;
 }
 
@@ -96,11 +110,36 @@ export async function loadCatalog(libRoot: string): Promise<Result<SessionFormat
     const entry = require.resolve("@deepseek-ai/dsh-session-format-catalog");
     const module = (await import(pathToFileURL(entry).href)) as {
       sessionFormatCatalog?: SessionFormatCatalog;
+      createSessionFormatCatalogWithChildren?: (
+        children: readonly HistoricalChildCatalogSource[],
+      ) => SessionFormatCatalog;
+      historicalSessionFormatCatalog?: SessionFormatCatalog;
     };
     const catalog = module.sessionFormatCatalog;
     if (catalog === undefined)
       return { success: false, error: "官方格式库未导出 sessionFormatCatalog" };
-    return { success: true, data: catalog };
+    const historicalSessionFormatCatalog = module.historicalSessionFormatCatalog;
+    const createWithChildren = module.createSessionFormatCatalogWithChildren;
+    if (createWithChildren === undefined || historicalSessionFormatCatalog === undefined) {
+      return { success: false, error: "官方格式库缺少历史 catalog 或直属子会话 catalog 工厂" };
+    }
+    const historicalEntry = require.resolve("@deepseek-ai/dsh-session-format-v3-to-v4");
+    const historicalModule = (await import(pathToFileURL(historicalEntry).href)) as {
+      historicalChildCatalogSource?: (artifact: RestoreArtifact) => HistoricalChildCatalogSource;
+    };
+    const historicalChildCatalogSource = historicalModule.historicalChildCatalogSource;
+    if (historicalChildCatalogSource === undefined) {
+      return { success: false, error: "官方格式库缺少 historicalChildCatalogSource" };
+    }
+    return {
+      success: true,
+      data: {
+        ...catalog,
+        ...(historicalSessionFormatCatalog === undefined ? {} : { historicalSessionFormatCatalog }),
+        createSessionFormatCatalogWithChildren: createWithChildren,
+        historicalChildCatalogSource,
+      },
+    };
   } catch (error) {
     return { success: false, error: `官方格式库加载失败: ${errorMessage(error)}` };
   }
@@ -113,13 +152,21 @@ export async function loadCatalog(libRoot: string): Promise<Result<SessionFormat
  * - header 分类为 malformed/unsupported；
  * - 任一行 decodeRow 抛错（结构违规）；
  * - finish 抛错；
- * - 一致性校验失败（输入事件行数 != artifact.events.length，即 recoverable 模式静默丢弃）。
- * 非失败异常（记入 anomalies，输出显式标注）：尾部撕裂帧（options.tornTail）、行 JSON 解析失败。
+ * - 官方 catalog 拒绝创建或收尾；
+ * - 物理行 JSON 解析失败（记入 anomalies，不中断其余行）。
+ * 迁移后逻辑事件数可以与物理事件行数不同，因为官方迁移会重映射、插入或追加逻辑事件；
+ * `parsedEventCount` 只表示成功喂入 decoder 的物理行数，不再把合法迁移误判为数据损坏。
  */
+export interface SessionDecodeOptions {
+  readonly tornTail: boolean;
+  readonly historicalChildren?: readonly HistoricalChildCatalogSource[];
+  readonly historicalChildFailures?: readonly string[];
+}
+
 export function decodeSessionLog(
   catalog: SessionFormatCatalog,
   logText: string,
-  options: { readonly tornTail: boolean },
+  options: SessionDecodeOptions,
 ): Result<DecodedSession, string> {
   const lines = splitLines(logText);
   if (lines.length === 0) return { success: false, error: "日志为空" };
@@ -137,9 +184,24 @@ export function decodeSessionLog(
       error: `header 分类为 ${classification.status}: ${classification.reason ?? ""}`,
     };
   }
+  const storedVersion = classification.storedVersion;
+  const isHistorical =
+    catalog.currentVersion >= 4 &&
+    storedVersion !== undefined &&
+    storedVersion < catalog.currentVersion;
   let restore: CatalogRestore;
   try {
-    restore = catalog.createRestore(headerValue, {
+    const activeCatalog = isHistorical
+      ? catalog.historicalBound
+        ? catalog
+        : options.historicalChildren === undefined
+          ? undefined
+          : catalog.createSessionFormatCatalogWithChildren?.(options.historicalChildren)
+      : catalog;
+    if (activeCatalog === undefined) {
+      return { success: false, error: "历史日志需要官方子会话证据 catalog" };
+    }
+    restore = activeCatalog.createRestore(headerValue, {
       recovery: "recoverable",
       validation: "transformed",
     });
@@ -149,6 +211,9 @@ export function decodeSessionLog(
   const anomalies: DecodeAnomaly[] = [];
   if (options.tornTail) {
     anomalies.push({ kind: "torn-tail", detail: "尾部未完整帧已丢弃（v1 不做前缀抢救）" });
+  }
+  for (const detail of options.historicalChildFailures ?? []) {
+    anomalies.push({ kind: "historical-child-unreadable", detail });
   }
   let parsedEventCount = 0;
   for (let index = 1; index < lines.length; index += 1) {
@@ -172,12 +237,6 @@ export function decodeSessionLog(
     artifact = restore.finish();
   } catch (error) {
     return { success: false, error: `解码收尾失败: ${errorMessage(error)}` };
-  }
-  if (artifact.events.length !== parsedEventCount) {
-    return {
-      success: false,
-      error: `解码不一致: 输入 ${parsedEventCount} 行，解码得到 ${artifact.events.length} 个事件`,
-    };
   }
   return {
     success: true,

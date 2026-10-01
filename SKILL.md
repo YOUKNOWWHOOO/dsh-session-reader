@@ -11,7 +11,7 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 
 - 平台：Windows；PATH 中需有 Node（v26 线，原生执行 TypeScript，无需构建）。
 - 本机需有 dsh 安装（提供官方格式库与会话数据）。主目录默认 `$DSH_HOME`，否则 `~\.dsh`，可用 `--dsh-home` 覆盖；该路径不存在、或其下缺 `sessions\` 时退出 1。
-- 官方格式库的默认解析锚点按 dsh 自身的安装锚点探测：在 npm 缓存的 npx 目录下找同时含 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-session-format-catalog` 的 `node_modules`，命中数必须恰好 1；`<dsh-home>\profiles\node_modules` 只在它同时含这两个包时才参与（该目录自 dsh `0.1.7-rc.2` 起不再由 dsh 创建）。可用 `--lib-root <目录>` 覆盖（取值必须是含 `@deepseek-ai` 的 `node_modules`）；无法唯一定位或库加载失败时退出 3，分类 `内部错误`，并在错误说明里给出锚点或可执行的下一步。
+- 官方格式库的默认解析锚点按 dsh 自身的安装锚点探测：在 npm 缓存的 npx 目录下找同时含 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-session-format-catalog` 的 `node_modules`，命中数必须恰好 1；`<dsh-home>\profiles\node_modules` 只在它同时含这两个包时才参与。当前 DSH `0.2.0-rc.2` 的历史读取还要求 `historicalSessionFormatCatalog`、`createSessionFormatCatalogWithChildren` 与 `historicalChildCatalogSource`，缺少任一能力即退出 3，禁止降级为静态 catalog。可用 `--lib-root <目录>` 覆盖（取值必须是含 `@deepseek-ai` 的 `node_modules`）；无法唯一定位或库加载失败时退出 3。
 - 全部命令必须显式指定 `--output-dir`，缺省退出 2。
 
 ## 输出使用规定
@@ -68,7 +68,7 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 
 - `list --format json`：`{ sessions: [...], coverage }`。条目字段为 `id`、`type`（`main`/`subagent`）、`title`、`cwd`、`workspaceTitle`、`createdAt`、`lastActivityAt`、`lastPromptAt`、`turns`、`steps`、`blank`、`agentPreset`、`model`、`tokens`、`sizeBytes`、`metadata`（`metadata` 为 `{ available, reasons }`；不可用时**由元数据派生的字段**为 `null`，即 `title`、`lastPromptAt`、`turns`、`steps`、`blank`、`agentPreset`、`model`、`tokens`；`createdAt`、`lastActivityAt`、`sizeBytes` 来自 header 与日志文件本身，不受元数据可用性影响）。
 - `show --format json`：`{ session, meta, turns, messages, subagents, coverage }`。`messages` 只含五类事件（`user/message`、`assistant/message`、`tool/call`、`tool/result`、`system/message`），推理与工具调用内嵌在条目中，生命周期事件不出现而只计入 `meta` 的计数。条目字段按类型给出：`user/message` 为 `seq`、`time`、`type`、`role`、`text`、`source`；`assistant/message` 为 `seq`、`time`、`type`、`role`、`text`、`reasoning`、`toolCalls`；`tool/call` 为 `seq`、`time`、`type`、`role`、`callId`、`name`、`arguments`；`tool/result` 为 `seq`、`time`、`type`、`role`、`callId`、`isError`、`text`；`system/message` 为 `seq`、`time`、`type`、`role`、`text`。`source` 是归属对象 `{ kind, form, senderSessionId, plugin }`（无值者为 `null`），是区分"用户本人"与"子代理中继、结算通知、插件注入"的唯一判据。`--summary` 时 `messages` 为 `[]` 而 `turns` 保留；`subagents` 仅在 `--subagents` 时非空。
-- `show --format jsonl`：首行为**逻辑 header**（官方库归一化后的产物，不是磁盘首行原文），其后每行一个已解码事件，行数 = 事件数 + 1；不含 `meta`/`turns`/`messages`/`subagents`/`coverage`，不含子代理。这是逐事件穷尽枚举的唯一入口。
+- `show --format jsonl`：首行为**逻辑 header**（官方库归一化后的产物，不是磁盘首行原文），其后每行一个已解码逻辑事件，行数 = 逻辑事件数 + 1；磁盘物理 JSON 行数可能因 compact run、历史迁移插入或追加事件而不同。不含 `meta`/`turns`/`messages`/`subagents`/`coverage`，不含子代理。这是逐事件穷尽枚举的唯一入口。
 - `search --format json`：`{ matches, total, truncated, scope, totalIsExact, coverage, scan, distribution }`；`matches[]` 为 `{ sessionId, seq, time, label, excerpt, source }`，其中 `source` 是该命中所属事件的归属对象（形态与 `show` 的 `messages[].source` 同源；非 `user/message` 事件为 `null`），`distribution[]` 为 `{ sessionId, type, title, hits }`，`scan` 为 `{ logsDecoded, eventsRead, decodeFailures, frameFailures, observedFrom, observedTo }`。
 - `stats --format json`：`kind` 为 `single` 或 `global`，两种形态各含 `coverage` 与 `scan`。`single` 另有 `session`：`id`、`title`、`blank`、`turns`、`steps`、`toolCalls`、`tokens`、`agentPreset`、`model`、`createdAt`、`lastActivityAt`、`logPath`、`logVersion`、`logCompressed`、`sizeBytes`、`metadata`。`global` 另有 `sessionCount`、`blankCount`、`turns`、`steps`、`toolCalls`、`tokens`、`earliestCreatedAt`、`latestActivityAt`、`totalSizeBytes`、`unavailable`（`[{ id, reasons }]`）；「N 个会话未计入」只出现在摘要行与 md，json 无该字段。
 - `check --format json`：`{ sessions, anomalyCount, coverage }`；会话字段为 `id`、`logPath`、`formatVersion`、`classification`、`structure`、`structureDetail`、`frames`、`lines`、`seqContiguous`、`badLines`、`anomalies`（`lines` 与 `badLines` 是渲染层键名）。
@@ -189,5 +189,5 @@ node scripts/session-reader.ts check                     --output-dir <project_t
 - `**用户**` 只表示该事件的模型可见角色，不代表"由人类用户写下"：真正的判据是同一行括号内的来源标注（形如 `来源 agent-message` 后接该子代理的会话 id，或 `来源 plugin` 后接插件名，取值均在行内载体里）。用户本人的消息没有来源项，因此"有来源项 ⇒ 不是用户写的"是可依赖的读法；需要按来源逐条筛选时用 json 的 `source` 归属对象。
 - `check` 不带目标时走不读 header 的枚举，结构损坏与 header 不可读的会话也在诊断范围内；带目标时按目标解析三态处理——目标不存在、或前缀歧义时退出 1，目标存在但 header 不可读时退出 3 且无产物，只有可读目标才产出校验结果。要诊断损坏会话本身，去掉目标查全库。
 - 尾部截断、坏行等异常在产物中显式标注（`show` 的 `- 异常：` 与 `check` 的异常详情）；尾部的不完整帧及其后续内容整体丢弃，标注 `尾部未完整帧已丢弃（v1 不做前缀抢救）`。聚合命令遇解码失败逐条排除而不中断，单目标命令则以退出 3 报错。
-- `list`/`stats` 的元数据来自官方投影缓存（版本须为 7 且身份四项全等）；不可用时相关列标注 `元数据不可用` 并给出原因，json 中为 `null` 加 `metadata.reasons`。
+- `list`/`stats` 的元数据来自官方投影缓存（版本须为 7、身份四项全等、每行必须含合法非负整数 `ver` 与 `seq` 以及 `val`）；不可用时相关列标注 `元数据不可用` 并给出原因，json 中为 `null` 加 `metadata.reasons`。离线技能只能校验行结构，不能取得运行时投影注册表的精确 `stateVersion`，因此不把 `ver` 解释为已完成实时版本匹配。
 - 需要逐事件穷尽枚举时用 `show --format jsonl`；`--format json` 只含五类消息事件，不含生命周期事件。
