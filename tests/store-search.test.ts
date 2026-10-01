@@ -28,7 +28,7 @@ describe("runSearch", () => {
   const scopeFilters = { origin: "all" as const };
   const baseOptions = { caseSensitive: false, context: 20, limit: 0 };
 
-  it("scope=text：仅用户/助手正文", () => {
+  it("scope=text：用户/助手正文与问答可读文本（本夹具的关键词只出现在正文里）", () => {
     const outcome = runSearch(contextOf(HEALTHY_HOME), "needle", scopeFilters, {
       ...baseOptions,
       scope: "text",
