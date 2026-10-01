@@ -32,6 +32,23 @@ export function searchCases(): MatrixCase[] {
       null,
       0,
     ),
+    // 问答可读文本进默认档：命中行标签为 `提问`/`回答`，因此这两类命中行（含其载体与换行折叠）
+    // 也进入 markdownlint 与结构白名单的覆盖范围；同时产物会逐条列出结构不符会话的排除项。
+    mcase("search-md-ask-default", ["search", "选项 A", ...healthyBase()], "md", null, 0),
+    mcase(
+      "search-md-ask-tools",
+      ["search", "选项 A", ...healthyBase(), "--scope", "tools"],
+      "md",
+      null,
+      0,
+    ),
+    mcase(
+      "search-json-ask",
+      ["search", "选项 A", ...healthyBase(), "--format", "json"],
+      "json",
+      "search",
+      0,
+    ),
     mcase(
       "search-md-since-filter",
       ["search", "needle", ...healthyBase(), "--since", "0", "--until", "9999999999999"],

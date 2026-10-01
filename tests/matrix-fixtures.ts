@@ -8,7 +8,15 @@
 
 import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type FixtureEvent, type FixtureHomeSpec, writeFixtureHome } from "./fixtures.ts";
+import {
+  askSampleErrorResult,
+  askSampleMalformed,
+  askSamplePaired,
+  askSampleUnpaired,
+  type FixtureEvent,
+  type FixtureHomeSpec,
+  writeFixtureHome,
+} from "./fixtures.ts";
 import { asRecord } from "./matrix-assert.ts";
 
 // ------------------------- 敌意内容集（f2 §2.1 的 67 条，逐条复制） -------------------------
@@ -92,6 +100,17 @@ const GRAND_ID = "session-adv-grand-08";
 export const MAIN_ID = "session-adv-main-01";
 /** 夹具子代理会话 id（continuable，带子代）。 */
 export const CHILD_ID = "session-adv-child-07";
+/**
+ * 问答夹具会话 id：成对问答、未配对提问、错误态结果、结构不符的载荷。
+ *
+ * 四者必须是不同会话：前三个都必须能在默认参数下完整导出（其中错误态样本只呈现提问、
+ * 不产出回答条目），第四个必须让单目标导出整体失败——把任何两者放进同一会话，
+ * 就会让"可导出"与"必须失败"这两种行为互相覆盖而失去覆盖力。
+ */
+export const ASK_PAIRED_ID = "session-adv-ask-paired-17";
+export const ASK_UNPAIRED_ID = "session-adv-ask-unpaired-18";
+export const ASK_ERROR_ID = "session-adv-ask-error-19";
+export const ASK_MALFORMED_ID = "session-adv-ask-malformed-20";
 /** 夹具主/子会话共用的工作目录（含空格、方括号与井号）。 */
 export const MAIN_CWD = "C:\\Users\\Alice\\user projects [v2] #tag_under";
 
@@ -477,6 +496,53 @@ export function healthySpec(): FixtureHomeSpec {
         turns: 1,
         steps: 0,
         lastPromptAt: 2900,
+      },
+      // 问答四样本。createdAt 与 lastPromptAt 都取现有最小值以下：`last`（最近活动的主会话）
+      // 仍指向 pcpart-13，因此 `show last` 这类组合不会意外落到问答样本上（那会让"默认可见"
+      // 与"结构不符必须失败"两种期望混在同一组用例里）。
+      {
+        id: ASK_PAIRED_ID,
+        projectDir: PROJECT_DIR,
+        cwd: MAIN_CWD,
+        createdAt: 600,
+        events: askSamplePaired(),
+        title: CONTENTS[12],
+        turns: 1,
+        steps: 1,
+        lastPromptAt: 700,
+      },
+      {
+        id: ASK_UNPAIRED_ID,
+        projectDir: PROJECT_DIR,
+        cwd: MAIN_CWD,
+        createdAt: 610,
+        events: askSampleUnpaired(),
+        title: CONTENTS[13],
+        turns: 1,
+        steps: 1,
+        lastPromptAt: 710,
+      },
+      {
+        id: ASK_ERROR_ID,
+        projectDir: PROJECT_DIR,
+        cwd: MAIN_CWD,
+        createdAt: 620,
+        events: askSampleErrorResult(),
+        title: CONTENTS[19],
+        turns: 1,
+        steps: 1,
+        lastPromptAt: 720,
+      },
+      {
+        id: ASK_MALFORMED_ID,
+        projectDir: PROJECT_DIR,
+        cwd: MAIN_CWD,
+        createdAt: 630,
+        events: askSampleMalformed(),
+        title: CONTENTS[14],
+        turns: 1,
+        steps: 1,
+        lastPromptAt: 730,
       },
     ],
     workspace: {

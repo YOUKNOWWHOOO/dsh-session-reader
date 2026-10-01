@@ -4,7 +4,16 @@
 // 设计约束：组合只增不减；每个用例的期望退出码、期望 stdout 契约与期望 stderr 全文都必须显式声明，
 //           禁止用"跳过/容忍"代替判定。查询类与校验类组合见 ./matrix-cases-query.ts。
 
-import { CHILD_ID, healthySpec, MAIN_CWD, MAIN_ID } from "./matrix-fixtures.ts";
+import {
+  ASK_ERROR_ID,
+  ASK_MALFORMED_ID,
+  ASK_PAIRED_ID,
+  ASK_UNPAIRED_ID,
+  CHILD_ID,
+  healthySpec,
+  MAIN_CWD,
+  MAIN_ID,
+} from "./matrix-fixtures.ts";
 import { libRoot } from "./matrix-paths.ts";
 
 // ------------------------- 组合矩阵定义 -------------------------
@@ -54,6 +63,12 @@ const SPECIAL_IDS = [
   "session-adv-pcver-11",
   "session-adv-pcid-12",
   "session-adv-pcpart-13",
+  // 三个可完整导出的问答样本：默认可见、开关全开（--tools 时原始工具条目与问答条目并存）、
+  // 范围选择（--seq 0-3 只截到部分问答事件）三条路径都因此在全组合层面受检。
+  // 结构不符的样本（ASK_MALFORMED_ID）**不得**列入本表：它的期望是退出 3，与这里的期望 0 冲突。
+  ASK_PAIRED_ID,
+  ASK_UNPAIRED_ID,
+  ASK_ERROR_ID,
 ] as const;
 
 export interface MatrixCaseOptions {
@@ -334,6 +349,57 @@ export function showCases(): MatrixCase[] {
         expectStderr:
           "错误: 参数无效（呈现类开关 --probe 仅 md 可用；去掉 --probe，或把 --format 改为 md）\n",
       },
+    ),
+  );
+  // 问答：`--probe` 的问答数一行、以及"载荷结构不符即整体失败且不产出文件"。
+  for (const id of [ASK_PAIRED_ID, ASK_UNPAIRED_ID, ASK_ERROR_ID]) {
+    cases.push(
+      mcase(`show-md-ask-probe-${id}`, ["show", id, ...healthyBase(), "--probe"], "md", null, 0),
+      mcase(
+        `show-md-ask-tools-${id}`,
+        ["show", id, ...healthyBase(), "--tools", "--headers", "--truncate", "12"],
+        "md",
+        null,
+        0,
+      ),
+    );
+  }
+  cases.push(
+    mcase("err-show-ask-malformed", ["show", ASK_MALFORMED_ID, ...healthyBase()], "none", null, 3, {
+      expectStderr: "错误: 数据不可读\n",
+    }),
+    mcase(
+      "err-show-ask-malformed-tools",
+      ["show", ASK_MALFORMED_ID, ...healthyBase(), "--tools"],
+      "none",
+      null,
+      3,
+      { expectStderr: "错误: 数据不可读\n" },
+    ),
+    // 规模探测会渲染一份完整副本，因此结构不符时探测同样整体失败（预计字节数不得建立在一份
+    // 本来就不该产出的正文之上）。
+    mcase(
+      "err-show-ask-malformed-probe",
+      ["show", ASK_MALFORMED_ID, ...healthyBase(), "--probe"],
+      "none",
+      null,
+      3,
+      { expectStderr: "错误: 数据不可读\n" },
+    ),
+    // `json`/`jsonl` 不做问答抽取，因此不受载荷结构影响：原始载荷照常导出。
+    mcase(
+      "show-ask-malformed-json",
+      ["show", ASK_MALFORMED_ID, ...healthyBase(), "--format", "json"],
+      "json",
+      "show",
+      0,
+    ),
+    mcase(
+      "show-ask-malformed-jsonl",
+      ["show", ASK_MALFORMED_ID, ...healthyBase(), "--format", "jsonl"],
+      "jsonl",
+      "jsonl",
+      0,
     ),
   );
   cases.push(

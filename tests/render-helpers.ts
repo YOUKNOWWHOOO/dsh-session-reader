@@ -1,7 +1,8 @@
 // render 拆分测试的共享夹具：字段/元数据/列表项/覆盖声明/扫描摘要、会话条目与节点构造、show 选项、解码文件与结构纪律断言。
 // 命名为 render-helpers.ts（非 *.test.ts），避免被 node --test 收集而污染测试数。
 import assert from "node:assert/strict";
-import type { ShowMdOptions } from "../scripts/lib/render-core.ts";
+import type { RenderedOutput, ShowMdOptions } from "../scripts/lib/render-core.ts";
+import { renderShowMd } from "../scripts/lib/render-show-md.ts";
 import type {
   DecodedSessionFile,
   FieldValue,
@@ -12,6 +13,21 @@ import type {
   SessionEntry,
   SessionNode,
 } from "../scripts/lib/store-types.ts";
+
+/**
+ * 渲染 show 的 md 并解包成功结果；失败即让用例失败。
+ *
+ * `renderShowMd` 返回 Result 是因为问答载荷结构不符必须让整条命令失败（退出 3、不产出文件）。
+ * 绝大多数用例断言的是成功路径的正文，用本函数解包可避免每个调用点都写一遍 `if (!rendered.success)`，
+ * 也避免把失败当成"空产物"继续断言下去（那会产出难以定位的假失败）；需要断言失败路径的用例
+ * 直接调用 `renderShowMd`。
+ */
+export function showMd(node: SessionNode, options: ShowMdOptions): RenderedOutput {
+  const rendered = renderShowMd(node, options);
+  assert.equal(rendered.success, true, rendered.success ? "" : `渲染失败: ${rendered.error}`);
+  if (!rendered.success) throw new Error("unreachable");
+  return rendered.data;
+}
 
 export function field<T>(value: T | null, unavailable = false): FieldValue<T> {
   return { value, unavailable };

@@ -7,11 +7,10 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { renderSearchJson, renderShowJson } from "../scripts/lib/render-json.ts";
 import { renderSearchMd } from "../scripts/lib/render-md.ts";
-import { renderShowMd } from "../scripts/lib/render-show-md.ts";
 import { runSearch } from "../scripts/lib/store-search.ts";
 import type { SearchOutcome } from "../scripts/lib/store-types.ts";
 import { resetTempDir, writeFixtureHome } from "./fixtures.ts";
-import { node, showOptions } from "./render-helpers.ts";
+import { node, showMd, showOptions } from "./render-helpers.ts";
 import { contextOf } from "./store-helpers.ts";
 
 const SENDER = "aaaa1111-2222-3333-4444-555566667777";
@@ -116,13 +115,14 @@ const EVENTS: Record<string, unknown>[] = [
   { type: "turn/end", seq: 10, time: 20, data: { turn: 1 } },
 ];
 
-function showMd(overrides: Parameters<typeof showOptions>[0] = {}): string {
-  return renderShowMd(node([], EVENTS), showOptions(overrides)).content;
+/** 该文件专用的 md 正文入口：固定事件集，只暴露选项；正文与渲染层共用同一份抽取。 */
+function showText(overrides: Parameters<typeof showOptions>[0] = {}): string {
+  return showMd(node([], EVENTS), showOptions(overrides)).content;
 }
 
 describe("md 标签行的来源标注", () => {
   it("用户本人的消息不标注，其它来源逐一标注，未知 kind 入行内载体", () => {
-    const content = showMd();
+    const content = showText();
     assert.equal(content.includes("**用户**：\n\n```text\n正文 USER-OWN\n```"), true);
     assert.equal(content.includes("**用户**（来源 agent-message："), false);
     assert.equal(content.includes(`**用户**（来源 agent-message \`${SENDER}\`）：`), true);
@@ -136,7 +136,7 @@ describe("md 标签行的来源标注", () => {
   });
 
   it("敌意来源文本入行内载体：反引号使跨度加长、内嵌换行被折叠，标签行不被破坏", () => {
-    const content = showMd();
+    const content = showText();
     assert.equal(content.includes("**用户**（来源 plugin ``bad` name``）："), true);
     // 标签行必须仍是单行：换行若未被折叠，`来源` 与 `）：` 会落在不同行。
     assert.match(content, /^\*\*用户\*\*（来源 plugin ``bad` name``）：$/mu);
@@ -182,7 +182,7 @@ describe("md 标签行的来源标注", () => {
         },
       },
     ];
-    const content = renderShowMd(node([], events), showOptions()).content;
+    const content = showMd(node([], events), showOptions()).content;
     // 空串是无信息量的值：kind 空串等同于缺失，plugin 空串等同于没有该字段，都不产出空载体。
     assert.equal(content.includes("**用户**（来源 未标注）："), true);
     assert.equal(content.includes("**用户**（来源 plugin）："), true);
@@ -193,7 +193,7 @@ describe("md 标签行的来源标注", () => {
   });
 
   it("--headers 时括号内顺序为 seq → 本地时间 → 来源", () => {
-    const content = showMd({ headers: true });
+    const content = showText({ headers: true });
     assert.match(
       content,
       new RegExp(`^\\*\\*用户\\*\\*（seq 2；[^；]+；来源 agent-message \`${SENDER}\`）：$`, "mu"),
@@ -202,7 +202,7 @@ describe("md 标签行的来源标注", () => {
   });
 
   it("系统消息与工具结果不适用来源标注", () => {
-    const content = showMd({ events: true });
+    const content = showText({ events: true });
     assert.equal(content.includes("**系统消息**（来源"), false);
     assert.equal(content.includes("**系统消息**：\n\n```text\n系统 SYSTEM\n```"), true);
   });
