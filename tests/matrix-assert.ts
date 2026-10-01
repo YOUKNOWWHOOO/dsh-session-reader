@@ -15,6 +15,31 @@ import type { JsonShape } from "./matrix-cases.ts";
 
 const HEADING_WHITELIST =
   /^(会话列表|会话列表（完整）|会话记录|检索结果|统计|完整性校验|时间线|轮次大纲|每会话命中分布|子代理 \d+(\.\d+)*)$/u;
+/**
+ * 时间线标签词表。
+ *
+ * 契约里的 10 个标签形态中，`**工具结果**` 与 `**工具结果**（错误）` 共用同一个标签名（错误态由
+ * 紧随其后的括号标注表达），因此这里登记的是 9 个标签名，覆盖全部 10 个形态。
+ *
+ * 判定方式：行首起 `**` 的行的第一个加粗片段就是标签，必须落在词表内。参与这条判定的行只有
+ * 时间线标签行——正文一律经载体承载（围栏内的行不参与、行内载体的行不以 `**` 开头），
+ * `list --full` 的续行以两空格缩进，因此不会误判。
+ *
+ * 存在理由：标签是"这条条目是什么"的唯一信号，出现词表外的标签（例如某次改动新造了一个标签
+ * 却忘了登记）说明 md 骨架已偏离契约；仅靠 markdownlint 无法发现这类偏差。
+ */
+const LABEL_WHITELIST = new Set([
+  "用户",
+  "助手",
+  "推理",
+  "工具调用",
+  "工具结果",
+  "系统消息",
+  "事件",
+  "提问",
+  "回答",
+]);
+const LABEL_LINE = /^\*\*([^*]+)\*\*/u;
 const FENCE_OPEN = /^(`{3,})text$/u;
 const FENCE_CLOSE = /^(`{3,})$/u;
 /** 单行敌意标记：必须真实出现在 md 产物中，且围栏外只能处于行内代码跨度内。 */
@@ -106,7 +131,11 @@ export function checkMarkdownStructure(
   for (const marker of MULTILINE_MARKERS) {
     if (content.includes(marker)) multiLineMarkersSeen.add(marker);
   }
-  if (content.includes("\uFEFF")) fail("含 BOM");
+  // BOM 只在文件开头才是 BOM 标记；载荷内部的 U+FEFF 是数据，契约明确要求零宽字符在载体内原样保留
+  // （开发规范 R4），因此这里只拦"以 BOM 开头"，其余位置的 U+FEFF 由骨架级检查处理（见行循环）。
+  // 实测根因：真实会话的工具结果里就有一段以 U+FEFF 开头的 C++ 源码（web 抓取内容），此前按
+  // `content.includes("\uFEFF")` 判定会让该用例随真实数据在红绿之间摆动。
+  if (content.startsWith("\uFEFF")) fail("以 BOM 开头");
   if (content.includes("\t")) fail("含制表符（应已归一化为空格）");
   // 输出契约要求 LF-only：CR 会被 markdownlint 忽略，因此必须在此单独拦截，
   // 否则正文携带的 CR 会静默破坏"UTF-8 无 BOM、LF"这一契约。
@@ -138,6 +167,19 @@ export function checkMarkdownStructure(
       continue;
     }
     if (line.endsWith("\r")) fail(`结构行含 CR（行 ${index + 1}）`);
+    if (line.includes("\uFEFF")) {
+      // 围栏外的 U+FEFF 只能出现在行内代码跨度里（会话正文一律经载体承载）；出现在骨架中说明
+      // 有一段零宽字符直接拼进了结构行，会让"结构行"与"数据"的边界失效。围栏内的载荷不判：
+      // 那是契约允许原样保留的数据。
+      const ranges = codeSpanRanges(line);
+      let from = 0;
+      for (;;) {
+        const at = line.indexOf("\uFEFF", from);
+        if (at < 0) break;
+        if (!inRanges(ranges, at, 1)) fail(`骨架含 U+FEFF（行 ${index + 1}，列 ${at + 1}）`);
+        from = at + 1;
+      }
+    }
     if (line === "" && index > 0 && body[index - 1] === "") {
       fail(`连续空行（行 ${index + 1}）`);
     }
@@ -148,6 +190,10 @@ export function checkMarkdownStructure(
       continue;
     }
     if (FENCE_CLOSE.test(line)) fail(`孤立围栏行（行 ${index + 1}）`);
+    const label = LABEL_LINE.exec(line);
+    if (label !== null && !LABEL_WHITELIST.has(label[1])) {
+      fail(`时间线标签不在词表: ${label[1]}（行 ${index + 1}）`);
+    }
     const heading = /^(#{1,6}) (.+)$/u.exec(line);
     if (heading !== null) {
       const level = heading[1].length;
