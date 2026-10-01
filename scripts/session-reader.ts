@@ -42,7 +42,7 @@ import {
 import { renderCheckMd, renderListMd, renderSearchMd, renderStatsMd } from "./lib/render-md.ts";
 import { renderShowMd } from "./lib/render-show-md.ts";
 import { runCheck } from "./lib/store-check.ts";
-import { discoverReadableSessions } from "./lib/store-discovery.ts";
+import { discoverReadableSessions, prepareCatalogs } from "./lib/store-discovery.ts";
 import { buildList } from "./lib/store-list.ts";
 import { runSearch } from "./lib/store-search.ts";
 import { runStats } from "./lib/store-stats.ts";
@@ -94,7 +94,7 @@ function commonOptions(formatValues: readonly string[]): OptionSpec[] {
       valueName: "<目录>",
       valueKind: "string",
       description: "官方格式库解析锚点（兼容覆盖）",
-      defaultText: "<dsh-home>\\profiles\\node_modules",
+      defaultText: "按 dsh 安装锚点自动定位；无法唯一定位时用 --lib-root 覆盖",
     },
     {
       name: "--output-dir",
@@ -994,7 +994,23 @@ async function runParsedCommand(parsed: ParsedCommand): Promise<RunOutcome> {
   if (!catalogResult.success)
     return failure("内部错误", 3, `官方格式库加载失败，解析锚点为 ${libRoot}`);
   const catalog: SessionFormatCatalog = catalogResult.data;
-  const ctx: StoreContext = { dshHome, catalog };
+  const prepared =
+    parsed.command === "list" || parsed.command === "check"
+      ? {
+          success: true as const,
+          data: {
+            catalogsBySessionId: new Map<string, SessionFormatCatalog>(),
+            historicalChildFailuresBySessionId: new Map<string, readonly string[]>(),
+          },
+        }
+      : prepareCatalogs(dshHome, catalog);
+  if (!prepared.success) return { kind: "failure", failure: mapStoreError(prepared.error) };
+  const ctx: StoreContext = {
+    dshHome,
+    catalog,
+    catalogsBySessionId: prepared.data.catalogsBySessionId,
+    historicalChildFailuresBySessionId: prepared.data.historicalChildFailuresBySessionId,
+  };
   const formatRaw = optionValue(parsed, "--format") ?? "md";
   const format = formatRaw === "json" ? "json" : formatRaw === "jsonl" ? "jsonl" : "md";
   const outcome = dispatchCommand(parsed, ctx, format);

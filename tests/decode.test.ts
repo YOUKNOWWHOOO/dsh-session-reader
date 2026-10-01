@@ -186,15 +186,16 @@ describe("decodeSessionLog", () => {
     assert.equal(result.success, false);
   });
 
-  it("一致性校验：静默丢弃事件时报错", () => {
+  it("迁移后逻辑事件数可以不同于物理 JSON 行数", () => {
     const result = decodeSessionLog(
       createFakeCatalog({ droppedEvents: 1 }),
       logText([HEADER_LINE, '{"seq":0}', '{"seq":1}']),
       { tornTail: false },
     );
-    assert.equal(result.success, false);
-    if (result.success) return;
-    assert.match(result.error, /解码不一致/u);
+    assert.equal(result.success, true);
+    if (!result.success) return;
+    assert.equal(result.data.parsedEventCount, 2);
+    assert.equal(result.data.events.length, 1);
   });
 });
 

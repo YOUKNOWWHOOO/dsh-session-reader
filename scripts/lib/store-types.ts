@@ -43,6 +43,12 @@ export interface SessionEntry {
 export interface StoreContext {
   readonly dshHome: string;
   readonly catalog: SessionFormatCatalog;
+  readonly catalogsBySessionId: ReadonlyMap<string, SessionFormatCatalog>;
+  readonly historicalChildFailuresBySessionId: ReadonlyMap<string, readonly string[]>;
+}
+
+export function catalogForEntry(ctx: StoreContext, entry: SessionEntry): SessionFormatCatalog {
+  return ctx.catalogsBySessionId.get(entry.id) ?? ctx.catalog;
 }
 
 /** projcache 加载结果。 */

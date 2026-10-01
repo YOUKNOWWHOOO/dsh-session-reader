@@ -390,12 +390,11 @@ export function checkCases(): MatrixCase[] {
       0,
     ),
     mcase(
-      "err-show-broken-gap",
+      "show-broken-gap",
       ["show", "session-brk-gap-15", "--dsh-home", "BROKEN", "--lib-root", libRoot()],
-      "none",
-      null,
-      3,
-      { expectStderr: "错误: 数据不可读\n" },
+      "md",
+      "show",
+      0,
     ),
     mcase(
       "err-show-broken-corrupt",

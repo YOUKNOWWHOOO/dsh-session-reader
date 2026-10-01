@@ -47,7 +47,12 @@ before(() => {
 
 describe("审查修订补充：不可用口径 / 码点切片 / 边界分支", () => {
   function contextWith(home: string, catalog: SessionFormatCatalog): StoreContext {
-    return { dshHome: home, catalog };
+    return {
+      dshHome: home,
+      catalog,
+      catalogsBySessionId: new Map(),
+      historicalChildFailuresBySessionId: new Map(),
+    };
   }
 
   function plainHeader(id: string): string {

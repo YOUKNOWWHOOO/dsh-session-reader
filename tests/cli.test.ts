@@ -1095,10 +1095,13 @@ describe("CLI show 对异常数据", () => {
     assert.match(content, /归属未知：`session-broken-corrupt-08`（`[^`]+`）/u);
   });
 
-  it("seq 缺口：一致性失败 → 退出 3 数据不可读", () => {
-    const result = runCli(["show", "session-broken-gap-07", ...baseArgs(BROKEN_HOME)]);
-    assert.equal(result.status, 3);
-    assert.equal(result.stderr.includes("错误: 数据不可读"), true);
+  it("seq 缺口：show 保留逻辑读取，check 报告物理 seq 异常", () => {
+    const showResult = runCli(["show", "session-broken-gap-07", ...baseArgs(BROKEN_HOME)]);
+    assert.equal(showResult.status, 0, `stderr=${showResult.stderr}`);
+    const checkResult = runCli(["check", "session-broken-gap-07", ...baseArgs(BROKEN_HOME)]);
+    assert.equal(checkResult.status, 3, `stderr=${checkResult.stderr}`);
+    const content = readFileSync(readContract(checkResult.stdout).path, "utf8");
+    assert.match(content, /seq 不连续/u);
   });
 
   it("结构损坏会话：list 容错跳过并逐条声明排除（退出 0）", () => {
