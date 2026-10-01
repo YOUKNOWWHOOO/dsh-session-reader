@@ -310,6 +310,252 @@ export function resetTempDir(root: string): string {
   return root;
 }
 
+// ------------------------- 问答（ask_user_question）夹具 -------------------------
+
+/**
+ * 问答夹具的事件构造器。
+ *
+ * 集中在这里的理由与 `eventLine` 一致：问答事件的载荷是"工具自己写进日志的 JSON 字符串"，
+ * 形状一旦散落到各测试文件，格式升级与结构变更就要在多处对齐。全部问答夹具都经这几个构造器
+ * 产出，再由 `eventLine` 统一转译为当前格式的日志行，因此单元测试、CLI 集成测试与全组合门禁
+ * 共用同一份事件定义。
+ */
+export const ASK_PAIRED_CALL_ID = "call-fixture-ask-paired";
+export const ASK_PAIRED_SECOND_CALL_ID = "call-fixture-ask-paired-2";
+export const ASK_UNPAIRED_CALL_ID = "call-fixture-ask-unpaired";
+export const ASK_MALFORMED_CALL_ID = "call-fixture-ask-malformed";
+export const ASK_ERROR_CALL_ID = "call-fixture-ask-error";
+
+type FixtureEventExtra = Partial<Pick<FixtureEvent, "surfaceOp" | "sourceEventSeqs">>;
+
+/**
+ * 问答夹具事件的类型：`FixtureEvent` 与"带索引签名的事件记录"的交叉。
+ *
+ * 交叉而不是直接用 `FixtureEvent` 的理由：TypeScript 只给对象字面量类型隐式索引签名，`interface`
+ * 没有，因此 `FixtureEvent` 无法直接传给按事件记录（`Record<string, unknown>`）消费的入口
+ * （抽取、渲染层）。交叉后既保留"必须是合法夹具事件"的编译期约束，又能直接交给这些入口，
+ * 不必在每个测试里逐字段转写——转写本身就是一处会漂移的复制。
+ */
+export type AskFixtureEvent = FixtureEvent & Record<string, unknown>;
+
+/**
+ * 提问事件（`tool/call`）：`arguments` 是 `{questions: [...]}` 的 JSON 文本。
+ *
+ * @param questions 逐题对象数组，字段按登记结构给出（`id`/`header`/`question`/`options`）。
+ */
+export function askQuestionEvent(
+  seq: number,
+  time: number,
+  callId: string,
+  questions: unknown,
+  extra?: FixtureEventExtra,
+): AskFixtureEvent {
+  return askQuestionRawEvent(seq, time, callId, JSON.stringify({ questions }), extra);
+}
+
+/**
+ * 提问事件（原始 `arguments` 文本形态）。
+ *
+ * 存在的理由是"结构不符"这一类样本必须能写出**无法解析为登记结构**的载荷：
+ * 合法的载荷由 `askQuestionEvent` 的 `JSON.stringify` 产出，永远不可能失真，
+ * 而门禁用例恰好需要一份失真的载荷来证明整体失败路径真的被走到。
+ */
+export function askQuestionRawEvent(
+  seq: number,
+  time: number,
+  callId: string,
+  argumentsText: string,
+  extra?: FixtureEventExtra,
+): AskFixtureEvent {
+  return {
+    type: "tool/call",
+    seq,
+    time,
+    data: { turn: 1, step: 1, callId, name: "ask_user_question", arguments: argumentsText },
+    ...extra,
+  };
+}
+
+/** 回答事件（`tool/result`）：`message.content` 的文本是 `{answers: [...]}` 的 JSON 文本。 */
+export function askAnswerEvent(
+  seq: number,
+  time: number,
+  callId: string,
+  answers: unknown,
+  extra?: FixtureEventExtra,
+): AskFixtureEvent {
+  return {
+    type: "tool/result",
+    seq,
+    time,
+    data: {
+      turn: 1,
+      step: 1,
+      message: {
+        role: "tool",
+        // 工具结果的来源是"工具"这个生产者，其 callId 必须与 toolCallId 一致：v4 解码器会校验
+        // 二者匹配。缺 source 时整行被拒绝（报错为「requires toolCallId matching its tool source」），
+        // 而 `show` 只会把它呈现为 `数据不可读`，错误位置离夹具很远。
+        source: { kind: "tool", callId },
+        toolCallId: callId,
+        isError: false,
+        content: [{ type: "text", text: JSON.stringify({ answers }) }],
+      },
+    },
+    surfaceOp: "append",
+    ...extra,
+  };
+}
+
+/**
+ * 错误态结果事件（`tool/result`）：提问被中止或取消时日志里的真实形态。
+ *
+ * 判据由 `scripts\lib\ask-user.ts` 的 `isErrorResult` 定义（`message.isError` 为 true 或
+ * `data.error` 存在）；这里的两个字段都给出，因为真实日志两个都写。
+ *
+ * @param code 工具错误码，实测取值为 `ASK_ABORTED`（用户中止）与 `ASK_CANCELLED`（用户取消）。
+ */
+export function askErrorResultEvent(
+  seq: number,
+  time: number,
+  callId: string,
+  code: string,
+  text: string,
+  extra?: FixtureEventExtra,
+): AskFixtureEvent {
+  return {
+    type: "tool/result",
+    seq,
+    time,
+    data: {
+      turn: 1,
+      step: 1,
+      message: {
+        role: "tool",
+        // 同 askAnswerEvent：工具结果的 source.callId 必须与 toolCallId 一致，否则整行被解码器拒绝。
+        source: { kind: "tool", callId },
+        toolCallId: callId,
+        isError: true,
+        content: [{ type: "text", text }],
+      },
+      error: { name: "UserQuestionError", code },
+    },
+    surfaceOp: "append",
+    ...extra,
+  };
+}
+
+/** 样本公共骨架：轮次开始、用户消息、样本主体、会话标题、轮次结束（seq 由主体长度续接）。 */
+function askSampleEvents(body: readonly AskFixtureEvent[], title: string): AskFixtureEvent[] {
+  const lastSeq = body.length === 0 ? 1 : body[body.length - 1].seq;
+  const head: AskFixtureEvent[] = [
+    { type: "turn/start", seq: 0, time: 10, data: { turn: 1 } },
+    {
+      type: "user/message",
+      seq: 1,
+      time: 11,
+      data: { role: "user", content: [{ type: "text", text: `问答夹具提问前置 ${title}` }] },
+      surfaceOp: "append",
+    },
+  ];
+  const tail: AskFixtureEvent[] = [
+    {
+      type: "session/title",
+      seq: lastSeq + 1,
+      time: 11 + lastSeq + 1,
+      data: { title, messageSeqs: [1] },
+    },
+    { type: "turn/end", seq: lastSeq + 2, time: 11 + lastSeq + 2, data: { turn: 1 } },
+  ];
+  return [...head, ...body, ...tail];
+}
+
+/**
+ * 样本 1：成对问答。两次提问各有结果，覆盖"选择"、"自定义（含换行）"与"未作答"三种回答形态，
+ * 并覆盖单题与多题、2/3 个选项、含制表符与反引号的题干（载体规则因此也被这些条目覆盖）。
+ */
+export function askSamplePaired(): AskFixtureEvent[] {
+  return askSampleEvents(
+    [
+      askQuestionEvent(2, 12, ASK_PAIRED_CALL_ID, [
+        {
+          id: "ask_one",
+          header: "确认事项 `x`",
+          question: "题干含 **bold text** 与制表符\ta",
+          options: [
+            { label: "选项 A", description: "说明 A；见 https://example.com/path" },
+            { label: "选项 B", description: "说明 B" },
+          ],
+        },
+      ]),
+      askAnswerEvent(3, 13, ASK_PAIRED_CALL_ID, [{ id: "ask_one", selected: ["选项 A"] }], {
+        sourceEventSeqs: [2],
+      }),
+      askQuestionEvent(4, 14, ASK_PAIRED_SECOND_CALL_ID, [
+        {
+          id: "ask_two",
+          header: "第二题",
+          question: "第二题正文",
+          options: [
+            { label: "选项 C", description: "说明 C" },
+            { label: "选项 D", description: "说明 D" },
+            { label: "选项 E", description: "说明 E" },
+          ],
+        },
+        { id: "ask_three", header: "第三题", question: "第三题正文", options: [] },
+      ]),
+      askAnswerEvent(
+        5,
+        15,
+        ASK_PAIRED_SECOND_CALL_ID,
+        [{ id: "ask_two", selected: [], custom: "自定义回答第一行\n第二行" }, { id: "ask_three" }],
+        { sourceEventSeqs: [4] },
+      ),
+    ],
+    "问答夹具：成对",
+  );
+}
+
+/** 样本 2：未配对提问（只有提问事件，没有结果事件），提问必须照常呈现。 */
+export function askSampleUnpaired(): AskFixtureEvent[] {
+  return askSampleEvents(
+    [
+      askQuestionEvent(2, 12, ASK_UNPAIRED_CALL_ID, [
+        { id: "ask_open", header: "未配对", question: "未配对的提问仍需呈现" },
+      ]),
+    ],
+    "问答夹具：未配对",
+  );
+}
+
+/** 样本 3：结构不符的载荷（提问参数不是合法 JSON），必须整体失败而不做任何降级。 */
+export function askSampleMalformed(): AskFixtureEvent[] {
+  return askSampleEvents(
+    [askQuestionRawEvent(2, 12, ASK_MALFORMED_CALL_ID, '{"questions": [')],
+    "问答夹具：结构不符",
+  );
+}
+
+/** 样本 4：配对结果为错误态（提问被中止），提问照常呈现且不产出回答条目、不触发失败。 */
+export function askSampleErrorResult(): AskFixtureEvent[] {
+  return askSampleEvents(
+    [
+      askQuestionEvent(2, 12, ASK_ERROR_CALL_ID, [
+        { id: "ask_aborted", header: "被中止的提问", question: "提问在被回答前被中止" },
+      ]),
+      askErrorResultEvent(
+        3,
+        13,
+        ASK_ERROR_CALL_ID,
+        "ASK_ABORTED",
+        "Error: ask_user_question was aborted before the user answered",
+        { sourceEventSeqs: [2] },
+      ),
+    ],
+    "问答夹具：错误态",
+  );
+}
+
 // ------------------------- 假 catalog（单元测试用） -------------------------
 
 export interface FakeCatalogOptions {
