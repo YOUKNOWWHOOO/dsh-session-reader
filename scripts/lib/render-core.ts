@@ -29,6 +29,7 @@ import type {
   SessionNode,
   TokenTotals,
 } from "./store-types.ts";
+import { collectSubagentReplyCallIds, isVisibleEvent } from "./visibility.ts";
 
 /** 元数据不可用的显示文案（跨渲染器共用；取值即对外契约，不得改写）。 */
 export const METADATA_UNAVAILABLE_TEXT = "元数据不可用";
@@ -211,9 +212,17 @@ interface TurnSummary {
   readonly response: string | null;
 }
 
-/** 轮次大纲数据：同一事件流在时间线与轮次大纲里必须归属同一轮次。 */
+/**
+ * 轮次大纲数据：同一事件流在时间线与轮次大纲里必须归属同一轮次。
+ *
+ * prompt 来源必须是**默认可见**的 `user/message` 事件：轮次大纲与默认时间线共用同一可见性判定
+ * （`visibility.ts`），否则框架注入的消息会被当成用户提问写进大纲，而时间线里根本看不到它
+ * （实测：某会话首轮 prompt 落到了 `user-approval` 的"审批策略已变更"通知上）。
+ * response 取自 `assistant/message`，该类型不在注入过滤范围内，无需判定。
+ */
 export function computeTurns(file: DecodedSessionFile): TurnSummary[] {
   const turns: TurnSummary[] = [];
+  const replyCallIds = collectSubagentReplyCallIds(file.decoded.events);
   let current: {
     turn: number;
     seq: number;
@@ -227,7 +236,12 @@ export function computeTurns(file: DecodedSessionFile): TurnSummary[] {
       const turn = readNumber(data, "turn") ?? turns.length + 1;
       current = { turn, seq: eventSeq(event) ?? -1, prompt: null, response: null };
       turns.push(current);
-    } else if (type === "user/message" && current !== null && current.prompt === null) {
+    } else if (
+      type === "user/message" &&
+      current !== null &&
+      current.prompt === null &&
+      isVisibleEvent(event, replyCallIds)
+    ) {
       const text = textFromBlocks(data.content);
       if (text.length > 0) current.prompt = text;
     } else if (type === "assistant/message" && current !== null) {

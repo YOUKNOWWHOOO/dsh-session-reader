@@ -16,23 +16,40 @@ import { asRecord, type EventRecord, eventType, readString } from "./decode.ts";
 /**
  * 默认保留的 `user/message` 来源种类。
  *
- * 每一条的存在理由都是实测的数据形态，不是推测：
+ * 每一条的存在理由都是实测或官方契约的数据形态，不是推测：
  * - `user`：用户本人的输入。
  * - `compact-checkpoint`：压缩产生的交接指令，携带被遮蔽区间的全部关键结论。
  * - `subagent-settled`：子代理结算回传，携带子代理的最终结论。
  * - `agent-message`：子代理或其它代理的中途发言。
+ * - `user-question-reply`：用户对 `ask_user_question` 的**延迟回答**（提问仍在等待时用户之后作答），
+ *   由 `dsh-user-questions` 以答案批次注入。保留的理由是它可能承载**唯一**的答案记录：
+ *   官方契约里这个消息的内容与当场答复的工具结果同格式（`{ answers: [{ id, selected, custom }] }`，
+ *   见 dsh-user-questions 的 `answerBatchSchema`），而提问在等待中被中止、取消或超时时不会产生
+ *   配对的 `tool/result`，此时本技能不产出 `**回答**` 条目，答案只在这条消息里。代价是当配对结果
+ *   确实存在时，同一答案会在产物中出现两次（回答条目一次、本条消息一次）——重复是可接受的代价，
+ *   丢失不可接受。
  *
- * 其余已知来源（`runtime-context`、`skill-catalog`、`tool-jobs`、`model-selection`、
- * `user-question-reply`、`goal`、`schedule`、`webhook`、`session-reference`、`plugin`、`model`、
- * `tool`、`system-prompt`、`user-approval`、`ptc-mode`、`tool-registry`、`cordis-host-runner`、
- * `team-message`、`coordinator`、`subagent-report`、`skill-invocation`、`agent-instructions` 等）
- * 都是框架或插件为了运行而注入的状态提示与调度通知，不是交流内容，故不在名单内。
+ * 其余来源一律排除，包括下列已知取值（按包列举；本列表不构成完整声明，白名单之外的取值
+ * 全部排除，新增种类无需改判据即正确排除）：
+ * - 运行时状态提示：`runtime-context`（dsh-agent-loop）、`time-context`、`tmux-context`、
+ *   `model-selection`（dsh-agent）、`tool-registry` 与 `ptc-mode`（dsh-tools）、
+ *   `plan-mode`、`repeat-tool-reminder`（重复调用提醒）。
+ * - 调度与通知：`tool-jobs`（后台任务完成）、`schedule`、`webhook`、`goal` 与 `tool-goal`、
+ *   `user-approval`（审批策略与请求）、`cordis-host-runner`。
+ * - 目录与指令注入：`skill-catalog`、`skill-invocation`、`agent-instructions`（工作区指令文件）。
+ * - 外部工具与钩子：`hooks-claude-code`、`hooks-codex`、`dsh-session-title-llm`。
+ * - 基础成员与历史取值：`plugin`、`model`、`tool`、`system-prompt`、`session-reference`、
+ *   `team-message`、`coordinator`、`subagent-report`。
+ *
+ * 判据是 `kind` 字段而非来源声明的成员名：官方声明里的成员 `user-rpc`（浏览器端用户输入）
+ * 其 `kind` 值就是 `'user'`，因此已被保留名单覆盖，无需单列。
  */
 export const KEPT_USER_MESSAGE_KINDS: readonly string[] = [
   "user",
   "compact-checkpoint",
   "subagent-settled",
   "agent-message",
+  "user-question-reply",
 ];
 
 /** 子代理调度工具名：它的调用实参携带发往子代理的任务正文，它的结果是一条回执。 */

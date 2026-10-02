@@ -15,7 +15,8 @@
 
 ### Changed
 
-- 默认参数下不再保留框架与插件自动注入的消息：`runtime-context`（运行时上下文快照）、`skill-catalog`（技能目录）、`tool-jobs`（后台任务完成通知）、`model-selection`（模型切换通知）等一律排除；保留名单为 `user`、`compact-checkpoint`、`subagent-settled`、`agent-message` 四种来源，来源缺失或为空的 `user/message` 同样排除。判定按日志字段（`data.source.kind`、事件类型、工具 `name`/`callId`），与正文文案无关。
+- 默认参数下不再保留框架与插件自动注入的消息：`runtime-context`（运行时上下文快照）、`skill-catalog`（技能目录）、`tool-jobs`（后台任务完成通知）、`model-selection`（模型切换通知）等一律排除；保留名单为 `user`、`compact-checkpoint`、`subagent-settled`、`agent-message`、`user-question-reply` 五种来源，来源缺失或为空的 `user/message` 同样排除。判定按日志字段（`data.source.kind`、事件类型、工具 `name`/`callId`），与正文文案无关。其中 `user-question-reply` 是用户对提问的延迟回答，保留它是因为提问被中止、取消或超时时没有配对的工具结果，该消息是答案的唯一记录。
+- 轮次大纲（`show --summary` 与 `show --format json` 的 `turns`）改为与默认时间线同一可见性：注入消息不再被当成用户提问（实测某会话首轮 prompt 曾落到 `user-approval` 的审批策略通知上）。
 - 子代理调度回执（`started subagent <id>`）默认不呈现，`--tools` 打开时作为工具结果出现；`subagent/catalog` 登记事件保持默认隐藏。
 - 默认检索范围 `--scope text` 与 `show` 默认参数改为同一可见性：注入消息与调度回执在 `text` 档不可命中，`tools` 档不含调度回执；`--scope all` 仍是取回被排除内容的入口。
 - `show --format json` 的 `messages` 与默认视图同口径；`--format jsonl` 保持逐事件穷尽，不做可见性过滤。

@@ -206,8 +206,9 @@ node scripts/session-reader.ts check                     --output-dir <project_t
 | `compact-checkpoint` | 压缩产生的交接指令 |
 | `subagent-settled` | 子代理结算回传 |
 | `agent-message` | 子代理或其它代理的中途发言 |
+| `user-question-reply` | 用户对提问的延迟回答（提问仍在等待时用户之后作答）。保留的理由是它可能承载唯一的答案记录：提问在等待中被中止、取消或超时时不产生配对结果，此时本技能不产出 `**回答**` 条目；代价是配对结果确实存在时，同一答案会出现两次 |
 
-其余来源一律默认排除，包括 `runtime-context`（运行时上下文快照）、`skill-catalog`（技能目录）、`tool-jobs`（后台任务完成通知）、`model-selection`（模型切换通知）、`plugin`、`model`、`tool`、`system-prompt`、`user-approval`、`ptc-mode`、`tool-registry`、`cordis-host-runner`、`team-message`、`coordinator`、`subagent-report`、`user-question-reply`、`goal`、`schedule`、`webhook`、`session-reference`、`skill-invocation`、`agent-instructions`，以及**来源缺失或为空**的消息（无法证明来源，默认不显示）。保留名单是白名单：来源种类是官方与插件共同扩展的合并联合，名单外的新种类默认不显示，不会误当作用户消息呈现。
+其余来源一律默认排除，包括 `runtime-context`（运行时上下文快照）、`skill-catalog`（技能目录）、`tool-jobs`（后台任务完成通知）、`model-selection`（模型切换通知）、`agent-instructions`（工作区指令文件）、`repeat-tool-reminder`（重复调用提醒）、`user-approval`（审批策略通知）、`skill-invocation`、`plugin`、`model`、`tool`、`system-prompt`、`ptc-mode`、`tool-registry`、`cordis-host-runner`、`team-message`、`coordinator`、`subagent-report`、`goal`、`tool-goal`、`schedule`、`webhook`、`time-context`、`tmux-context`、`plan-mode`、`session-reference`、`hooks-claude-code`、`hooks-codex`、`dsh-session-title-llm`，以及**来源缺失或为空**的消息（无法证明来源，默认不显示）。保留名单是白名单：来源种类是官方与插件共同扩展的合并联合，名单外的新种类默认不显示，不会误当作用户消息呈现。
 
 另外两类默认排除：`subagent` 调用的 `tool/result`（正文形如 `started subagent <id>` 的调度回执，按 `toolCallId` 与调用配对识别）、`subagent/catalog` 登记事件（只含子代理身份与模式）。
 

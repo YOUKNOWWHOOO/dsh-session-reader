@@ -29,6 +29,7 @@ const PROJECT_DIR = "--C-Users-Alice-user_projects--";
 
 const MAIN_ID = "session-visibility-main-01";
 const CHILD_ID = "visibility-child-aaaa-1111-222233334444";
+const OUTLINE_ID = "session-visibility-outline-02";
 
 const CALL_ID = "call_subagent_1";
 const PROMPT = "子代理任务正文 PROMT-MARK";
@@ -400,5 +401,86 @@ describe("默认参数的注入过滤", () => {
     assert.equal(texts.includes("CATALOG-MARK"), false);
     assert.equal(texts.includes("JOB-MARK"), false);
     assert.equal(texts.includes(RECEIPT), false);
+  });
+
+  it("轮次大纲与 json 的 turns 也不把注入消息当成用户提问", () => {
+    // 主会话首轮：turn/start 之后紧跟两条注入，再跟真实用户消息。若轮次大纲不过滤注入，
+    // 首轮 prompt 就会落到注入内容上，而时间线里看不到它（实测某会话落到 user-approval 通知）。
+    const events: FixtureEvent[] = [
+      ev("turn/start", 0, 10, { turn: 1 }),
+      ev(
+        "user/message",
+        1,
+        11,
+        {
+          role: "user",
+          content: [{ type: "text", text: "注入快照 OUTLINE-SNAPSHOT-MARK" }],
+          source: { kind: "runtime-context" },
+        },
+        { surfaceOp: "append" },
+      ),
+      ev(
+        "user/message",
+        2,
+        12,
+        {
+          role: "user",
+          content: [{ type: "text", text: "用户真提问 OUTLINE-PROMPT-MARK" }],
+          source: { kind: "user" },
+        },
+        { surfaceOp: "append" },
+      ),
+      ev(
+        "assistant/message",
+        3,
+        13,
+        {
+          turn: 1,
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "助手回答 OUTLINE-REPLY-MARK" }],
+          },
+        },
+        { surfaceOp: "append" },
+      ),
+      ev("turn/end", 4, 14, { turn: 1 }),
+    ];
+    // 独立子目录：与主夹具的 DSH_HOME 平级隔离，避免两者互相影响。
+    const home = join(TEMP_ROOT, "outline", "outline-dsh");
+    writeFixtureHome(home, {
+      sessions: [
+        {
+          id: OUTLINE_ID,
+          projectDir: PROJECT_DIR,
+          createdAt: 1000,
+          events,
+          title: "轮次大纲夹具",
+          turns: 1,
+          steps: 1,
+          lastPromptAt: 2000,
+        },
+      ],
+    });
+    const args = ["--dsh-home", home, "--lib-root", REQUIRED_LIB_ROOT, "--output-dir", OUT_DIR];
+    const mdResult = runCli(["show", OUTLINE_ID, ...args, "--summary"]);
+    assert.equal(mdResult.status, 0, `show --summary 失败: ${mdResult.stderr}`);
+    const mdLines = mdResult.stdout.split("\n").filter((line) => line.length > 0);
+    const mdPath = /^完整输出已保存到: (.+)$/u.exec(mdLines[0])?.[1];
+    assert.notEqual(mdPath, undefined);
+    const outline = readFileSync(mdPath ?? "", "utf8");
+    assert.equal(outline.includes("OUTLINE-PROMPT-MARK"), true);
+    assert.equal(outline.includes("OUTLINE-REPLY-MARK"), true);
+    assert.equal(outline.includes("OUTLINE-SNAPSHOT-MARK"), false, "注入内容不得成为轮次 prompt");
+
+    const jsonResult = runCli(["show", OUTLINE_ID, ...args, "--summary", "--format", "json"]);
+    assert.equal(jsonResult.status, 0, `show --summary --format json 失败: ${jsonResult.stderr}`);
+    const jsonLines = jsonResult.stdout.split("\n").filter((line) => line.length > 0);
+    const jsonPath = /^完整输出已保存到: (.+)$/u.exec(jsonLines[0])?.[1];
+    assert.notEqual(jsonPath, undefined);
+    const document = JSON.parse(readFileSync(jsonPath ?? "", "utf8")) as {
+      turns: { prompt: string | null; response: string | null }[];
+    };
+    assert.equal(document.turns[0]?.prompt?.includes("OUTLINE-PROMPT-MARK"), true);
+    assert.equal(document.turns[0]?.prompt?.includes("OUTLINE-SNAPSHOT-MARK"), false);
   });
 });

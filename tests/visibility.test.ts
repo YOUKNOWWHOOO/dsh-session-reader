@@ -51,13 +51,20 @@ describe("默认可见性判定", () => {
     }
   });
 
+  it("延迟回答必在保留名单内（它可能承载唯一的答案记录）", () => {
+    // 提问在等待中被中止、取消或超时时不产生配对的 tool/result，此时本技能不产出 `**回答**`
+    // 条目，用户的选择与自定义回答只存在这条消息里；因此它必须默认可见。
+    assert.equal(KEPT_USER_MESSAGE_KINDS.includes("user-question-reply"), true);
+    const event = userMessage({ kind: "user-question-reply" });
+    assert.equal(isVisibleEvent(event, new Set()), true);
+  });
+
   it("保留名单外的来源默认排除，含来源缺失、空串与非字符串", () => {
     for (const kind of [
       "runtime-context",
       "skill-catalog",
       "tool-jobs",
       "model-selection",
-      "user-question-reply",
       "goal",
       "schedule",
       "webhook",
@@ -65,6 +72,18 @@ describe("默认可见性判定", () => {
       "plugin",
       "skill-invocation",
       "team-message",
+      // 本机会话库实测出现的三个来源种类：工作区指令文件、重复调用提醒、审批策略通知。
+      "agent-instructions",
+      "repeat-tool-reminder",
+      "user-approval",
+      // 基础成员与外部钩子：同为框架注入，默认不呈现。
+      "system-prompt",
+      "tool-registry",
+      "ptc-mode",
+      "plan-mode",
+      "time-context",
+      "tmux-context",
+      "cordis-host-runner",
     ]) {
       const event = userMessage({ kind });
       assert.equal(isInjectedUserMessage(event), true, `kind=${kind} 应排除`);
