@@ -7,7 +7,8 @@
 ## [Unreleased]
 
 > 当前阶段：Active Development
-> 目标版本：v0.2.0
+
+## [0.2.0] - 2026-10-02
 
 ### Added
 
