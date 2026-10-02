@@ -47,6 +47,7 @@ import type {
   SessionNode,
   StatsOutcome,
 } from "./store-types.ts";
+import { collectSubagentReplyCallIds, isVisibleEvent } from "./visibility.ts";
 
 // ------------------------- list -------------------------
 
@@ -81,9 +82,20 @@ export function renderListJson(outcome: ListOutcome): RenderedOutput {
 
 // ------------------------- show -------------------------
 
+/**
+ * `messages` 的构造：与默认参数提取的可见性完全一致。
+ *
+ * 排除的两类与 `show` 的 md 时间线、`search` 的 `text` 档同源（判定统一取自 `visibility.ts`）：
+ * 框架与插件注入的消息、子代理调度回执。排除而非降级呈现：调用方要完整消息历史时用
+ * `--format jsonl`（逐事件穷尽），它是唯一不被可见性过滤的导出形态。
+ *
+ * 注意 `meta` 的统计口径不受影响——`userMessages` 等计数描述整会话，不是本数组的条数。
+ */
 function buildMessageEntries(file: DecodedSessionFile): Record<string, unknown>[] {
   const entries: Record<string, unknown>[] = [];
+  const replyCallIds = collectSubagentReplyCallIds(file.decoded.events);
   for (const event of file.decoded.events) {
+    if (!isVisibleEvent(event, replyCallIds)) continue;
     const type = eventType(event);
     const data = asRecord(event.data) ?? {};
     if (type === "user/message") {
@@ -266,6 +278,7 @@ export function renderSearchJson(outcome: SearchOutcome): RenderedOutput {
     truncated: outcome.truncated,
     scope: outcome.scope,
     totalIsExact: outcome.totalIsExact,
+    excludedInjections: outcome.excludedInjections,
     coverage: outcome.coverage,
     scan: outcome.scan,
     distribution: outcome.distribution,

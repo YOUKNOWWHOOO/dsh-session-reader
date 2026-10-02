@@ -47,6 +47,11 @@ import type {
   StoreError,
 } from "./store-types.ts";
 import { catalogForEntry } from "./store-types.ts";
+import {
+  collectSubagentReplyCallIds,
+  countExcludedInjections,
+  isVisibleEvent,
+} from "./visibility.ts";
 
 interface SearchUnit {
   readonly label: string;
@@ -74,10 +79,12 @@ function messageContent(event: EventRecord): unknown {
  * 收集单个事件的可检索文本单元。
  *
  * 三档语义（单调包含）：
- * - `text`：用户/助手正文，以及 `ask` 给出的提问/回答可读文本；
- * - `tools`：另含工具调用参数与工具结果（含问答的原始载荷——问答事件本身就是工具的调用与结果）；
+ * - `text`：用户/助手正文，以及 `ask` 给出的提问/回答可读文本；与 `show` 默认参数**同一可见性**
+ *   （框架注入的消息与子代理调度回执都不进本档）；
+ * - `tools`：另含工具调用参数与工具结果（含问答的原始载荷；子代理调度回执不进本档）；
  * - `all`：另含推理、系统消息、压缩摘要、命令、标题请求、web 检索请求、交付物、待办、代理信箱，
- *   **以及整条事件记录的完整 JSON 载荷**（label 取事件类型）。
+ *   **以及整条事件记录的完整 JSON 载荷**（label 取事件类型）。`all` 是穷尽档，不做可见性过滤：
+ *   它是"检索 0 命中 ⇒ 不存在"这一推断成立的前提，也是取回被默认排除内容的入口。
  *
  * `ask` 必须由调用方从 `ask-user.ts` 的分析结果里按事件取回，而不是在这里自行解析载荷：
  * 检索单元与 md 条目必须是同一份抽取的产物，否则调用方会读到"呈现里有、检索里没有"这类不一致
@@ -89,13 +96,20 @@ function messageContent(event: EventRecord): unknown {
  *
  * 返回的每个单元都带上所属事件的来源归属（仅 `user/message` 事件非 null）：命中行的 `user` 标签
  * 会把子代理中继与插件注入显示成用户消息，来源归属是调用方区分它们的唯一依据。
+ *
+ * @param replyCallIds 会话内 `subagent` 调用的 `callId` 集合，用于识别调度回执（与 `visibility.ts` 同源）。
  */
 function collectSearchUnits(
   event: EventRecord,
   scope: "text" | "tools" | "all",
   ask: AskUserEntry | null,
+  replyCallIds: ReadonlySet<string>,
 ): SearchUnit[] {
   const type = eventType(event);
+  // 可见性与 show 默认参数同源：注入消息与调度回执在 `text`/`tools` 两档都不进检索单元，
+  // 否则"默认检索不到"会与"默认提取里有"互相矛盾，调用方会把被排除读成不存在。
+  // `all` 是穷尽档，不做过滤——它同时是取回被排除内容的唯一检索入口。
+  if (scope !== "all" && !isVisibleEvent(event, replyCallIds)) return [];
   const units: TextUnit[] = [];
   if (type === "user/message") {
     const text = textFromBlocks(asRecord(event.data)?.content);
@@ -282,6 +296,8 @@ export function runSearch(
   const needle = options.caseSensitive ? keyword : keyword.toLowerCase();
   const hits: SearchHit[] = [];
   let totalHits = 0;
+  let excludedUserMessages = 0;
+  let excludedSubagentReceipts = 0;
   const excludedSessions: { id: string; reason: string }[] = [];
   const distribution: SessionHitCount[] = [];
   let scan = emptyScanSummary();
@@ -308,9 +324,23 @@ export function runSearch(
     }
     const askEntries = new Map<EventRecord, AskUserEntry>();
     for (const entry of askAnalysis.data.entries) askEntries.set(entry.event, entry);
+    // 回执识别集合按整会话事件算出：配对关系是会话级事实，按筛选后的事件子集计算会漏掉配对。
+    const replyCallIds = collectSubagentReplyCallIds(file.data.decoded.events);
+    // 排除量按**本次作用域**累加，供产物声明"默认检索看不到多少条"：调用方据此判断 0 命中
+    // 是"不存在"还是"被默认排除"，以及是否需要改用 --scope all 取回。
+    if (options.scope !== "all") {
+      const excluded = countExcludedInjections(file.data.decoded.events, replyCallIds);
+      excludedUserMessages += excluded.userMessages;
+      excludedSubagentReceipts += excluded.subagentReceipts;
+    }
     let sessionHits = 0;
     for (const event of file.data.decoded.events) {
-      for (const unit of collectSearchUnits(event, options.scope, askEntries.get(event) ?? null)) {
+      for (const unit of collectSearchUnits(
+        event,
+        options.scope,
+        askEntries.get(event) ?? null,
+        replyCallIds,
+      )) {
         const haystack = options.caseSensitive ? unit.text : unit.text.toLowerCase();
         let from = 0;
         for (;;) {
@@ -369,6 +399,10 @@ export function runSearch(
       searchedSessions: views.length,
       scope: options.scope,
       totalIsExact: true,
+      excludedInjections: {
+        userMessages: excludedUserMessages,
+        subagentReceipts: excludedSubagentReceipts,
+      },
       // `scannedCount` 由 `includedCount + excluded.length` 构造（`list`/`stats` 同此），因此恒等式
       // 必然成立、**不具备核对能力**：核对覆盖范围只能依据逐条列出的排除项。禁止把它表述为
       // "调用方据此核对是否存在未列出的漏读"（见 doc\开发规范.md 的覆盖声明契约）。

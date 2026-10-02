@@ -104,7 +104,7 @@ describe("renderShowMd", () => {
         type: "user/message",
         seq: 1,
         time: 11,
-        data: { role: "user", content: [{ type: "text", text: long }] },
+        data: { role: "user", content: [{ type: "text", text: long }], source: { kind: "user" } },
         surfaceOp: "append",
       },
       {
@@ -155,13 +155,21 @@ describe("renderShowMd", () => {
         type: "user/message",
         seq: 0,
         time: 10,
-        data: { role: "user", content: [{ type: "text", text: "a\n```\nb" }] },
+        data: {
+          role: "user",
+          content: [{ type: "text", text: "a\n```\nb" }],
+          source: { kind: "user" },
+        },
       },
       {
         type: "user/message",
         seq: 1,
         time: 11,
-        data: { role: "user", content: [{ type: "text", text: "x ```` y" }] },
+        data: {
+          role: "user",
+          content: [{ type: "text", text: "x ```` y" }],
+          source: { kind: "user" },
+        },
       },
     ];
     const rendered = showMd(node([], events), showOptions());
@@ -175,13 +183,17 @@ describe("renderShowMd", () => {
         type: "user/message",
         seq: 0,
         time: 10,
-        data: { role: "user", content: [{ type: "text", text: "$ ls\n$ pwd" }] },
+        data: {
+          role: "user",
+          content: [{ type: "text", text: "$ ls\n$ pwd" }],
+          source: { kind: "user" },
+        },
       },
       {
         type: "user/message",
         seq: 1,
         time: 11,
-        data: { role: "user", content: [{ type: "text", text: "a\tb" }] },
+        data: { role: "user", content: [{ type: "text", text: "a\tb" }], source: { kind: "user" } },
       },
     ];
     const rendered = showMd(node([], events), showOptions());

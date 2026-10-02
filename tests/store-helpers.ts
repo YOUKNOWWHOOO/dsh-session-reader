@@ -52,7 +52,12 @@ export function event(
   data: Record<string, unknown>,
   extra?: Partial<Pick<FixtureEvent, "surfaceOp" | "sourceEventSeqs">>,
 ): FixtureEvent {
-  return { type, seq, time, data, ...extra };
+  // 真实日志的 user/message 恒带 source，缺 source 无法证明来源，默认可见性会排除它（见 visibility.ts
+  // 的 isInjectedUserMessage）。夹具因此统一补上 `{ kind: "user" }`；需要缺 source 形态的用例
+  // 必须显式传一个 `source` 键（传 undefined 也会被视为已声明），以免本补全把它掩盖掉。
+  const withSource =
+    type === "user/message" && !("source" in data) ? { ...data, source: { kind: "user" } } : data;
+  return { type, seq, time, data: withSource, ...extra };
 }
 
 export const MAIN_CWD = "C:\\Users\\Alice\\user_projects";

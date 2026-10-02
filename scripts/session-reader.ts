@@ -225,9 +225,15 @@ export const COMMANDS: readonly CommandSpec[] = [
       {
         name: "--tools",
         kind: "switch",
-        description: "显示工具调用与结果（仅 md；默认隐藏）；提问与回答条目恒显示，不受本开关控制",
+        description:
+          "显示工具调用与结果（仅 md；默认隐藏）；提问与回答、子代理任务与发往子代理的条目恒显示，不受本开关控制",
       },
-      { name: "--events", kind: "switch", description: "显示生命周期事件（仅 md；默认隐藏）" },
+      {
+        name: "--events",
+        kind: "switch",
+        description:
+          "显示生命周期事件与框架注入消息（仅 md；默认隐藏/排除）；被排除的注入由此开关恢复",
+      },
       { name: "--subagents", kind: "switch", description: "追加导出子代理会话（jsonl 禁止）" },
       { name: "--headers", kind: "switch", description: "显示每条消息的 seq 与时间（仅 md）" },
       {
@@ -286,7 +292,7 @@ export const COMMANDS: readonly CommandSpec[] = [
         valueKind: "enum",
         values: SCOPE_VALUES,
         description:
-          "检索范围（text=用户/助手正文与提问/回答的可读文本；tools=另含工具参数与结果，含问答原始载荷；all=另含推理/系统/压缩/命令/标题请求/web 请求/交付物/待办/代理信箱与每条事件载荷）",
+          "检索范围（text=用户/助手正文与提问/回答的可读文本，与默认提取同口径；tools=另含工具参数与结果；all=另含推理/系统/压缩/命令/标题请求/web 请求/交付物/待办/代理信箱与每条事件载荷，是取回被默认排除内容的入口）",
         defaultText: "text",
       },
       { name: "--case-sensitive", kind: "switch", description: "区分大小写（默认不区分）" },

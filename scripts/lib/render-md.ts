@@ -203,10 +203,11 @@ export function renderListMd(
 
 /** 检索范围的覆盖面描述（使"0 命中"不被误读为"不存在"：只有 all 档才覆盖任意事件记录）。 */
 const SCOPE_COVERAGE_TEXT: Record<SearchOutcome["scope"], string> = {
-  // `text` 档在用户/助手正文之外还含提问与回答的可读文本（见开发规范「提问与回答契约」）：
-  // 描述必须与检索单元一致，否则调用方会按"仅正文"低估覆盖面，把正文之外的 0 命中误读为不存在。
-  text: "用户/助手正文与提问/回答的可读文本",
-  tools: "另含工具参数与结果",
+  // 三档都必须把"已排除什么"写进描述：`text` 与 `show` 默认参数同口径（框架注入与调度回执已排除），
+  // `tools` 另排除调度回执，只有 `all` 是穷尽档。描述与检索单元必须一致，否则调用方会按错误的
+  // 覆盖面读 0 命中——把"被默认排除"读成"不存在"。
+  text: "用户/助手正文与提问/回答的可读文本（不含框架注入与子代理调度回执）",
+  tools: "另含工具参数与结果（不含框架注入与子代理调度回执）",
   all: "穷尽（另含推理/系统/压缩/命令/标题请求/web 请求/交付物/待办/代理信箱与每条事件载荷）",
 };
 
@@ -236,6 +237,14 @@ export function renderSearchMd(outcome: SearchOutcome): RenderedOutput {
   sections.push(
     `检索范围：${outcome.scope}（${SCOPE_COVERAGE_TEXT[outcome.scope]}）；命中总数 ${outcome.totalHits} 为精确值`,
   );
+  // 默认两档排除注入与回执：不声明排除量会让调用方把 0 命中读成"不存在"。`all` 档不做排除，
+  // 因此该行只在真有排除时出现（`all` 档恒为 0，不会输出）。
+  const excluded = outcome.excludedInjections;
+  if (excluded.userMessages > 0 || excluded.subagentReceipts > 0) {
+    sections.push(
+      `已排除 ${excluded.userMessages} 条框架注入与 ${excluded.subagentReceipts} 条子代理调度回执（--scope all 可检索）`,
+    );
+  }
   sections.push(...coverageSections(outcome.coverage));
   sections.push(...scanSections(outcome.scan));
   sections.push(...distributionSections(outcome.distribution));

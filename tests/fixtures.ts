@@ -454,7 +454,13 @@ function askSampleEvents(body: readonly AskFixtureEvent[], title: string): AskFi
       type: "user/message",
       seq: 1,
       time: 11,
-      data: { role: "user", content: [{ type: "text", text: `问答夹具提问前置 ${title}` }] },
+      // `source.kind` 必须给出：真实日志的 user/message 恒带 source，缺 source 的消息无法证明
+      // 它来自用户，默认可见性会排除它（判定见 visibility.ts）。
+      data: {
+        role: "user",
+        content: [{ type: "text", text: `问答夹具提问前置 ${title}` }],
+        source: { kind: "user" },
+      },
       surfaceOp: "append",
     },
   ];

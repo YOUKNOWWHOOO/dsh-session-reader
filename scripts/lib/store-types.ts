@@ -249,6 +249,17 @@ export interface SearchOutcome {
   readonly searchedSessions: number;
   readonly scope: "text" | "tools" | "all";
   /**
+   * 本次作用域内被默认可见性排除的注入条数（按类别分列）。
+   *
+   * 必须给出的理由：调用方看不到被排除的内容，若连"排除了多少条"都没有，就无法判断 `text` 档的
+   * 0 命中到底是"不存在"还是"被默认排除"，也无法判断是否需要改用 `--scope all` 取回。
+   * `--scope text` 与 `tools` 的排除量相同（两者都排除注入与回执）；`all` 档不做排除，此值恒为 0。
+   */
+  readonly excludedInjections: {
+    readonly userMessages: number;
+    readonly subagentReceipts: number;
+  };
+  /**
    * 命中总数是否为精确值。类型为字面量 `true`：证据链 ① 检索阶段对纳入会话不做任何提前终止
    * （`totalHits` 全量计数，`--limit` 只限制 `hits` 数组的收集）；② `scope=all` 时每个事件的
    * 完整 JSON 载荷都是检索单元，任意事件的任意字符串必然可命中；③ 未纳入的会话逐条列入

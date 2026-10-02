@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { attributeSource } from "../scripts/lib/message-source.ts";
 import { renderSearchJson, renderShowJson } from "../scripts/lib/render-json.ts";
 import { renderSearchMd } from "../scripts/lib/render-md.ts";
 import { runSearch } from "../scripts/lib/store-search.ts";
@@ -77,6 +78,7 @@ const EVENTS: Record<string, unknown>[] = [
     type: "user/message",
     seq: 6,
     time: 16,
+    // 缺 source 的形态：默认可见性会排除它（无法证明来源），需要 `--events` 才呈现标注。
     data: { role: "user", content: [{ type: "text", text: "正文 NOSOURCE" }] },
     surfaceOp: "append",
   },
@@ -120,9 +122,18 @@ function showText(overrides: Parameters<typeof showOptions>[0] = {}): string {
   return showMd(node([], EVENTS), showOptions(overrides)).content;
 }
 
+/**
+ * 来源标注能力必须在 `--events` 下验证：默认可见性只保留 `user`、`compact-checkpoint`、
+ * `subagent-settled`、`agent-message` 四种来源（见 visibility.ts），`plugin`、未知 kind 与缺失
+ * source 的消息默认被排除，因此标注能力需要显式显示被排除项才能观察到。
+ */
+function showTextWithInjections(overrides: Parameters<typeof showOptions>[0] = {}): string {
+  return showMd(node([], EVENTS), showOptions({ events: true, ...overrides })).content;
+}
+
 describe("md 标签行的来源标注", () => {
   it("用户本人的消息不标注，其它来源逐一标注，未知 kind 入行内载体", () => {
-    const content = showText();
+    const content = showTextWithInjections();
     assert.equal(content.includes("**用户**：\n\n```text\n正文 USER-OWN\n```"), true);
     assert.equal(content.includes("**用户**（来源 agent-message："), false);
     assert.equal(content.includes(`**用户**（来源 agent-message \`${SENDER}\`）：`), true);
@@ -136,7 +147,7 @@ describe("md 标签行的来源标注", () => {
   });
 
   it("敌意来源文本入行内载体：反引号使跨度加长、内嵌换行被折叠，标签行不被破坏", () => {
-    const content = showText();
+    const content = showTextWithInjections();
     assert.equal(content.includes("**用户**（来源 plugin ``bad` name``）："), true);
     // 标签行必须仍是单行：换行若未被折叠，`来源` 与 `）：` 会落在不同行。
     assert.match(content, /^\*\*用户\*\*（来源 plugin ``bad` name``）：$/mu);
@@ -182,7 +193,8 @@ describe("md 标签行的来源标注", () => {
         },
       },
     ];
-    const content = showMd(node([], events), showOptions()).content;
+    // 这些来源（空 kind、plugin、team-message）都被默认可见性排除，需 `--events` 才能观察标注。
+    const content = showMd(node([], events), showOptions({ events: true })).content;
     // 空串是无信息量的值：kind 空串等同于缺失，plugin 空串等同于没有该字段，都不产出空载体。
     assert.equal(content.includes("**用户**（来源 未标注）："), true);
     assert.equal(content.includes("**用户**（来源 plugin）："), true);
@@ -231,13 +243,27 @@ describe("json 归属对象", () => {
       senderSessionId: SENDER,
       plugin: null,
     });
-    assert.deepEqual(bySeq.get(4), {
-      kind: "plugin",
-      form: "snapshot",
-      senderSessionId: null,
-      plugin: "@deepseek-ai/dsh-system-prompt",
-    });
-    assert.deepEqual(bySeq.get(6), {
+    // seq 4（plugin 注入）与 seq 6（缺 source）不在 `messages` 里：默认可见性排除了它们，
+    // 与 md 时间线、`search` 的 `text` 档同口径（判定见 visibility.ts）。这两类来源的归属对象
+    // 形态由下一个用例直接对 `attributeSource` 断言——归属对象的构造不依赖是否被默认排除。
+  });
+
+  it("归属对象对不分来源种类都给出四个字段（含被默认排除的种类）", () => {
+    assert.deepEqual(
+      attributeSource({
+        kind: "plugin",
+        form: "snapshot",
+        plugin: "@deepseek-ai/dsh-system-prompt",
+      }),
+      {
+        kind: "plugin",
+        form: "snapshot",
+        senderSessionId: null,
+        plugin: "@deepseek-ai/dsh-system-prompt",
+      },
+    );
+    // 缺 source：四个字段全为 null，绝不猜测来源。
+    assert.deepEqual(attributeSource(undefined), {
       kind: null,
       form: null,
       senderSessionId: null,
@@ -271,6 +297,7 @@ describe("json 归属对象", () => {
       searchedSessions: 1,
       scope: "text",
       totalIsExact: true,
+      excludedInjections: { userMessages: 0, subagentReceipts: 0 },
       coverage: { scannedCount: 1, includedCount: 1, excluded: [] },
       scan: {
         logsDecoded: 1,
@@ -327,6 +354,7 @@ describe("检索命中行的来源标注", () => {
       searchedSessions: 1,
       scope: "text",
       totalIsExact: true,
+      excludedInjections: { userMessages: 0, subagentReceipts: 0 },
       coverage: { scannedCount: 1, includedCount: 1, excluded: [] },
       scan: {
         logsDecoded: 1,

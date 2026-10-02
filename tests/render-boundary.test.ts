@@ -148,6 +148,7 @@ describe("render 边界与分支", () => {
       searchedSessions: 1,
       scope: "text",
       totalIsExact: true,
+      excludedInjections: { userMessages: 0, subagentReceipts: 0 },
       coverage: coverage({ includedCount: 1 }),
       scan: scanSummary(),
       distribution: [],
@@ -192,6 +193,7 @@ describe("render 边界与分支", () => {
       searchedSessions: 3,
       scope: "all",
       totalIsExact: true,
+      excludedInjections: { userMessages: 0, subagentReceipts: 0 },
       coverage: coverage({ includedCount: 3, excluded: [{ id: "x-09", reason: "解码失败" }] }),
       scan: scanSummary({
         logsDecoded: 3,
@@ -253,6 +255,7 @@ describe("render 边界与分支", () => {
       searchedSessions: 0,
       scope: "text",
       totalIsExact: true,
+      excludedInjections: { userMessages: 0, subagentReceipts: 0 },
       coverage: coverage(),
       scan: scanSummary(),
       distribution: [],
@@ -318,7 +321,11 @@ describe("render 边界与分支", () => {
         type: "user/message",
         seq: (turn - 1) * 2 + 1,
         time: turn,
-        data: { role: "user", content: [{ type: "text", text: `第 ${turn} 轮正文`.repeat(40) }] },
+        data: {
+          role: "user",
+          content: [{ type: "text", text: `第 ${turn} 轮正文`.repeat(40) }],
+          source: { kind: "user" },
+        },
       });
     }
     const full = showMd(node([], manyEvents), showOptions());
@@ -465,7 +472,11 @@ describe("render 边界与分支", () => {
         type: "user/message",
         seq: 0,
         time: 10,
-        data: { role: "user", content: [{ type: "text", text: "line1\r\nline2\rline3" }] },
+        data: {
+          role: "user",
+          content: [{ type: "text", text: "line1\r\nline2\rline3" }],
+          source: { kind: "user" },
+        },
       },
     ];
     const rendered = showMd(node([], events), showOptions());

@@ -8,6 +8,19 @@
 
 > 当前阶段：Active Development
 
+### Added
+
+- 默认导出的时间线新增 `**子代理任务**（<description>）` 与 `**发往子代理**（<子代理 id>）` 两类条目：主代理发给子代理的任务正文（`subagent` 的 `arguments.prompt`）与后续消息正文（`send_message` 的 `arguments.message`），默认可见且不受 `--tools` 控制，并取代对应调用的原始工具条目。
+- 产物摘要行新增排除声明：`show` 给出 `已排除 N 条框架注入（--events 显示）` 与 `已排除 M 条子代理调度回执（--tools 显示）`；`search` 在 `text`/`tools` 档给出 `已排除 N 条框架注入与 M 条子代理调度回执（--scope all 可检索）`。
+
+### Changed
+
+- 默认参数下不再保留框架与插件自动注入的消息：`runtime-context`（运行时上下文快照）、`skill-catalog`（技能目录）、`tool-jobs`（后台任务完成通知）、`model-selection`（模型切换通知）等一律排除；保留名单为 `user`、`compact-checkpoint`、`subagent-settled`、`agent-message` 四种来源，来源缺失或为空的 `user/message` 同样排除。判定按日志字段（`data.source.kind`、事件类型、工具 `name`/`callId`），与正文文案无关。
+- 子代理调度回执（`started subagent <id>`）默认不呈现，`--tools` 打开时作为工具结果出现；`subagent/catalog` 登记事件保持默认隐藏。
+- 默认检索范围 `--scope text` 与 `show` 默认参数改为同一可见性：注入消息与调度回执在 `text` 档不可命中，`tools` 档不含调度回执；`--scope all` 仍是取回被排除内容的入口。
+- `show --format json` 的 `messages` 与默认视图同口径；`--format jsonl` 保持逐事件穷尽，不做可见性过滤。
+- 时间线标签词表由 10 个取值扩展为 12 个；结构门禁白名单、`SKILL.md` 与测试断言同步。
+
 ## [0.2.0] - 2026-10-02
 
 ### Added

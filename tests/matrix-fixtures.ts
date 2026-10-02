@@ -121,7 +121,12 @@ function ev(
   data: Record<string, unknown>,
   extra?: { readonly surfaceOp?: unknown; readonly sourceEventSeqs?: readonly number[] },
 ): FixtureEvent {
-  return { type, seq, time, data, ...extra };
+  // 真实日志的 user/message 恒带 source，缺 source 无法证明来源，默认可见性会排除它（见 visibility.ts
+  // 的 isInjectedUserMessage）。夹具因此统一补上 `{ kind: "user" }`；需要缺 source 形态的用例
+  // 必须显式传一个 `source` 键（传 undefined 也会被视为已声明），以免本补全把它掩盖掉。
+  const withSource =
+    type === "user/message" && !("source" in data) ? { ...data, source: { kind: "user" } } : data;
+  return { type, seq, time, data: withSource, ...extra };
 }
 
 /** 主会话事件：把敌意内容分散注入到消息/工具/系统/压缩/命令/标题请求/web/交付物字段。 */

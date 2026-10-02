@@ -33,6 +33,7 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
       searchedSessions: 2,
       scope: "all",
       totalIsExact: true,
+      excludedInjections: { userMessages: 0, subagentReceipts: 0 },
       coverage: coverage({ includedCount: 2 }),
       scan: scanSummary(),
       distribution: [],
@@ -70,6 +71,7 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
       searchedSessions: 1,
       scope: "text",
       totalIsExact: true,
+      excludedInjections: { userMessages: 0, subagentReceipts: 0 },
       coverage: coverage({
         includedCount: 1,
         excluded: [{ id: "session-bad-09", reason: "解码失败" }],
