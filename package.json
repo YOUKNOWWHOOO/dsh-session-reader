@@ -1,7 +1,7 @@
 {
   "name": "dsh-session-reader",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "license": "MIT",
   "description": "读取、列出、检索、统计与校验 dsh 会话历史的技能（只读、离线、无构建步骤；本文件仅供开发期工具链使用，运行时不依赖任何安装）",

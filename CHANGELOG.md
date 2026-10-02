@@ -6,7 +6,7 @@
 
 ## [Unreleased]
 
-> 当前阶段：Active Development
+## [0.3.0] - 2026-10-02
 
 ### Added
 
@@ -82,6 +82,7 @@
 - 文件操作限定在只读会话与投影缓存、只写 `--output-dir` 指定目录的范围。
 - 不修改 dsh 数据，不建立任何形式的缓存。
 
-[Unreleased]: https://github.com/YOUKNOWWHOOO/dsh-session-reader/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/YOUKNOWWHOOO/dsh-session-reader/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/YOUKNOWWHOOO/dsh-session-reader/releases/tag/v0.3.0
 [0.2.0]: https://github.com/YOUKNOWWHOOO/dsh-session-reader/releases/tag/v0.2.0
 [0.1.0]: https://github.com/YOUKNOWWHOOO/dsh-session-reader/releases/tag/v0.1.0
