@@ -2,12 +2,11 @@
 // 断言 stdout 两行契约、输出文件行数一致、退出码、错误分类与输出策略。
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { countLines, defaultLibRoot, resolveDshHome } from "../scripts/lib/paths.ts";
+import { countLines, defaultLibRoot } from "../scripts/lib/paths.ts";
 import { writeOutputFile } from "../scripts/session-reader.ts";
 import {
   CURRENT_LOG_VERSION,
@@ -18,11 +17,11 @@ import {
 } from "./fixtures.ts";
 
 const SCRIPT = fileURLToPath(new URL("../scripts/session-reader.ts", import.meta.url));
-const LIB_ROOT = defaultLibRoot(resolveDshHome(undefined, process.env, homedir()));
+const LIB_ROOT = defaultLibRoot();
 // 该套用例要用真实的官方格式库；定位不到时立刻失败并给出原因，不进入后续以 undefined 为入参的路径。
 if (LIB_ROOT === undefined) {
   throw new Error(
-    "默认锚点未能唯一确定官方格式库，cli.test.ts 无法运行；请用 --lib-root 或修复安装树定位",
+    "默认锚点未能定位桌面版安装内的官方格式库，cli.test.ts 无法运行；请用 --lib-root 或修复安装树定位",
   );
 }
 const TEMP_ROOT = fileURLToPath(new URL("./.tmp/cli", import.meta.url));
@@ -44,7 +43,9 @@ function runCli(args: readonly string[], env?: NodeJS.ProcessEnv): CliResult {
   const result = spawnSync(process.execPath, [SCRIPT, ...args], {
     encoding: "utf8",
     timeout: 120_000,
-    ...(env === undefined ? {} : { env: { ...process.env, ...env } }),
+    // process.execPath 可能是桌面版 Electron 可执行文件（技能在桌面 Electron-as-Node 下运行时）；
+    // 该变量让子进程以 Node 形态运行。普通 Node 会忽略它，因此两种宿主下都安全。
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ...env },
   });
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 }
@@ -73,7 +74,7 @@ function readContract(stdout: string): OutputContract {
 function requireLibRoot(): string {
   if (LIB_ROOT === undefined) {
     throw new Error(
-      "默认锚点未能唯一确定官方格式库，cli.test.ts 无法运行；请修复安装树定位或用 --lib-root 指定",
+      "默认锚点未能定位桌面版安装内的官方格式库，cli.test.ts 无法运行；请修复安装树定位或用 --lib-root 指定",
     );
   }
   return LIB_ROOT;
@@ -412,15 +413,8 @@ before(() => {
   writeFixtureHome(HEALTHY_HOME, healthySpec());
   writeFixtureHome(BROKEN_HOME, brokenSpec());
   mkdirSync(OUT_DIR, { recursive: true });
-  // 默认组合测试用：夹具 dsh-home 内建立官方库解析锚点（Junction 指向本机真实库；
-  // 清理安全已实测：rmSync 递归删除仅移除链接本身，不触碰目标）。
-  const fixtureLibParent = join(HEALTHY_HOME, "profiles", "node_modules", "@deepseek-ai");
-  mkdirSync(fixtureLibParent, { recursive: true });
-  symlinkSync(
-    join(requireLibRoot(), "@deepseek-ai", "dsh-session-format-catalog"),
-    join(fixtureLibParent, "dsh-session-format-catalog"),
-    "junction",
-  );
+  // 默认组合测试不再需要在夹具 dsh-home 内造库锚点：默认锚点是桌面版安装内的绝对路径，
+  // 与夹具主目录无关；需要显式指定时由 baseArgs 传 --lib-root。
 });
 
 describe("CLI 帮助与参数校验", () => {
@@ -435,7 +429,8 @@ describe("CLI 帮助与参数校验", () => {
     ]) {
       const result = runCli(args);
       assert.equal(result.status, 0, `help 失败: ${args.join(" ")}`);
-      assert.match(result.stdout, /用法: node session-reader\.ts/u);
+      assert.match(result.stdout, /用法: <desktop_node> scripts\/session-reader\.ts/u);
+      assert.match(result.stdout, /桌面版 Electron-as-Node/u);
     }
   });
 
@@ -1166,6 +1161,17 @@ describe("默认参数组合（默认调用）", () => {
     assert.match(content, /摘要：已隐藏 1 条推理内容（--thinking 显示）/u);
     assert.match(content, /已隐藏 2 条工具调用\/结果（--tools 显示）/u);
     assert.match(content, /已隐藏 \d+ 条生命周期事件（--events 显示）/u);
+  });
+
+  it("search 与 stats：默认锚点同样可用（不传 --lib-root）", () => {
+    const searched = runCli(["search", "hello", "--output-dir", OUT_DIR], {
+      DSH_HOME: HEALTHY_HOME,
+    });
+    assert.equal(searched.status, 0, searched.stderr);
+    assert.equal(readContract(searched.stdout).path.endsWith(".md"), true);
+    const stats = runCli(["stats", "--output-dir", OUT_DIR], { DSH_HOME: HEALTHY_HOME });
+    assert.equal(stats.status, 0, stats.stderr);
+    assert.equal(readContract(stats.stdout).path.endsWith(".md"), true);
   });
 });
 

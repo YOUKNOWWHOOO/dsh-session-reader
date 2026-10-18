@@ -100,7 +100,8 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * 从 `--lib-root`（默认 `<dsh-home>\profiles\node_modules`）解析并加载官方格式库。
+ * 从 `--lib-root`（默认取桌面版安装内 `app.asar\dsh\node_modules`，见 `paths.ts` 的 `defaultLibRoot`）
+ * 解析并加载官方格式库。解析锚点为 asar 虚拟路径时，只有桌面 Electron-as-Node 能读取它。
  * 失败返回 Result 错误（调用方映射为退出码 3）。
  */
 export async function loadCatalog(libRoot: string): Promise<Result<SessionFormatCatalog, string>> {

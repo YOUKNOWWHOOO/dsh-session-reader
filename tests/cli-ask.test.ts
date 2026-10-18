@@ -5,12 +5,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { ASK_USER_PAYLOAD_MISMATCH_REASON } from "../scripts/lib/ask-user.ts";
-import { defaultLibRoot, resolveDshHome } from "../scripts/lib/paths.ts";
+import { defaultLibRoot } from "../scripts/lib/paths.ts";
 import {
   askSampleErrorResult,
   askSampleMalformed,
@@ -21,11 +20,11 @@ import {
 } from "./fixtures.ts";
 
 const SCRIPT = fileURLToPath(new URL("../scripts/session-reader.ts", import.meta.url));
-const LIB_ROOT = defaultLibRoot(resolveDshHome(undefined, process.env, homedir()));
+const LIB_ROOT = defaultLibRoot();
 // 该套用例要用真实的官方格式库；定位不到时立刻失败，不进入后续以 undefined 为入参的路径。
 if (LIB_ROOT === undefined) {
   throw new Error(
-    "默认锚点未能唯一确定官方格式库，cli-ask.test.ts 无法运行；请用 --lib-root 或修复安装树定位",
+    "默认锚点未能定位桌面版安装内的官方格式库，cli-ask.test.ts 无法运行；请用 --lib-root 或修复安装树定位",
   );
 }
 const TEMP_ROOT = fileURLToPath(new URL("./.tmp/cli-ask", import.meta.url));
@@ -48,6 +47,9 @@ function runCli(args: readonly string[]): CliResult {
   const result = spawnSync(process.execPath, [SCRIPT, ...args], {
     encoding: "utf8",
     timeout: 120_000,
+    // process.execPath 可能是桌面版 Electron 可执行文件；该变量让子进程以 Node 形态运行
+    // （普通 Node 忽略它）。
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
   });
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 }

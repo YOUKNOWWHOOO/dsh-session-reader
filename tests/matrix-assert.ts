@@ -525,6 +525,9 @@ export function runLint(
     const result = spawnSync(process.execPath, [markdownlintJs, "--config", lintConfig, ...files], {
       encoding: "utf8",
       timeout: 600_000,
+      // process.execPath 可能是桌面版 Electron 可执行文件；该变量让子进程以 Node 形态运行
+      // （普通 Node 忽略它）。
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
       // 以被 lint 目录为工作目录：避免 .markdownlintignore 的相对路径匹配在跨根路径上报错，
       // 该次门禁的对象就是 outDir 内的产物本身。
       cwd: outDir,

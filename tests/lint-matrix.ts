@@ -1,8 +1,8 @@
 // 全组合穷尽 lint 门禁（f2 lint 合规 spike §5 方案的可执行实现）。
 // 目的：证明"任意会话内容 × 任意有效参数组合"生成的 md 产物真实通过全局 markdownlint 基线，
 // 并对 json/jsonl 做结构回归、对手写结构白名单做断言、对确定性/错误路径做验证。
-// 用法（Windows；Node v26 原生执行 TypeScript）：
-//   node tests/lint-matrix.ts --workdir <工作目录> [--lint-config <markdownlint 配置>]
+// 用法（Windows；桌面版 Electron-as-Node 原生执行 TypeScript）：
+//   <desktop_node> tests/lint-matrix.ts --workdir <工作目录> [--lint-config <markdownlint 配置>]
 //                             [--markdownlint-js <markdownlint-cli 入口 js>]
 //                             [--real-home <dsh 主目录>] [--skip-real]
 // 判据：脚本退出 0 当且仅当全部断言通过；md 产物 lint 必须退出 0 且 stdout/stderr 无输出。
@@ -12,7 +12,7 @@
 //       <workdir>/matrix-summary.json（逐组合结果）、<workdir>/lint-output.txt。
 // 工作目录内只清理/重建上述固定子路径；真实 dsh 主目录全程只读。
 //
-// 模块划分（拆分后每个文件 ≤1200 行；入口仍是 node tests/lint-matrix.ts）：
+// 模块划分（拆分后每个文件 ≤1200 行；入口仍是 <desktop_node> tests/lint-matrix.ts）：
 //   tests/matrix-paths.ts       共享路径与运行时锚点（技能根/CLI 入口/lint 配置/官方库锚点/超时）
 //   tests/matrix-fixtures.ts    敌意内容集、会话夹具定义、合成 DSH_HOME 构造与字段注入
 //   tests/matrix-cases.ts       组合矩阵词汇表与 list/show 组合定义
@@ -69,6 +69,9 @@ function runRaw(args: readonly string[]): {
   const result = spawnSync(process.execPath, [SESSION_READER, ...args], {
     encoding: "utf8",
     timeout: RUN_TIMEOUT_MS,
+    // process.execPath 可能是桌面版 Electron 可执行文件；该变量让子进程以 Node 形态运行
+    // （普通 Node 忽略它）。
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
   });
   return {
     status: result.status,
@@ -228,7 +231,7 @@ async function main(argv: readonly string[]): Promise<number> {
   const options = parseOptions(argv);
   if (options === null) {
     process.stderr.write(
-      "用法: node tests/lint-matrix.ts --workdir <目录> [--lint-config <配置>] [--markdownlint-js <入口>] [--real-home <dsh 主目录>] [--skip-real]\n",
+      "用法: <desktop_node> tests/lint-matrix.ts --workdir <目录> [--lint-config <配置>] [--markdownlint-js <入口>] [--real-home <dsh 主目录>] [--skip-real]\n",
     );
     return 2;
   }
@@ -242,7 +245,7 @@ async function main(argv: readonly string[]): Promise<number> {
   if (!options.skipReal && !existsSync(options.realHome)) {
     throw new Error(`真实 dsh 主目录不存在: ${options.realHome}`);
   }
-  const { healthyHome, brokenHome, outDir } = buildFixtureHomes(options.workdir, resolvedLibRoot);
+  const { healthyHome, brokenHome, outDir } = buildFixtureHomes(options.workdir);
 
   const ctx: MatrixContext = {
     workdir: options.workdir,

@@ -91,8 +91,8 @@ function eventLine(event: FixtureEvent): string {
   const record: Record<string, unknown> = {
     type: event.type,
     seq: event.seq,
-    // v4 要求时间戳是安全整数；非整数会让该行被解码器丢弃，进而以「输入 N 行、解码得到 M 个事件」
-    // 的一致性校验失败告终，而报错位置离根因很远。
+    // v4 要求时间戳是安全整数；非整数或非有限数会在序列化时变成 null，该行随即被解码器判为
+    // 结构违规并让整份日志解码失败，而报错位置离根因很远。
     time: Math.trunc(Number(event.time)),
     data: event.data,
   };

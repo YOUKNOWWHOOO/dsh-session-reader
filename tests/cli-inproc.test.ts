@@ -1,11 +1,10 @@
 // CLI 入口进程内测试：解析/校验/帮助/输出落盘/主流程（覆盖子进程测试无法计入的分支）。
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { before, describe, it, mock } from "node:test";
 import { fileURLToPath } from "node:url";
-import { defaultLibRoot, resolveDshHome } from "../scripts/lib/paths.ts";
+import { defaultLibRoot } from "../scripts/lib/paths.ts";
 import {
   buildCommandHelp,
   buildGeneralHelp,
@@ -25,10 +24,12 @@ import {
 const TEMP_ROOT = fileURLToPath(new URL("./.tmp/inproc", import.meta.url));
 const HOME = join(TEMP_ROOT, "dsh");
 const OUT_DIR = join(TEMP_ROOT, "out");
-const LIB_ROOT = defaultLibRoot(resolveDshHome(undefined, process.env, homedir()));
+const LIB_ROOT = defaultLibRoot();
 // 该套用例要用真实的官方格式库；定位不到时立刻失败并给出原因，不进入后续以 undefined 为入参的路径。
 if (LIB_ROOT === undefined) {
-  throw new Error("默认锚点未能唯一确定官方格式库，cli-inproc.test.ts 无法运行；请修复安装树定位");
+  throw new Error(
+    "默认锚点未能定位桌面版安装内的官方格式库，cli-inproc.test.ts 无法运行；请修复安装树定位",
+  );
 }
 
 function ev(
@@ -203,12 +204,14 @@ describe("parseCommandLine", () => {
 
   it("帮助文本与选项表同源", () => {
     const listHelp = buildCommandHelp(COMMANDS[0]);
-    assert.match(listHelp, /用法: node session-reader\.ts list/u);
+    assert.match(listHelp, /用法: <desktop_node> scripts\/session-reader\.ts list/u);
     assert.match(listHelp, /--output-dir/u);
     assert.match(listHelp, /选项终止符/u);
     const general = buildGeneralHelp();
+    assert.match(general, /用法: <desktop_node> scripts\/session-reader\.ts <命令> \[选项\]/u);
     for (const command of COMMANDS) assert.equal(general.includes(command.name), true);
     assert.match(general, /选项终止符/u);
+    for (const text of [listHelp, general]) assert.match(text, /桌面版 Electron-as-Node/u);
   });
 
   it("validateCommandOptions：show 组合约束与 stats 范围过滤约束", () => {

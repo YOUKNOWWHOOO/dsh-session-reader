@@ -1,8 +1,8 @@
-// 路径、时间与输出命名工具：DSH_HOME 解析、sessions 根、lib 锚点、时间解析/格式化、路径归一化、
-// 输出文件名（时间戳命名与调用方指定的 basename）、`--name` 与区间参数校验。
+// 路径、时间与输出命名工具：DSH_HOME 解析、sessions 根、桌面安装内的格式库锚点、时间解析/格式化、
+// 路径归一化、输出文件名（时间戳命名与调用方指定的 basename）、`--name` 与区间参数校验。
 // 本模块不依赖其它 lib 模块（最底层），Result 类型在此定义并被其它模块复用。
 import { randomInt } from "node:crypto";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 /** 统一的 Result 风格错误返回；error 为内部诊断文本，绝不直接输出到 stderr。 */
@@ -27,94 +27,59 @@ export function sessionsRoot(dshHome: string): string {
   return join(dshHome, "sessions");
 }
 
-/** `profiles/node_modules` 下的官方作用域目录（旧布局的解析锚点）。 */
-function profilesScopeDir(dshHome: string): string {
-  return join(dshHome, "profiles", "node_modules", "@deepseek-ai");
-}
-
-/** npm 缓存下 npx 临时安装的父目录名；目录名本身（checkout 哈希）不写死。 */
-const NPX_CACHE_DIR = "_npx";
+/** Windows 桌面版安装目录名（Electron 安装根下的产品目录名）。 */
+const DESKTOP_INSTALL_DIR_NAME = "DeepSeek Harness";
 /** 探测安装树时使用的锚点包：它必定存在于 dsh 实际使用的那棵树里。 */
 const INSTALL_ANCHOR_PACKAGE = "dsh";
 /** 本技能加载官方格式库所需的包名（限定在 `@deepseek-ai` 作用域内）。 */
 const LIBRARY_PACKAGE = "dsh-session-format-catalog";
 
 /**
- * npm 缓存根目录。
+ * Windows 桌面版安装内 dsh 的 `node_modules` 路径。
  *
- * 默认 `%LOCALAPPDATA%\npm-cache`（Windows 上 npm 的默认缓存位置），可用 `npm_config_cache`
- * 覆盖。返回 undefined 表示无法定位（既没有该环境变量，也没有 `LOCALAPPDATA`）。
+ * `app.asar` 是 Electron 归档文件，其内部路径只在桌面运行时（桌面 Electron-as-Node）可解析；
+ * 此处只做路径拼接，不假设系统 Node 能解析它。
  */
-function npmCacheDir(env: NodeJS.ProcessEnv): string | undefined {
-  const fromEnv = env.npm_config_cache;
-  if (fromEnv !== undefined && fromEnv.length > 0) return fromEnv;
-  const localAppData = env.LOCALAPPDATA;
-  if (localAppData === undefined || localAppData.length === 0) return undefined;
-  return join(localAppData, "npm-cache");
+function desktopInstallNodeModules(localAppData: string): string {
+  return join(
+    localAppData,
+    "Programs",
+    DESKTOP_INSTALL_DIR_NAME,
+    "resources",
+    "app.asar",
+    "dsh",
+    "node_modules",
+  );
 }
 
-/** 判定一个 npx checkout 目录是否是「同时含安装锚点包与官方格式库」的安装树，是则返回其 node_modules。 */
-function checkoutNodeModules(npxRoot: string, checkout: string): string | undefined {
-  const nodeModules = join(npxRoot, checkout, "node_modules");
+/**
+ * 官方格式库默认解析锚点：**Windows 桌面版安装内的 `app.asar\dsh\node_modules`**。
+ *
+ * 为什么不再探测 npm 缓存的 npx 安装树或 `<dsh-home>\profiles\node_modules`：默认库来源是随桌面版
+ * 发行的那一份，桌面安装归档是该来源的**唯一权威位置**；另两处只取决于某次安装或运行的历史痕迹，
+ * 是否恰好存在与版本都随本机状态漂移，因此既不能保证与桌面版同版，也不能作为锚点判据。默认形态
+ * 是**唯一锚点**——找不到就是找不到，不回落任何其它目录。
+ *
+ * 锚点判定与旧探测同源：该 `node_modules` 必须同时含 `@deepseek-ai/dsh` 与
+ * `@deepseek-ai/dsh-session-format-catalog` 的 `package.json`，否则返回 undefined，由调用方给出
+ * 可执行的诊断。调用方也可用 `--lib-root` 显式指定。
+ *
+ * @param env 提供 `LOCALAPPDATA` 的环境（默认 `process.env`）；缺少有效取值时无法定位。
+ * @param platform 用于判定是否为 Windows 桌面版安装（默认 `process.platform`）。
+ * @returns 可直接作为 `libRoot` 的目录，或 undefined（本环境未能定位）。
+ */
+export function defaultLibRoot(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string | undefined {
+  if (platform !== "win32") return undefined;
+  const localAppData = env.LOCALAPPDATA;
+  if (localAppData === undefined || localAppData.length === 0) return undefined;
+  const nodeModules = desktopInstallNodeModules(localAppData);
   const scope = join(nodeModules, "@deepseek-ai");
   const hasAnchor = existsSync(join(scope, INSTALL_ANCHOR_PACKAGE, "package.json"));
   const hasLibrary = existsSync(join(scope, LIBRARY_PACKAGE, "package.json"));
   return hasAnchor && hasLibrary ? nodeModules : undefined;
-}
-
-/**
- * 在 npm 缓存的 npx 目录下找出「同时含安装锚点包与官方格式库」的 node_modules 目录。
- *
- * 判据与 dsh 自身的安装锚点同源：dsh 的锚点是它自己的 `package.json`（`@deepseek-ai/dsh`），
- * 因此逐个 checkout 探这两个包目录即可，不必写死 checkout 名（那是 npm 依包规格算出的哈希）。
- * @returns 命中的绝对路径数组（0、1 或多个）；无法定位 npm 缓存时为空数组。
- */
-function installNodeModulesCandidates(dshHome: string, env: NodeJS.ProcessEnv): readonly string[] {
-  const hits: string[] = [];
-  const legacy = profilesScopeDir(dshHome);
-  const cacheRoot = npmCacheDir(env);
-  if (cacheRoot !== undefined) {
-    const npxRoot = join(cacheRoot, NPX_CACHE_DIR);
-    if (existsSync(npxRoot)) {
-      try {
-        for (const entry of readdirSync(npxRoot, { withFileTypes: true })) {
-          if (!entry.isDirectory()) continue;
-          const nodeModules = checkoutNodeModules(npxRoot, entry.name);
-          if (nodeModules !== undefined) hits.push(nodeModules);
-        }
-      } catch {
-        // 读不到该缓存不影响其它候选：继续走后面的旧布局判定，不静默返回空。
-      }
-    }
-  }
-  // 旧布局（`<dsh-home>/profiles/node_modules`）只在其作用域目录同时含这两个包时才参与。
-  if (
-    existsSync(join(legacy, INSTALL_ANCHOR_PACKAGE, "package.json")) &&
-    existsSync(join(legacy, LIBRARY_PACKAGE, "package.json"))
-  ) {
-    hits.push(join(dshHome, "profiles", "node_modules"));
-  }
-  return hits;
-}
-
-/**
- * 官方格式库默认解析锚点：**含 `@deepseek-ai` 作用域目录的 `node_modules`**。
- *
- * 为什么不能直接返回 `<dsh-home>/profiles/node_modules`：dsh 自 `0.1.7-rc.2` 起不再在该位置
- * 建 junction 链接农场（本机该目录已整体消失），新布局下 profile 依赖由 pnpm 管理、模块解析走
- * 运行时拦截层。因此这里按 dsh 自身的安装锚点探测实际在用的安装树。
- *
- * 命中数不是 1 时返回 undefined，由调用方给出可执行的诊断——**不挑一个用**：挑错会让后续解码
- * 用错版本的格式库，而那时错误已经离根因很远。调用方也可用 `--lib-root` 显式指定。
- * @returns 可直接作为 `libRoot` 的目录，或 undefined（本环境未能唯一确定）。
- */
-export function defaultLibRoot(
-  dshHome: string,
-  env: NodeJS.ProcessEnv = process.env,
-): string | undefined {
-  const hits = installNodeModulesCandidates(dshHome, env);
-  if (hits.length !== 1) return undefined;
-  return hits[0];
 }
 
 /** 路径比较用归一化：反斜杠转正斜杠、去尾部斜杠、转小写（大小写不敏感）。 */

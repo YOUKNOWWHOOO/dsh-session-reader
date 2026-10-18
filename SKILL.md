@@ -9,9 +9,10 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 
 ## 运行前提
 
-- 平台：Windows；PATH 中需有 Node（v26 线，原生执行 TypeScript，无需构建）。
-- 本机需有 dsh 安装（提供官方格式库与会话数据）。主目录默认 `$DSH_HOME`，否则 `~\.dsh`，可用 `--dsh-home` 覆盖；该路径不存在、或其下缺 `sessions\` 时退出 1。
-- 官方格式库的默认解析锚点按 dsh 自身的安装锚点探测：在 npm 缓存的 npx 目录下找同时含 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-session-format-catalog` 的 `node_modules`，命中数必须恰好 1；`<dsh-home>\profiles\node_modules` 只在它同时含这两个包时才参与。当前 DSH `0.2.0-rc.2` 的历史读取还要求 `historicalSessionFormatCatalog`、`createSessionFormatCatalogWithChildren` 与 `historicalChildCatalogSource`，缺少任一能力即退出 3，禁止降级为静态 catalog。可用 `--lib-root <目录>` 覆盖（取值必须是含 `@deepseek-ai` 的 `node_modules`）；无法唯一定位或库加载失败时退出 3。
+- 平台：Windows。
+- 执行载体必须是**桌面版 Electron-as-Node**：官方格式库位于桌面版安装归档的虚拟路径 `%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\app.asar\dsh\node_modules` 内，只有桌面运行时可解析该路径。可用的等价载体：`"$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\bin\node.cmd"`（该 shim 设置 `ELECTRON_RUN_AS_NODE=1` 并转发 `--expose-internals`，要求 `DSH_DESKTOP_NODE_EXECUTABLE` 指向桌面版可执行文件），或自行设置 `ELECTRON_RUN_AS_NODE=1` 后直接调用桌面版可执行文件并附 `--expose-internals`（按 shim 的做法；实测默认锚点下不附也能完成一次 `list`，故它按 shim 的一致性保留，而非硬性前提）。PATH 中的系统 Node（v26 线）能原生执行 TypeScript，但**解析不了 `app.asar` 内的虚拟路径**（其 `existsSync` 对归档内路径恒为 false），默认锚点因此必然定位不到，以 `内部错误`、退出 3 失败，本技能不承诺这种用法。在 PowerShell 中调用时优先用该 shim：它是 `.cmd`，PowerShell 会等待它并回传退出码。若改为直接调用桌面版可执行文件，必须自行设置 `ELECTRON_RUN_AS_NODE=1` 并按 shim 的做法附 `--expose-internals`，并且不要用裸 `&` 调用：桌面版可执行文件是 GUI 子系统程序，裸 `&` 不等待进程，stdout 与 `$LASTEXITCODE` 都取不到（实测），需要退出码时用 `Start-Process -Wait -PassThru`。
+- 本机需有 dsh 安装（提供官方格式库与会话数据）。主目录默认 `$DSH_HOME`，否则 `~\.dsh`，可用 `--dsh-home` 覆盖；该路径不存在、或其下缺 `sessions\` 时退出 1。`--dsh-home` 只选数据根（`sessions` 与投影缓存所在），**不改变库的来源与版本**：官方格式库恒为桌面版安装内那一份（或 `--lib-root` 显式覆盖的那一份），因此指向另一份会话数据时两边版本各随其安装，错配只会以解码失败暴露（聚合命令逐条列入排除项、单目标命令退出 3）。
+- 官方格式库的默认解析锚点固定为桌面版安装内的 `node_modules`（由 `%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\app.asar\dsh\node_modules` 派生）：该目录必须同时含 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-session-format-catalog`；这是**唯一默认锚点，不带任何回退**——缺少 `%LOCALAPPDATA%`、非 Windows 或该锚点不成立即退出 3 并说明。当前 DSH `0.2.1-rc.2` 的历史读取还要求 `historicalSessionFormatCatalog`、`createSessionFormatCatalogWithChildren` 与 `historicalChildCatalogSource`，缺少任一能力即退出 3，禁止降级为静态 catalog。可用 `--lib-root <目录>` 覆盖（取值必须是含 `@deepseek-ai` 的 `node_modules`，用于桌面版安装布局不同或开发期指向真实目录的场景）；锚点不成立或库加载失败时退出 3。
 - 全部命令必须显式指定 `--output-dir`，缺省退出 2。
 
 ## 输出使用规定
@@ -79,27 +80,27 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 
 ## 命令
 
-脚本路径相对本技能目录；示例中的 `<project_tmp>` 为项目临时目录占位符。
+脚本路径相对本技能目录；示例中的 `<project_tmp>` 为项目临时目录占位符，`<desktop_node>` 为「运行前提」登记的桌面版 Electron-as-Node 执行载体，示例以其中唯一的 shim（`runtime\bin\node.cmd`，要求预先设置 `DSH_DESKTOP_NODE_EXECUTABLE`）为准；直接用 PATH 中的系统 `node` 解析不了 `app.asar` 内的虚拟路径）。
 
 ```text
-node scripts/session-reader.ts list   --output-dir <project_tmp> [--name <basename>] [--workspace <路径|标题>]
+<desktop_node> scripts/session-reader.ts list   --output-dir <project_tmp> [--name <basename>] [--workspace <路径|标题>]
                                       [--since <时间>] [--until <时间>] [--title <关键词>]
                                       [--origin all|main|subagent] [--include-blank] [--limit N]
                                       [--sort time|created|title|size|turns] [--full] [--format md|json]
-node scripts/session-reader.ts show   <id|唯一前缀|last> --output-dir <project_tmp> [--name <basename>] [--summary]
+<desktop_node> scripts/session-reader.ts show   <id|唯一前缀|last> --output-dir <project_tmp> [--name <basename>] [--summary]
                                       [--role user|assistant] [--thinking] [--tools] [--events] [--subagents]
                                       [--headers] [--truncate N] [--turn <A-B|A>] [--seq <A-B|A>]
                                       [--head N] [--tail N] [--probe] [--format md|json|jsonl]
-node scripts/session-reader.ts search <关键词> --output-dir <project_tmp> [--name <basename>] [--scope text|tools|all]
+<desktop_node> scripts/session-reader.ts search <关键词> --output-dir <project_tmp> [--name <basename>] [--scope text|tools|all]
                                       [--case-sensitive] [--context N] [--limit N] [--session <会话标识>]
                                       [--exclude-session <会话标识>] [--workspace <路径|标题>]
                                       [--since <时间>] [--until <时间>] [--origin all|main|subagent] [--format md|json]
-node scripts/session-reader.ts stats  [<id|唯一前缀|last>] --output-dir <project_tmp> [--name <basename>]
+<desktop_node> scripts/session-reader.ts stats  [<id|唯一前缀|last>] --output-dir <project_tmp> [--name <basename>]
                                       [--workspace/--since/--until/--origin；仅全局聚合（缺省目标）可用] [--format md|json]
-node scripts/session-reader.ts check  [<id|唯一前缀|last>] --output-dir <project_tmp> [--name <basename>] [--format md|json]
+<desktop_node> scripts/session-reader.ts check  [<id|唯一前缀|last>] --output-dir <project_tmp> [--name <basename>] [--format md|json]
 ```
 
-全局选项：`--dsh-home <路径>`（默认 `$DSH_HOME`，否则 `~\.dsh`）、`--lib-root <目录>`（默认按 dsh 自身的安装锚点探测，见「运行前提」；取值必须是含 `@deepseek-ai` 的 `node_modules`）、`--output-dir`、`--name`、`--format`、`-h/--help`。选项不可重复（重复即退出 2），开关不接受值，支持 `--opt=value`，位置参数不终止选项解析，`-h` 出现在 `--` 之前即短路为帮助。
+全局选项：`--dsh-home <路径>`（默认 `$DSH_HOME`，否则 `~\.dsh`；只选数据根，不改变库的来源与版本）、`--lib-root <目录>`（默认取桌面版安装内的锚点，见「运行前提」；取值必须是含 `@deepseek-ai` 的 `node_modules`）、`--output-dir`、`--name`、`--format`、`-h/--help`。选项不可重复（重复即退出 2），开关不接受值，支持 `--opt=value`，位置参数不终止选项解析，`-h` 出现在 `--` 之前即短路为帮助。
 
 ## 选项语义
 
@@ -137,15 +138,15 @@ node scripts/session-reader.ts check  [<id|唯一前缀|last>] --output-dir <pro
 示例（PowerShell）：
 
 ```text
-node scripts/session-reader.ts list --output-dir <project_tmp> --workspace <工作区路径> --limit 20 --name 会话清单
-node scripts/session-reader.ts show 39b27999 --output-dir <project_tmp> --thinking --tools
-node scripts/session-reader.ts show last --output-dir <project_tmp> --subagents --format json
-node scripts/session-reader.ts show last --output-dir <project_tmp> --turn 3-5
-node scripts/session-reader.ts show last --output-dir <project_tmp> --head 20 --events
-node scripts/session-reader.ts show last --output-dir <project_tmp> --probe
-node scripts/session-reader.ts search compact --output-dir <project_tmp> --scope all
-node scripts/session-reader.ts search data_inspection_failed --output-dir <project_tmp> --scope all --session 77707026
-node scripts/session-reader.ts search write-failed --output-dir <project_tmp> --scope all --exclude-session last
+<desktop_node> scripts/session-reader.ts list --output-dir <project_tmp> --workspace <工作区路径> --limit 20 --name 会话清单
+<desktop_node> scripts/session-reader.ts show 39b27999 --output-dir <project_tmp> --thinking --tools
+<desktop_node> scripts/session-reader.ts show last --output-dir <project_tmp> --subagents --format json
+<desktop_node> scripts/session-reader.ts show last --output-dir <project_tmp> --turn 3-5
+<desktop_node> scripts/session-reader.ts show last --output-dir <project_tmp> --head 20 --events
+<desktop_node> scripts/session-reader.ts show last --output-dir <project_tmp> --probe
+<desktop_node> scripts/session-reader.ts search compact --output-dir <project_tmp> --scope all
+<desktop_node> scripts/session-reader.ts search data_inspection_failed --output-dir <project_tmp> --scope all --session 77707026
+<desktop_node> scripts/session-reader.ts search write-failed --output-dir <project_tmp> --scope all --exclude-session last
 ```
 
 ## 默认参数组合（默认调用）
@@ -153,11 +154,11 @@ node scripts/session-reader.ts search write-failed --output-dir <project_tmp> --
 默认组合 = 仅写「命令 + 目标（如需要） + `--output-dir`」，其余选项全部取默认值（含 `--dsh-home`、`--lib-root`、`--format`、`--name` 等）。`--output-dir` 是默认组合中唯一必须显式提供的位置类参数，且必须遵守上文「输出使用规定」（由调用方显式指定，惯例指向项目临时目录）。
 
 ```text
-node scripts/session-reader.ts list                      --output-dir <project_tmp>
-node scripts/session-reader.ts show   <id|唯一前缀|last> --output-dir <project_tmp>
-node scripts/session-reader.ts search <关键词>            --output-dir <project_tmp>
-node scripts/session-reader.ts stats                     --output-dir <project_tmp>
-node scripts/session-reader.ts check                     --output-dir <project_tmp>
+<desktop_node> scripts/session-reader.ts list                      --output-dir <project_tmp>
+<desktop_node> scripts/session-reader.ts show   <id|唯一前缀|last> --output-dir <project_tmp>
+<desktop_node> scripts/session-reader.ts search <关键词>            --output-dir <project_tmp>
+<desktop_node> scripts/session-reader.ts stats                     --output-dir <project_tmp>
+<desktop_node> scripts/session-reader.ts check                     --output-dir <project_tmp>
 ```
 
 默认行为（对外契约）：

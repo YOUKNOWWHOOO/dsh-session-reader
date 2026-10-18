@@ -94,7 +94,7 @@ function commonOptions(formatValues: readonly string[]): OptionSpec[] {
       valueName: "<目录>",
       valueKind: "string",
       description: "官方格式库解析锚点（兼容覆盖）",
-      defaultText: "按 dsh 安装锚点自动定位；无法唯一定位时用 --lib-root 覆盖",
+      defaultText: "桌面版安装内 app.asar\\dsh\\node_modules；定位不到时用 --lib-root 覆盖",
     },
     {
       name: "--output-dir",
@@ -388,13 +388,30 @@ function formatOptionLine(spec: OptionSpec): string {
   return `  ${(flags + valuePart).padEnd(34)} ${spec.description}${defaultPart}`;
 }
 
+/** 帮助文本里的脚本入口前缀（相对技能目录，与 `SKILL.md` 的命令块同源）。 */
+const USAGE_ENTRY = "<desktop_node> scripts/session-reader.ts";
+
+/**
+ * 总帮助与子命令帮助共用的执行载体说明。
+ *
+ * 用法行必须写 `<desktop_node>` 占位符而不是 `node`：官方格式库位于桌面版安装归档 `app.asar`
+ * 的虚拟路径内，只有桌面版 Electron-as-Node 能解析，PATH 中的系统 Node 解析不了它，
+ * 写成 `node session-reader.ts` 会被读成用系统 Node 直接运行。
+ *
+ * 两种等价载体必须与「运行前提」登记一致，因此这里同时写明 shim 的 `DSH_DESKTOP_NODE_EXECUTABLE`
+ * 前提与它转发的 `--expose-internals`；只写载体名会让只读帮助的调用方漏参数。该开关按 shim 的做法
+ * 保留（实测桌面版可执行文件在默认锚点下加与不加都能完成一次 `list`，故它不被表述为硬性前提）。
+ */
+const DESKTOP_NODE_NOTE =
+  "`<desktop_node>` 指桌面版 Electron-as-Node 执行载体：优先用桌面版安装自带的 runtime\\bin\\node.cmd shim，它自行设置 ELECTRON_RUN_AS_NODE=1 并转发 --expose-internals（要求 DSH_DESKTOP_NODE_EXECUTABLE 指向桌面版可执行文件）；也可自行设置 ELECTRON_RUN_AS_NODE=1、按 shim 的做法附 --expose-internals 后直接调用桌面版可执行文件。PATH 中的系统 Node 解析不了 app.asar 内的虚拟路径（existsSync 对归档内路径恒为 false），默认锚点下无法加载官方格式库。";
+
 /** 构建子命令帮助文本（与选项表同源）。 */
 export function buildCommandHelp(command: CommandSpec): string {
   const usage =
     command.positional === null
-      ? `node session-reader.ts ${command.name} [选项]`
-      : `node session-reader.ts ${command.name} ${command.positional.name} [选项]`;
-  const lines = [`用法: ${usage}`, "", command.summary, ""];
+      ? `${USAGE_ENTRY} ${command.name} [选项]`
+      : `${USAGE_ENTRY} ${command.name} ${command.positional.name} [选项]`;
+  const lines = [`用法: ${usage}`, "", command.summary, "", DESKTOP_NODE_NOTE, ""];
   if (command.positional !== null) {
     lines.push("参数:");
     lines.push(`  ${command.positional.name.padEnd(20)} ${command.positional.description}`);
@@ -411,9 +428,11 @@ export function buildCommandHelp(command: CommandSpec): string {
 /** 构建总帮助文本。 */
 export function buildGeneralHelp(): string {
   const lines = [
-    "用法: node session-reader.ts <命令> [选项]",
+    `用法: ${USAGE_ENTRY} <命令> [选项]`,
     "",
     "列出/读取/检索/统计/校验 dsh 会话历史（离线、只读、无模型调用）。",
+    "",
+    DESKTOP_NODE_NOTE,
     "",
     "命令:",
   ];
@@ -1001,12 +1020,12 @@ async function runParsedCommand(parsed: ParsedCommand): Promise<RunOutcome> {
   const dshHome = resolveDshHome(optionValue(parsed, "--dsh-home"), process.env, homedir());
   if (!existsSync(dshHome)) return failure("目标不存在", 1);
   const libRootOption = optionValue(parsed, "--lib-root");
-  const libRoot = libRootOption ?? defaultLibRoot(dshHome);
+  const libRoot = libRootOption ?? defaultLibRoot();
   if (libRoot === undefined)
     return failure(
       "内部错误",
       3,
-      "找不到官方格式库：默认锚点处（安装树的 @deepseek-ai 作用域目录）未能唯一确定，请用 --lib-root <目录> 指定含 @deepseek-ai 的 node_modules 目录",
+      "找不到官方格式库：桌面版安装内的默认锚点（%LOCALAPPDATA%\\Programs\\DeepSeek Harness\\resources\\app.asar\\dsh\\node_modules）未能定位，请用 --lib-root <目录> 指定含 @deepseek-ai 的 node_modules 目录",
     );
   const catalogResult = await loadCatalog(libRoot);
   if (!catalogResult.success)

@@ -1,12 +1,12 @@
 // 用途：全组合 lint 门禁的敌意内容集、合成 DSH_HOME 的会话夹具定义与夹具 home 构造。
-// 主要入口：buildFixtureHomes（清理并重建健康/损坏两套夹具 home 与官方库 junction，注入敌意模型字段）、
+// 主要入口：buildFixtureHomes（清理并重建健康/损坏两套夹具 home，注入敌意模型字段）、
 //           healthySpec/brokenSpec（夹具根定义，供组合矩阵与入口复用）。
 // 关键依赖：./fixtures.ts（FixtureEvent/FixtureHomeSpec/writeFixtureHome）、./matrix-assert.ts（asRecord 判型）。
 // 设计约束：夹具只写 workdir 下的固定子路径（fixture-healthy、fixture-broken、out），真实 dsh 主目录全程只读；
 //           敌意内容集逐条对应 f2 §2.1 的 67 条，禁止增删或改写，注入点分散于消息/工具/系统/压缩/命令/
 //           标题请求/web/交付物字段，注入后的 home 由端到端门禁逐产物复查。
 
-import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   askSampleErrorResult,
@@ -629,10 +629,15 @@ export interface FixtureHomes {
 }
 
 /**
- * 合成 DSH_HOME 构造：先清理 workdir 内固定子路径，再重建两套夹具 home、
- * 以 junction 挂上官方格式库锚点，并对主/子会话注入敌意模型字段。
+ * 合成 DSH_HOME 构造：先清理 workdir 内固定子路径，再重建两套夹具 home，
+ * 并对主/子会话注入敌意模型字段。
+ *
+ * 不再在夹具内挂指向官方库的 junction：默认锚点是桌面版安装内的绝对路径，与合成 home 无关；
+ * 需要官方库的组合一律由用例显式传 `--lib-root`（见 `matrix-cases.ts` 的 `healthyBase`）。
+ * 另外，指向 `app.asar` 内部的 junction 在 Electron-as-Node 下无法被 `rmSync` 可靠清除
+ * （`existsSync` 对它也返回 false），第二次运行会以 `EEXIST` 在 `symlinkSync` 处整体失败（实测）。
  */
-export function buildFixtureHomes(workdir: string, libRoot: string): FixtureHomes {
+export function buildFixtureHomes(workdir: string): FixtureHomes {
   const healthyHome = join(workdir, "fixture-healthy");
   const brokenHome = join(workdir, "fixture-broken");
   const outDir = join(workdir, "out");
@@ -648,13 +653,6 @@ export function buildFixtureHomes(workdir: string, libRoot: string): FixtureHome
   mkdirSync(outDir, { recursive: true });
   writeFixtureHome(healthyHome, healthySpec());
   writeFixtureHome(brokenHome, brokenSpec());
-  const fixtureLibParent = join(healthyHome, "profiles", "node_modules", "@deepseek-ai");
-  mkdirSync(fixtureLibParent, { recursive: true });
-  symlinkSync(
-    join(libRoot, "@deepseek-ai", "dsh-session-format-catalog"),
-    join(fixtureLibParent, "dsh-session-format-catalog"),
-    "junction",
-  );
   patchProjCacheModel(healthyHome, MAIN_ID);
   patchProjCacheModel(healthyHome, CHILD_ID);
   return { healthyHome, brokenHome, outDir };

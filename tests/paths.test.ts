@@ -48,33 +48,104 @@ describe("sessionsRoot", () => {
   });
 });
 
-describe("defaultLibRoot 的安装锚点探测", () => {
-  it("候选不唯一或完全缺失时返回 undefined，唯一命中时返回该 node_modules", () => {
+describe("defaultLibRoot 的桌面版安装锚点定位", () => {
+  /** 桌面版安装内 dsh 的 node_modules 路径（与 paths.ts 的锚点布局一致）。 */
+  function desktopNodeModules(localAppData: string): string {
+    return join(
+      localAppData,
+      "Programs",
+      "DeepSeek Harness",
+      "resources",
+      "app.asar",
+      "dsh",
+      "node_modules",
+    );
+  }
+
+  /**
+   * 在一个假 LOCALAPPDATA 下按桌面版安装布局造出指定包的锚点目录。
+   *
+   * 必须逐级创建（不能用 `mkdirSync(p, { recursive: true })`）：Electron 改写了 `node:fs`，路径
+   * 中出现既有的 `app.asar` 目录段时，其递归创建会以 `ENOTDIR` 失败（实测）；逐级创建绕开该改写。
+   */
+  function writeDesktopLib(localAppData: string, packages: readonly string[]): string {
+    const levels = ["Programs", "DeepSeek Harness", "resources", "app.asar", "dsh", "node_modules"];
+    let current = localAppData;
+    for (const level of levels) {
+      current = join(current, level);
+      mkdirSync(current, { recursive: true });
+    }
+    const scope = join(current, "@deepseek-ai");
+    mkdirSync(scope, { recursive: true });
+    for (const pkg of packages) {
+      const dir = join(scope, pkg);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "package.json"), "{}\n", "utf8");
+    }
+    return current;
+  }
+
+  it("缺少 LOCALAPPDATA 或非 Windows 时返回 undefined，不猜别的目录", () => {
     const sandbox = mkdtempSync(join(tmpdir(), "session-reader-paths-"));
     try {
-      const fakeDshHome = join(sandbox, "dsh-home");
-      mkdirSync(fakeDshHome, { recursive: true });
+      // 环境里没有 LOCALAPPDATA：无法定位唯一锚点，返回 undefined 而不是猜一个。
+      assert.equal(defaultLibRoot({}, "win32"), undefined);
+      assert.equal(defaultLibRoot({ LOCALAPPDATA: "" }, "win32"), undefined);
+      // 非 Windows 平台即使锚点齐备也不适用该安装布局。
+      const anchor = writeDesktopLib(sandbox, ["dsh", "dsh-session-format-catalog"]);
+      assert.equal(anchor.length > 0, true);
+      assert.equal(defaultLibRoot({ LOCALAPPDATA: sandbox }, "linux"), undefined);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
 
-      // 缺少 npm 缓存的定位信息（既无 npm_config_cache，也无 LOCALAPPDATA），且旧布局不存在：
-      // 探测无法唯一确定，应返回 undefined 而不是猜一个。
-      assert.equal(defaultLibRoot(fakeDshHome, {}), undefined);
+  it("锚点包与官方格式库齐备时返回桌面版安装内的 node_modules", () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "session-reader-paths-"));
+    try {
+      const nodeModules = writeDesktopLib(sandbox, ["dsh", "dsh-session-format-catalog"]);
+      assert.equal(nodeModules, desktopNodeModules(sandbox));
+      assert.equal(defaultLibRoot({ LOCALAPPDATA: sandbox }, "win32"), desktopNodeModules(sandbox));
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
 
-      // 构造两个含探针包的 checkout：命中数不是 1，同样返回 undefined。
-      const npxRoot = join(sandbox, "cache", "_npx");
-      const scopeOf = (checkout: string) => join(npxRoot, checkout, "node_modules", "@deepseek-ai");
-      for (const checkout of ["aaaa1111", "bbbb2222"]) {
-        const scope = scopeOf(checkout);
-        for (const pkg of ["dsh", "dsh-session-format-catalog"]) {
-          mkdirSync(join(scope, pkg), { recursive: true });
-          writeFileSync(join(scope, pkg, "package.json"), "{}\n", "utf8");
-        }
+  it("只装了其中一个包时返回 undefined（缺任一项都不算可用的安装树）", () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "session-reader-paths-"));
+    try {
+      writeDesktopLib(sandbox, ["dsh"]);
+      assert.equal(defaultLibRoot({ LOCALAPPDATA: sandbox }, "win32"), undefined);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+    const secondSandbox = mkdtempSync(join(tmpdir(), "session-reader-paths-"));
+    try {
+      writeDesktopLib(secondSandbox, ["dsh-session-format-catalog"]);
+      assert.equal(defaultLibRoot({ LOCALAPPDATA: secondSandbox }, "win32"), undefined);
+    } finally {
+      rmSync(secondSandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("唯一锚点不读 npm 缓存的 npx 安装树：该树再完整也返回 undefined", () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "session-reader-paths-"));
+    try {
+      // 造出一棵「旧探测会命中」的 npx 安装树，并给出会命中它的 npm 缓存环境变量。
+      // 新锚点是唯一锚点：只认桌面版安装，这棵树再完整也不参与。
+      const npxScope = join(sandbox, "cache", "_npx", "aaaa1111", "node_modules", "@deepseek-ai");
+      for (const pkg of ["dsh", "dsh-session-format-catalog"]) {
+        mkdirSync(join(npxScope, pkg), { recursive: true });
+        writeFileSync(join(npxScope, pkg, "package.json"), "{}\n", "utf8");
       }
-      const env = { npm_config_cache: join(sandbox, "cache") };
-      assert.equal(defaultLibRoot(fakeDshHome, env), undefined);
-
-      // 移除一个候选后唯一命中，应返回该 checkout 的 node_modules。
-      rmSync(join(npxRoot, "bbbb2222"), { recursive: true, force: true });
-      assert.equal(defaultLibRoot(fakeDshHome, env), join(npxRoot, "aaaa1111", "node_modules"));
+      // 默认形态是唯一锚点：只认桌面版安装，npx 安装树一律不参与。
+      assert.equal(
+        defaultLibRoot(
+          { LOCALAPPDATA: sandbox, npm_config_cache: join(sandbox, "cache") },
+          "win32",
+        ),
+        undefined,
+      );
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }

@@ -6,6 +6,21 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 官方格式库的默认解析锚点改为**桌面版安装内的 `%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\app.asar\dsh\node_modules`**：不再探测 npm 缓存的 npx 安装树与 `<dsh-home>\profiles\node_modules`，也不设任何回退；理由是桌面安装归档是库的唯一权威位置，另两处只取决于某次安装或运行的历史痕迹（`_npx` 安装树可能仍然存在），存在性与版本都随本机状态漂移。锚点必须同时含 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-session-format-catalog`，缺少 `%LOCALAPPDATA%`、非 Windows 或锚点不成立即退出 3 并说明。`--lib-root` 仍是显式覆盖入口，语义与取值约束不变。
+- 运行载体说明同步为**桌面版 Electron-as-Node**：官方格式库位于 Electron 归档 `app.asar` 的虚拟路径内，只有桌面运行时能解析（PATH 中的系统 Node 解析不了该路径——其 `existsSync` 对归档内路径恒为 false——直接运行会以退出 3 失败）；因此所有命令示例改用桌面版执行载体占位符，`--lib-root` 的默认说明与错误文案同步指向新锚点。
+- 开发与维护文档的校验链改用桌面版运行时执行，并把测试入口写成 `"tests/**/*.test.ts"` glob（目录形式 `--test tests` 在桌面版运行时的 Node 线上不可用）。
+- 测试以子进程驱动 CLI 与门禁时统一传递 `ELECTRON_RUN_AS_NODE=1`：`process.execPath` 在桌面版宿主下是 Electron 可执行文件，缺少该变量会让子进程被当作桌面应用启动。
+- 总帮助与各子命令帮助的用法行改用 `<desktop_node>` 占位符，并说明它指桌面版 Electron-as-Node 执行载体（原写法 `node session-reader.ts` 会被读成用 PATH 中的系统 Node 运行）；载体说明补上 shim 的 `DSH_DESKTOP_NODE_EXECUTABLE` 前提与它转发的 `--expose-internals`，使只读帮助的调用方不必另查文档即可凑齐调用参数。
+- 文档一致性修正：`SKILL.md` 命令块补回 `list` 的完整用法行，运行前提登记 PowerShell 直接调用桌面版可执行文件不等待、取不到退出码的边界；开发与验证基线更新为本机桌面版安装实物 `0.2.1-rc.2`。
+
+### Fixed
+
+- 修复桌面版安装形态下默认组合无法加载官方格式库的问题（原探测路径只在 npm 缓存安装树下成立）。
+- 现行文档与注释的事实性修正：删除"npm 缓存 npx 安装树已不存在"这一失真的理由（该树可能因某次 `npx dsh` 仍留在本机），改为按"桌面安装归档是库的唯一权威位置"说明唯一锚点；`profiles` 一项按当前布局改写为 `<dsh-home>\profiles\node_modules` 已不在、实际是每个 profile 各自的 `node_modules`。
+- 现行文档与注释的口径修正：系统 Node 的限制改为"解析不了 `app.asar` 虚拟路径"（其 `existsSync` 对归档内路径恒为 false），直接调用桌面版可执行文件的说明按 shim 的做法补上 `--expose-internals` 并保留其非硬性前提的实测结论；删除"物理行数与逻辑事件数一致性校验"这一与实现不符的旧判据，改为按真实失败形态（结构违规、整份日志解码失败）描述；登记 `--dsh-home` 只选数据根、不改变库的来源与版本；`tests/paths.test.ts` 的用例名按其实际覆盖范围改写。
+
 ## [0.3.0] - 2026-10-02
 
 ### Added

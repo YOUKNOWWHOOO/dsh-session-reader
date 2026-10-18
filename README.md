@@ -9,8 +9,8 @@
 | 当前阶段 | Active Development |
 | 当前版本 | 0.3.0 |
 | 适用平台 | Windows |
-| 运行依赖 | Node.js v26 线、本机 dsh 安装 |
-| 开发与验证基线 | dsh `0.2.0-rc.2`，会话日志格式 v4 |
+| 运行依赖 | 桌面版 DeepSeek Harness（Electron-as-Node 执行载体）、本机 dsh 安装 |
+| 开发与验证基线 | dsh `0.2.1-rc.2`，会话日志格式 v4 |
 
 ## 背景与目的
 
@@ -23,10 +23,10 @@ dsh 把每一次会话记录成一组日志文件，位置在 dsh 主目录的 `
 ## 适用环境
 
 - **平台**：Windows。技能的路径处理、输出文件名校验与文件移动语义都按 Windows 实现（例如拒绝 `CON`、`PRN`、`NUL`、`COM1`-`COM9`、`LPT1`-`LPT9` 这 22 个保留设备名）。
-- **Node.js**：v26 线。脚本是 TypeScript（ESM），由 Node 的原生类型剥离直接执行，没有构建步骤，也不需要 `tsconfig.json` 参与运行。
-- **dsh**：本机需有一份可用的 dsh 安装。本技能以 dsh `0.2.0-rc.2` 为开发与验证基线，需要它提供两样东西，即会话数据本身，以及随发行版提供的官方会话格式库 `@deepseek-ai/dsh-session-format-catalog`。
+- **执行载体**：必须是桌面版 DeepSeek Harness 的 Electron-as-Node。脚本是 TypeScript（ESM），由该运行时原生类型剥离直接执行，没有构建步骤，也不需要 `tsconfig.json` 参与运行。PATH 中的系统 Node（v26 线）同样能原生执行 TypeScript，但解析不了桌面版安装归档 `app.asar` 内的虚拟路径（其 `existsSync` 对归档内路径恒为 false），默认锚点因此定位不到、无法加载官方格式库；本技能不承诺用系统 Node 直接运行，这种用法只适用于用 `--lib-root` 指向真实目录的开发场景。可用的调用方式：`"$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\bin\node.cmd"`（该 shim 设置 `ELECTRON_RUN_AS_NODE=1` 并转发 `--expose-internals`，要求 `DSH_DESKTOP_NODE_EXECUTABLE` 指向桌面版可执行文件），或自行设置 `ELECTRON_RUN_AS_NODE=1` 再直接调用桌面版可执行文件并附 `--expose-internals`（按 shim 的做法；实测默认锚点下不附也能完成一次 `list`，故它按 shim 的一致性保留，而非硬性前提）。在 PowerShell 中优先用该 shim，它是 `.cmd`，PowerShell 会等待它并回传退出码；改为直接调用桌面版可执行文件时必须自行设置 `ELECTRON_RUN_AS_NODE=1` 并按 shim 的做法附 `--expose-internals`，且不要用裸 `&` 调用（桌面版可执行文件是 GUI 子系统程序，裸 `&` 不等待进程，stdout 与 `$LASTEXITCODE` 都取不到，实测），需要退出码时用 `Start-Process -Wait -PassThru`。
+- **dsh**：本机需有一份可用的 dsh 安装。它需要提供两样东西，即会话数据本身，以及随发行版提供的官方会话格式库 `@deepseek-ai/dsh-session-format-catalog`。
 - **会话日志格式**：当前为 v4。技能通过官方格式库解码日志，不自行解析格式细节。
-- **主目录**：默认取环境变量 `DSH_HOME`，未设置时取 `~/.dsh`；可用 `--dsh-home` 覆盖。该目录不存在、或其下缺 `sessions/` 时，命令以退出码 1 结束。
+- **主目录**：默认取环境变量 `DSH_HOME`，未设置时取 `~/.dsh`；可用 `--dsh-home` 覆盖。该目录不存在、或其下缺 `sessions/` 时，命令以退出码 1 结束。`--dsh-home` 只决定数据来源，不改变官方格式库的来源与版本——库恒取桌面版安装内那一份（或用 `--lib-root` 显式指定的那一份），因此指向另一份会话数据时，两边的版本各随其安装，错配只会以解码失败暴露。
 
 ## 能做什么
 
@@ -123,58 +123,58 @@ dsh 把每一次会话记录成一组日志文件，位置在 dsh 主目录的 `
 
 ### 前置条件
 
-1. 本机已安装 dsh 并至少使用过一次，`~/.dsh/sessions/` 下有会话日志。
-1. `node --version` 返回 v26 线。
+1. 本机已安装桌面版 DeepSeek Harness 并至少使用过一次，`~/.dsh/sessions/` 下有会话日志。
+1. 用桌面版 Electron-as-Node 运行脚本（见「适用环境」的执行载体）：默认锚点位于桌面版安装归档内，系统 Node 解析不了该虚拟路径。
 1. 把本仓库放在 dsh 的技能目录下，或在任意位置直接调用脚本（脚本按自身位置解析所需资源，不依赖当前工作目录）。
 
 若作为 dsh 技能使用，目录应放在 `<dsh-home>/skills/session-reader/`，这样会话创建时它会被技能目录收录，模型可以按名称加载它。
 
 ### 基本调用
 
-所有命令都必须显式给出 `--output-dir`，它没有默认值，缺省即退出码 2。惯例是指向项目临时目录。
+所有命令都必须显式给出 `--output-dir`，它没有默认值，缺省即退出码 2。惯例是指向项目临时目录。下例中的 `<desktop_node>` 是「适用环境」登记的桌面版 Electron-as-Node 执行载体。
 
 ```powershell
 # 列出最近活动的 20 个会话
-node scripts/session-reader.ts list --output-dir .\tmp --limit 20
+<desktop_node> scripts/session-reader.ts list --output-dir .\tmp --limit 20
 
 # 只看某个工作区的会话，按大小排序
-node scripts/session-reader.ts list --output-dir .\tmp --workspace "C:\Users\me\project" --sort size
+<desktop_node> scripts/session-reader.ts list --output-dir .\tmp --workspace "C:\Users\me\project" --sort size
 
 # 只看子代理会话
-node scripts/session-reader.ts list --output-dir .\tmp --origin subagent
+<desktop_node> scripts/session-reader.ts list --output-dir .\tmp --origin subagent
 
 # 读取最近活动的主会话（默认只显示用户与助手消息）
-node scripts/session-reader.ts show last --output-dir .\tmp
+<desktop_node> scripts/session-reader.ts show last --output-dir .\tmp
 
 # 先量规模，再决定是否完整读取
-node scripts/session-reader.ts show last --output-dir .\tmp --probe
+<desktop_node> scripts/session-reader.ts show last --output-dir .\tmp --probe
 
 # 完整读取，含推理、工具调用与参数、工具结果，并标注事件序号与时间
-node scripts/session-reader.ts show last --output-dir .\tmp --thinking --tools --headers
+<desktop_node> scripts/session-reader.ts show last --output-dir .\tmp --thinking --tools --headers
 
 # 只看第 3 到第 5 轮里用户发出的消息
-node scripts/session-reader.ts show last --output-dir .\tmp --turn 3-5 --role user
+<desktop_node> scripts/session-reader.ts show last --output-dir .\tmp --turn 3-5 --role user
 
 # 先看轮次大纲
-node scripts/session-reader.ts show last --output-dir .\tmp --summary
+<desktop_node> scripts/session-reader.ts show last --output-dir .\tmp --summary
 
 # 连带子代理会话一起导出，并用 JSON 交给程序处理
-node scripts/session-reader.ts show last --output-dir .\tmp --subagents --format json
+<desktop_node> scripts/session-reader.ts show last --output-dir .\tmp --subagents --format json
 
 # 逐事件穷尽枚举，每行一个事件
-node scripts/session-reader.ts show last --output-dir .\tmp --format jsonl
+<desktop_node> scripts/session-reader.ts show last --output-dir .\tmp --format jsonl
 
 # 全库检索某个错误串，范围含所有事件载荷
-node scripts/session-reader.ts search "ECONNRESET" --output-dir .\tmp --scope all
+<desktop_node> scripts/session-reader.ts search "ECONNRESET" --output-dir .\tmp --scope all
 
 # 检索时排除自己这次会话及其子代理
-node scripts/session-reader.ts search "timeout" --output-dir .\tmp --scope all --exclude-session last
+<desktop_node> scripts/session-reader.ts search "timeout" --output-dir .\tmp --scope all --exclude-session last
 
 # 全局用量统计
-node scripts/session-reader.ts stats --output-dir .\tmp
+<desktop_node> scripts/session-reader.ts stats --output-dir .\tmp
 
 # 校验全库日志完整性
-node scripts/session-reader.ts check --output-dir .\tmp
+<desktop_node> scripts/session-reader.ts check --output-dir .\tmp
 ```
 
 ### 指定输出文件名
@@ -203,7 +203,7 @@ node scripts/session-reader.ts check --output-dir .\tmp
 - 关键词以 `-` 开头时用 `--` 终止选项解析；必需选项要写在 `--` 之前：
 
   ```powershell
-  node scripts/session-reader.ts search --output-dir .\tmp -- "- item"
+  <desktop_node> scripts/session-reader.ts search --output-dir .\tmp -- "- item"
   ```
 
 - 目标的解析有三种结果：唯一匹配且可读时正常执行；匹配到多个会话时以退出码 1 报错并给出候选数；目标存在于磁盘但会话头不可读时以退出码 3 报 `数据不可读`，与"不存在"可以区分。其余无匹配以退出码 1 报 `目标不存在`。
@@ -265,8 +265,8 @@ stderr 的格式固定为一行 `错误: <分类>`，分类是固定的 8 个取
 
 这些是实际存在的限制，使用前应当知道：
 
-- **与 dsh 的格式版本绑定**。会话日志的格式由 dsh 决定，技能通过官方格式库解码，格式版本以官方库的 `currentVersion` 为准（当前为 v4）。dsh `0.2.0-rc.2` 的历史正文读取必须绑定直属子会话事实，技能会按物理 generation 使用历史 catalog 或当前 catalog，并为每个历史父会话建立独立 child-bound catalog。
-- **依赖官方格式库的位置**。库随 dsh 一起安装。技能默认按 dsh 自身的安装锚点探测它（在 npm 缓存的 npx 目录下找同时含 `@deepseek-ai/dsh` 与该库的 `node_modules`，命中数必须恰好一个），也可以用 `--lib-root` 显式指定含 `@deepseek-ai` 的 `node_modules` 目录。探测不到时不会猜测，而是直接以退出码 3 报错并说明该指定什么。
+- **与 dsh 的格式版本绑定**。会话日志的格式由 dsh 决定，技能通过官方格式库解码，格式版本以官方库的 `currentVersion` 为准（当前为 v4）。历史正文读取必须绑定直属子会话事实，技能会按物理 generation 使用历史 catalog 或当前 catalog，并为每个历史父会话建立独立 child-bound catalog。
+- **依赖官方格式库的位置**。库随桌面版 dsh 一起安装，位于安装归档内的 `%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\app.asar\dsh\node_modules`；该虚拟路径只有桌面版 Electron-as-Node 能读取。技能默认以该锚点为唯一来源（要求其中同时含 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-session-format-catalog`），不回落任何其它目录；也可以用 `--lib-root` 显式指定含 `@deepseek-ai` 的 `node_modules` 目录（例如桌面版布局不同，或开发期指向真实目录）。定位不到时不会猜测，而是直接以退出码 3 报错并说明该指定什么。
 - **平台限定 Windows**。在其它平台上，输出文件名的保留设备名校验、路径处理与原子替换语义都未经验证。
 - **检索的穷尽性有一处细节**。`--scope all` 档的"事件载荷"单元是事件的 JSON 序列化结果，其中的双引号、反斜杠与制表符会以转义形态出现。因此只存在于非文本字段里、且含这些字符的关键词可能命不中；需要逐字核对原文时用 `show --format jsonl` 导出原始事件行。另外命中总数是检索单元内的匹配次数，不是文本出现次数，同一段文本可能被计多次。
 - **元数据可能不可用**。列表与统计的部分字段来自 dsh 的投影缓存。缓存缺失、版本不符或与会话身份不一致时，相关字段标注为"元数据不可用"并在 json 中给出原因，不会静默填 0。
@@ -299,11 +299,13 @@ doc/开发规范.md    开发与维护要求（契约、边界、测试与校验
 npm ci
 npx --no-install biome ci .                    # 格式化与 lint
 npx --no-install tsc --noEmit                  # 类型检查
-node --test tests                              # 测试
-node tests/lint-matrix.ts --workdir tests/.tmp/matrix --real-home $env:USERPROFILE\.dsh   # 全组合 lint 门禁
+<desktop_node> --test "tests/**/*.test.ts"     # 测试
+<desktop_node> tests/lint-matrix.ts --workdir tests/.tmp/matrix --real-home $env:USERPROFILE\.dsh   # 全组合 lint 门禁
 npx --no-install markdownlint-cli --config .markdownlint.jsonc .
-node --test --experimental-test-coverage --test-coverage-lines=80 --test-coverage-branches=85 tests
+<desktop_node> --test --experimental-test-coverage --test-coverage-lines=80 --test-coverage-branches=85 "tests/**/*.test.ts"
 ```
+
+`node --test tests`（目录形式）在桌面版运行时的 Node 线（24.x）上不可用，故测试入口统一写 `"tests/**/*.test.ts"`；`npx` 在两种宿主下都可用（普通 Node 会忽略 `ELECTRON_RUN_AS_NODE`）。
 
 门禁的输出路径由 `--workdir` 决定，必须指向临时位置，否则会把逐组合结果与合成夹具写进技能目录。
 

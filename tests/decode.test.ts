@@ -1,7 +1,6 @@
 // decode.ts 单元测试：官方库加载失败路径、解码编排（分类/坏行/撕裂尾/结构违规/一致性校验）、事件模型工具。
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -23,7 +22,7 @@ import {
   toolCallsFromBlocks,
   toolResultText,
 } from "../scripts/lib/decode.ts";
-import { defaultLibRoot, resolveDshHome } from "../scripts/lib/paths.ts";
+import { defaultLibRoot } from "../scripts/lib/paths.ts";
 import { createFakeCatalog, resetTempDir } from "./fixtures.ts";
 
 const TEMP_ROOT = fileURLToPath(new URL("./.tmp/decode", import.meta.url));
@@ -48,10 +47,10 @@ describe("loadCatalog", () => {
   });
 
   it("真实官方库可加载并导出 sessionFormatCatalog", async () => {
-    const libRoot = defaultLibRoot(resolveDshHome(undefined, process.env, homedir()));
+    const libRoot = defaultLibRoot();
     // 本用例的前提是本机能唯一定位到官方格式库；定位不到时让它以断言失败暴露，
     // 而不是静默跳过——跳过会被算作未通过验收，失败更诚实。
-    assert.notEqual(libRoot, undefined, "默认锚点未能唯一确定官方格式库，本用例无法运行");
+    assert.notEqual(libRoot, undefined, "默认锚点未能定位桌面版安装内的官方格式库，本用例无法运行");
     if (libRoot === undefined) return;
     const result = await loadCatalog(libRoot);
     assert.equal(result.success, true);
