@@ -376,14 +376,25 @@ export function askQuestionRawEvent(
   };
 }
 
-/** 回答事件（`tool/result`）：`message.content` 的文本是 `{answers: [...]}` 的 JSON 文本。 */
-export function askAnswerEvent(
+/**
+ * 回答事件（`tool/result`）的公共构造。
+ *
+ * `enveloped` 决定正文形态：false 为裸 JSON（未启用边界插件的部署与旧日志），true 为部署侧
+ * 边界插件包裹后的形态（起点行 ＋ 换行 ＋ 正文 ＋ 换行 ＋ 终点）。两个导出构造器只在这里分叉，
+ * 事件结构因此只有一份定义，不会随改动漂移。
+ */
+function askAnswerEventOf(
   seq: number,
   time: number,
   callId: string,
   answers: unknown,
-  extra?: FixtureEventExtra,
+  extra: FixtureEventExtra | undefined,
+  enveloped: boolean,
 ): AskFixtureEvent {
+  const json = JSON.stringify({ answers });
+  const text = enveloped
+    ? `<dsh-result tool="ask_user_question" call="${callId}">\n${json}\n</dsh-result>`
+    : json;
   return {
     type: "tool/result",
     seq,
@@ -399,12 +410,43 @@ export function askAnswerEvent(
         source: { kind: "tool", callId },
         toolCallId: callId,
         isError: false,
-        content: [{ type: "text", text: JSON.stringify({ answers }) }],
+        content: [{ type: "text", text }],
       },
     },
     surfaceOp: "append",
     ...extra,
   };
+}
+
+/** 回答事件（裸 JSON 正文）：`message.content` 的文本是 `{answers: [...]}` 的 JSON 文本。 */
+export function askAnswerEvent(
+  seq: number,
+  time: number,
+  callId: string,
+  answers: unknown,
+  extra?: FixtureEventExtra,
+): AskFixtureEvent {
+  return askAnswerEventOf(seq, time, callId, answers, extra, false);
+}
+
+/**
+ * 带边界信封的回答事件：正文被部署侧的边界插件包裹后的落账形态。
+ *
+ * 信封由部署侧的 `preset-lib/injection-boundary.mjs` 的 `wrapToolContent` 生成：起点行形如
+ * `<dsh-result tool="…" call="…">`，正文紧跟一个换行，终点 `</dsh-result>` 单独成行。当期部署
+ * 给每个未自带信封的工具结果都加这一层，`ask_user_question` 的回答因此不再以裸 JSON 落账。
+ *
+ * 夹具只复刻这一种形态：正文里出现终点字面量时写入侧会转义，本构造函数不含该分支——需要在
+ * 测试里表达转义形态时用记录级合成事件，那属于"写入侧之外的数据"。
+ */
+export function askAnswerEnvelopedEvent(
+  seq: number,
+  time: number,
+  callId: string,
+  answers: unknown,
+  extra?: FixtureEventExtra,
+): AskFixtureEvent {
+  return askAnswerEventOf(seq, time, callId, answers, extra, true);
 }
 
 /**

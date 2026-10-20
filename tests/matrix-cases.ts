@@ -10,6 +10,7 @@ import {
   ASK_PAIRED_ID,
   ASK_UNPAIRED_ID,
   CHILD_ID,
+  HANDOFF_ID,
   healthySpec,
   MAIN_CWD,
   MAIN_ID,
@@ -37,7 +38,7 @@ export interface MatrixCase {
   readonly expectStderr: string;
 }
 
-/** 歧义前缀 "session-adv-" 可匹配的健康夹具会话数（全部 13 个会话 id 均以该前缀开头）。 */
+/** 歧义前缀 "session-adv-" 可匹配的健康夹具会话数（全部健康夹具会话 id 均以该前缀开头）。 */
 const HEALTHY_SESSION_COUNT = healthySpec().sessions.length;
 
 const LIST_SORTS = ["time", "created", "title", "size", "turns"] as const;
@@ -69,6 +70,9 @@ const SPECIAL_IDS = [
   ASK_PAIRED_ID,
   ASK_UNPAIRED_ID,
   ASK_ERROR_ID,
+  // 交接样本：默认导出产出 `**交接**` 条目，开关全开时同一事件不得再以 `**事件**` 形态出现，
+  // 范围选择下条目仍受 `--turn`/`--seq` 约束。三条路径因此都在全组合层面受检。
+  HANDOFF_ID,
 ] as const;
 
 export interface MatrixCaseOptions {

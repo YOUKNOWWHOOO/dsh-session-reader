@@ -211,7 +211,7 @@ export const COMMANDS: readonly CommandSpec[] = [
       {
         name: "--summary",
         kind: "switch",
-        description: "仅摘要（头部+统计+轮次大纲；不含提问与回答条目；jsonl 禁止）",
+        description: "仅摘要（头部+统计+轮次大纲；不含提问与回答、交接条目；jsonl 禁止）",
       },
       {
         name: "--role",
@@ -226,7 +226,7 @@ export const COMMANDS: readonly CommandSpec[] = [
         name: "--tools",
         kind: "switch",
         description:
-          "显示工具调用与结果（仅 md；默认隐藏）；提问与回答、子代理任务与发往子代理的条目恒显示，不受本开关控制",
+          "显示工具调用与结果（仅 md；默认隐藏）；提问与回答、子代理任务与发往子代理、交接的条目恒显示，不受本开关控制",
       },
       {
         name: "--events",

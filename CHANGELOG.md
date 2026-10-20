@@ -6,8 +6,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- 默认导出的时间线新增 `**交接**` 条目：上下文交接的结构事实，来自 `developer/message` 且其 `data.message.source.kind` 为 `handoff` 的事件。条目恒为三行——`轮次 <turn>／步 <step>`、`历史替换 seq <start>-<end>（<n> 条事件）`、`投递 <target>；正文 seq <seq>（<字符数> 字符）`；字段缺失按空值契约显示 `-`。该条目默认可见、没有关闭开关，不受 `--thinking`/`--tools`/`--events` 控制（`--events` 打开时同一事件不再以 `**事件**` 形态重复出现），不受 `--role` 影响，仍受 `--turn`/`--seq` 与 `--head`/`--tail` 影响，且不计入任何隐藏计数；`--summary` 不输出该条目，`--format json` 不新增条目类型。
+- 交接条目**只给结构事实、不复制正文**：实测每次交接都是「`assistant/message`（交接正文）→ `developer/message`（`handoff`，空正文，承载 `surfaceOp: replace` 与 `sourceEventSeqs`）→ `agent/inbox/spliced`（同一正文加 `<compacted-summary>` 包裹后投递）」三段式，拼接载荷正文剥去包裹后与助手正文逐字相同；正文因此仍由既有的 `**助手**` 条目承载，避免同一段内容在产物中出现两次。
+
 ### Changed
 
+- 标签词表由 12 个取值扩为 13 个（新增 `**交接**`）；结构门禁白名单、`SKILL.md`、`README.md` 与开发规范同步。
+- 登记校正：`compact-checkpoint` 标注为**历史取值**（本机全量日志不出现该来源种类，交接改由 `developer/message` 的 `handoff` 型与 `agent/inbox/spliced` 承载），保留在默认保留名单内不改变任何可见性。
+- 登记校正：`historicalChildCatalogSource` 更正为由 `@deepseek-ai/dsh-session-format-v3-to-v4` 导出（不在 `@deepseek-ai/dsh-session-format-catalog` 内），实现一直按两个包分别解析。
+- 登记新增已知边界：投影缓存的版本校验是严格等值（必须恰为当前版本），官方写入端接受若干兼容旧版本；升版后列表与统计的元数据会整体退化为「不可用」，届时须按当期版本更新常量，不得放宽为区间匹配。
+- 检索边界登记：`text` 与 `tools` 档不为 `**交接**` 条目另建检索单元（它只含结构元数据，正文已由 `assistant/message` 在 `text` 档可检索）；`all` 档仍含 `developer/message` 与 `agent/inbox/spliced` 的完整载荷。
+- 修复：部署侧的边界插件会给工具结果加一层 `<dsh-result …>` 信封，`ask_user_question` 的回答正文因此可能不是裸 JSON，此前会让这类会话的 `show` 以退出码 3 报 `数据不可读`。现在解析回答载荷前先剥离一个完整信封；不以起点开头的正文（旧日志与未启用该插件的部署）仍按裸 JSON 解析，信封不完整或剥离后为空仍判为载荷异常并整体失败，不做尽力截取。
 - 官方格式库的默认解析锚点改为**桌面版安装内的 `%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\app.asar\dsh\node_modules`**：不再探测 npm 缓存的 npx 安装树与 `<dsh-home>\profiles\node_modules`，也不设任何回退；理由是桌面安装归档是库的唯一权威位置，另两处只取决于某次安装或运行的历史痕迹（`_npx` 安装树可能仍然存在），存在性与版本都随本机状态漂移。锚点必须同时含 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-session-format-catalog`，缺少 `%LOCALAPPDATA%`、非 Windows 或锚点不成立即退出 3 并说明。`--lib-root` 仍是显式覆盖入口，语义与取值约束不变。
 - 运行载体说明同步为**桌面版 Electron-as-Node**：官方格式库位于 Electron 归档 `app.asar` 的虚拟路径内，只有桌面运行时能解析（PATH 中的系统 Node 解析不了该路径——其 `existsSync` 对归档内路径恒为 false——直接运行会以退出 3 失败）；因此所有命令示例改用桌面版执行载体占位符，`--lib-root` 的默认说明与错误文案同步指向新锚点。
 - 开发与维护文档的校验链改用桌面版运行时执行，并把测试入口写成 `"tests/**/*.test.ts"` glob（目录形式 `--test tests` 在桌面版运行时的 Node 线上不可用）。

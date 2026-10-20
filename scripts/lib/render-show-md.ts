@@ -1,11 +1,11 @@
-// 用途：show 的 Markdown 渲染——头部 KV 块、时间线（推理/工具/生命周期可见性、问答条目、turn/seq
-// 范围筛选、head/tail 首尾截取、按码点截断、隐藏计数摘要）、轮次大纲，以及以 H2 序列 + 路径编号
+// 用途：show 的 Markdown 渲染——头部 KV 块、时间线（推理/工具/生命周期可见性、问答条目、交接条目、
+// turn/seq 范围筛选、head/tail 首尾截取、按码点截断、隐藏计数摘要）、轮次大纲，以及以 H2 序列 + 路径编号
 // 表达父子关系的子代理块；`--probe` 只落头部 KV 与三项规模数字。
 // 主要入口：renderShowMd（返回 Result：问答载荷结构不符时以错误上抛，由 CLI 映射为 `数据不可读`）；
 // 范围筛选入口 selectEvents（供时间线取"呈现哪些事件"）。
-// 关键依赖：ask-user.ts（问答条目的唯一抽取真值源）、render-core.ts（载体、ShowMdOptions/RenderedOutput、
-// 会话派生事实）、render-md.ts（覆盖声明片段）、render-summary.ts（摘要文案）、decode.ts、paths.ts、
-// store-types.ts。
+// 关键依赖：ask-user.ts（问答条目的唯一抽取真值源）、handoff.ts（交接条目的唯一抽取真值源）、
+// render-core.ts（载体、ShowMdOptions/RenderedOutput、会话派生事实）、render-md.ts（覆盖声明片段）、
+// render-summary.ts（摘要文案）、decode.ts、paths.ts、store-types.ts。
 // 设计约束：范围选择只改变"呈现哪些事件"，不改变 KV 块与轮次大纲所描述的整会话统计，并由筛选说明行
 // 显式给出"显示 M 条 / 区间内 N 个 / 共 K 个"三个数字；`--turn`/`--seq` 作用于每个节点（子代理按自身
 // 事件流计轮次），`--head`/`--tail` 只作用于根节点，`--probe` 只作用于根节点；任何会话来源文本都必须经
@@ -23,6 +23,7 @@ import {
   textFromBlocks,
   toolResultText,
 } from "./decode.ts";
+import { analyzeHandoffEvents, HANDOFF_LABEL, type HandoffEntry } from "./handoff.ts";
 import { attributeSource, describeSource } from "./message-source.ts";
 import { formatLocalIso, type Result } from "./paths.ts";
 import {
@@ -307,15 +308,32 @@ function subagentCallEntry(event: EventRecord, options: ShowMdOptions): string[]
 }
 
 /**
+ * 交接条目的围栏载荷：结构事实恒不截断，交接正文按 `--truncate` 处理。
+ *
+ * 结构事实（轮次、替换区间、投递目标与正文定位）是调用方回溯用的坐标，截断它等于交出一个
+ * 读不出位置的行；正文属会话内容，必须与其它正文载体同一口径（`--truncate 0` 即不截断）。
+ * 正文为空时不输出空的"交接正文："段，避免产物里出现没有内容的标题行。
+ */
+function handoffPayload(entry: HandoffEntry, options: ShowMdOptions): string {
+  if (entry.body.length === 0) return entry.structure;
+  return `${entry.structure}\n\n交接正文：\n${truncateText(entry.body, options.truncate)}`;
+}
+
+/**
  * 渲染一条时间线条目（标签行 ＋ 正文载体），或计入隐藏计数，或返回 null（该事件不产出条目）。
  *
  * 拆分动机：`--head`/`--tail` 按"呈现条目数"截取，而不是按"事件数"截取——`turn/start`、
  * `turn/end`、`session/title` 等事件不产生条目，若先按事件截取会出现"要 5 条却一条都没显示"。
  *
+ * 交接条目（`handoff` 非 null）在类型分支之前短路：它是一类独立条目，不受 `--thinking`/`--tools`/
+ * `--events` 控制，也不计入任何隐藏计数（计数只统计"被隐藏的事件"，而它被专门呈现）；
+ * 仍受 `--turn`/`--seq` 与 `--head`/`--tail` 影响，因为 `--turn`/`--seq` 在事件层筛选、
+ * `--head`/`--tail` 在条目层截取，两者都作用于这里产出的条目。
+ *
  * 问答条目（`ask` 非 null）与原始工具条目是同一事件的两种形态：`--tools` 打开时先出原始条目、
  * 再出问答条目；关闭时该事件仍然产出问答条目。因此问答事件在 `--tools` 关闭时**不得**计入
  * `已隐藏 N 条工具调用/结果`——那会让调用方以为问答条目也被藏起来了，而它其实就在下一行。
- * `--role` 只过滤对话消息，工具与事件（含问答）不受影响。
+ * `--role` 只过滤对话消息，工具、事件与交接条目（含问答）不受影响。
  *
  * 默认排除的注入消息与调度回执由调用方计数并跳过（见 renderTimelineMd）：它们在此返回 null，
  * 若在本函数内计数，`--head`/`--tail` 的截取会让计数与"实际被跳过的事件数"脱节。
@@ -325,9 +343,13 @@ function timelineItem(
   options: ShowMdOptions,
   hidden: HiddenCounts,
   ask: AskUserEntry | null,
+  handoff: HandoffEntry | null,
 ): string[] | null {
   const type = eventType(event);
   const data = asRecord(event.data) ?? {};
+  if (handoff !== null) {
+    return fencedItem(`**${HANDOFF_LABEL}**`, event, options, handoffPayload(handoff, options));
+  }
   const items: string[] = [];
   if (type === "user/message") {
     if (options.role === "assistant") return null;
@@ -449,6 +471,7 @@ function renderTimelineMd(
   events: readonly EventRecord[],
   limitItems: boolean,
   askEntries: ReadonlyMap<EventRecord, AskUserEntry>,
+  handoffEntries: ReadonlyMap<EventRecord, HandoffEntry>,
   subagentCallIds: ReadonlySet<string>,
 ): { sections: string[]; hidden: HiddenCounts; shownItems: number } {
   const hidden: HiddenCounts = { reasoning: 0, tools: 0, events: 0, injections: 0, receipts: 0 };
@@ -466,7 +489,13 @@ function renderTimelineMd(
       hidden.receipts += 1;
       continue;
     }
-    const item = timelineItem(event, options, hidden, askEntries.get(event) ?? null);
+    const item = timelineItem(
+      event,
+      options,
+      hidden,
+      askEntries.get(event) ?? null,
+      handoffEntries.get(event) ?? null,
+    );
     if (item !== null) items.push(item);
   }
   let shown = items;
@@ -541,9 +570,11 @@ function renderNodeSections(
   const timelineMode = !options.probe && !options.summary;
   const probeMode = isRoot && options.probe;
   let askEntries: ReadonlyMap<EventRecord, AskUserEntry> = new Map();
+  let handoffEntries: ReadonlyMap<EventRecord, HandoffEntry> = new Map();
   let probe: ProbeReadout | null = null;
   // 问答抽取只在"会用到"时进行：时间线模式需要条目；探测模式需要计数（并会连带渲染完整副本，
   // 因此结构不符同样要在探测阶段暴露）。`--summary` 不输出这两类条目，`json`/`jsonl` 不走本函数。
+  // 交接抽取本身没有失败路径（结构字段缺失按空值契约显示 `-`），因此只在时间线模式下取值。
   if (timelineMode || probeMode) {
     const computed = analyzeAskUserEvents(node.file.decoded.events);
     if (!computed.success) return computed;
@@ -556,7 +587,10 @@ function renderNodeSections(
         askAnswers: computed.data.answerCount,
       };
     }
-    if (timelineMode) askEntries = askEntriesByEvent(computed.data);
+    if (timelineMode) {
+      askEntries = askEntriesByEvent(computed.data);
+      handoffEntries = analyzeHandoffEvents(node.file.decoded.events);
+    }
   }
   const sections: string[] = [nodeKvBlock(node, probe)];
   if (options.probe) {
@@ -571,7 +605,14 @@ function renderNodeSections(
     // 会话级事实，只按筛选后的子集计算会让筛选区间外的 `subagent` 调用失去配对，
     // 其回执随之被当成普通工具结果显示出来（同一事件因筛选条件不同而可见性不同）。
     const subagentCallIds = collectSubagentReplyCallIds(node.file.decoded.events);
-    const timeline = renderTimelineMd(options, ranged, isRoot, askEntries, subagentCallIds);
+    const timeline = renderTimelineMd(
+      options,
+      ranged,
+      isRoot,
+      askEntries,
+      handoffEntries,
+      subagentCallIds,
+    );
     sections.push(...timeline.sections);
     const filterText = filterSummaryMd(
       options,

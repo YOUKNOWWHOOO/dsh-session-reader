@@ -111,6 +111,12 @@ export const ASK_PAIRED_ID = "session-adv-ask-paired-17";
 export const ASK_UNPAIRED_ID = "session-adv-ask-unpaired-18";
 export const ASK_ERROR_ID = "session-adv-ask-error-19";
 export const ASK_MALFORMED_ID = "session-adv-ask-malformed-20";
+/**
+ * 交接夹具会话 id：一次完整交接（助手正文 → handoff 型 `developer/message` → 投递）加一个
+ * 非 handoff 型（`tool-registry`）`developer/message`。两者必须在同一会话里，门禁才能同时断言
+ * 「进 `**交接**` 条目」与「仍由 `--events` 按通用事件呈现」两条路径。
+ */
+export const HANDOFF_ID = "session-adv-handoff-21";
 /** 夹具主/子会话共用的工作目录（含空格、方括号与井号）。 */
 export const MAIN_CWD = "C:\\Users\\Alice\\user projects [v2] #tag_under";
 
@@ -307,7 +313,84 @@ function specialEvents(texts: readonly string[], title: string): FixtureEvent[] 
   return events;
 }
 
-/** 健康夹具：13 个会话（含子代理两代、空会话、projcache 缺失/版本/identity/部分四态）。 */
+/**
+ * 交接样本事件：助手正文 → handoff 型 `developer/message` → `agent/inbox/spliced` 投递，
+ * 另加一个非 handoff 型（`tool-registry`）`developer/message`。
+ *
+ * 交接正文只放在助手消息里，`developer/message` 的正文保持空数组（与当期插件写入形态一致），
+ * 因此 `**交接**` 条目只呈现结构事实，正文由 `**助手**` 条目承载。非 handoff 型样本与它同处
+ * 一个会话是有意的：门禁据此覆盖「进条目」与「仍由 `--events` 呈现」两条路径。
+ */
+function handoffSampleEvents(): FixtureEvent[] {
+  return [
+    ev("turn/start", 0, 10, { turn: 1 }),
+    ev(
+      "user/message",
+      1,
+      11,
+      { role: "user", content: [{ type: "text", text: "交接前的用户消息" }] },
+      { surfaceOp: "append" },
+    ),
+    ev(
+      "assistant/message",
+      2,
+      12,
+      {
+        turn: 1,
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "交接正文 `code`\n第二行" }],
+        },
+      },
+      { surfaceOp: "append" },
+    ),
+    ev(
+      "developer/message",
+      3,
+      13,
+      {
+        turn: 1,
+        step: 1,
+        message: { role: "developer", source: { kind: "handoff" }, content: [] },
+      },
+      { surfaceOp: { op: "replace", startSeq: 0, endSeq: 2 }, sourceEventSeqs: [0, 1, 2] },
+    ),
+    ev("agent/inbox/spliced", 4, 14, {
+      target: "next-step",
+      start: 0,
+      inserted: [
+        {
+          role: "user",
+          source: { kind: "user" },
+          content: [
+            {
+              type: "text",
+              text: "<compacted-summary>\n交接正文 `code`\n第二行\n</compacted-summary>",
+            },
+          ],
+        },
+      ],
+    }),
+    ev("developer/message", 5, 15, {
+      turn: 1,
+      step: 2,
+      message: { role: "developer", source: { kind: "tool-registry" }, content: [] },
+    }),
+    ev(
+      "assistant/message",
+      6,
+      16,
+      {
+        turn: 1,
+        message: { role: "assistant", content: [{ type: "text", text: "交接后的普通回答" }] },
+      },
+      { surfaceOp: "append" },
+    ),
+    ev("turn/end", 7, 17, { turn: 1, reason: { kind: "completed" } }),
+  ];
+}
+
+/** 健康夹具：含子代理两代、空会话、projcache 四态、问答样本与交接样本。 */
 export function healthySpec(): FixtureHomeSpec {
   return {
     sessions: [
@@ -548,6 +631,19 @@ export function healthySpec(): FixtureHomeSpec {
         turns: 1,
         steps: 1,
         lastPromptAt: 730,
+      },
+      // 交接样本。createdAt 与 lastPromptAt 同样取在现有最小值以下，`last` 仍指向 pcpart-13，
+      // 因此 `show last` 这类组合不会落到本样本上（本样本的期望是默认导出成功并产出交接条目）。
+      {
+        id: HANDOFF_ID,
+        projectDir: PROJECT_DIR,
+        cwd: MAIN_CWD,
+        createdAt: 640,
+        events: handoffSampleEvents(),
+        title: "交接夹具",
+        turns: 1,
+        steps: 2,
+        lastPromptAt: 740,
       },
     ],
     workspace: {

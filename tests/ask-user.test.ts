@@ -13,6 +13,7 @@ import {
 } from "../scripts/lib/ask-user.ts";
 import type { EventRecord } from "../scripts/lib/decode.ts";
 import {
+  askAnswerEnvelopedEvent,
   askAnswerEvent,
   askErrorResultEvent,
   askQuestionEvent,
@@ -393,5 +394,56 @@ describe("analyzeAskUserEvents 载荷结构不符", () => {
     });
     assert.equal(analyzeMismatch([question, missingMessage]).includes("回答事件"), true);
     assert.equal(analyzeMismatch([question, emptyContent]).includes("回答事件"), true);
+  });
+});
+
+describe("analyzeAskUserEvents 工具结果边界信封", () => {
+  const question = (): EventRecord =>
+    askQuestionEvent(2, 12, "c", [{ id: "q1", header: "H", question: "Q" }]);
+
+  /** 记录级回答事件：直接给出 content 的文本，用于"写入侧之外"的形态。 */
+  function answerWithText(text: string): EventRecord {
+    return record("tool/result", 3, {
+      message: { role: "tool", toolCallId: "c", content: [{ type: "text", text }] },
+    });
+  }
+
+  it("完整信封被剥离，抽取结果与裸 JSON 完全一致", () => {
+    const answers = [{ id: "q1", selected: ["选项 1"] }];
+    const plain = analyzeOk([question(), askAnswerEvent(3, 13, "c", answers)]);
+    const wrapped = analyzeOk([question(), askAnswerEnvelopedEvent(3, 13, "c", answers)]);
+    assert.deepEqual(
+      wrapped.entries.map((entry) => entry.text),
+      plain.entries.map((entry) => entry.text),
+    );
+    assert.equal(wrapped.answerCount, 1);
+    assert.equal(wrapped.questionCount, 1);
+  });
+
+  it("只切信封，不改写载荷字节（JSON 转义原样交给 JSON.parse）", () => {
+    const text =
+      '<dsh-result tool="ask_user_question" call="c">\n' +
+      '{"answers":[{"id":"q1","custom":"a\\/b"}]}\n' +
+      "</dsh-result>";
+    const analysis = analyzeOk([question(), answerWithText(text)]);
+    assert.equal(analysis.entries[1].text.includes("自定义：a/b"), true);
+  });
+
+  it("信封不完整（缺终点）判为载荷异常，不做尽力截取", () => {
+    const text = '<dsh-result tool="ask_user_question" call="c">\n{"answers":[]}';
+    const error = analyzeMismatch([question(), answerWithText(text)]);
+    assert.equal(error.includes("工具结果边界标记不完整"), true);
+  });
+
+  it("信封缺终点行（起点后无换行）判为载荷异常", () => {
+    const text = '<dsh-result tool="ask_user_question" call="c">';
+    const error = analyzeMismatch([question(), answerWithText(text)]);
+    assert.equal(error.includes("工具结果边界标记不完整"), true);
+  });
+
+  it("只有信封没有正文判为载荷异常", () => {
+    const text = '<dsh-result tool="ask_user_question" call="c">\n\n</dsh-result>';
+    const error = analyzeMismatch([question(), answerWithText(text)]);
+    assert.equal(error.includes("只有工具结果边界标记"), true);
   });
 });

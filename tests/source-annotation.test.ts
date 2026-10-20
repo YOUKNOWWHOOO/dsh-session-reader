@@ -123,9 +123,10 @@ function showText(overrides: Parameters<typeof showOptions>[0] = {}): string {
 }
 
 /**
- * 来源标注能力必须在 `--events` 下验证：默认可见性只保留 `user`、`compact-checkpoint`、
- * `subagent-settled`、`agent-message` 四种来源（见 visibility.ts），`plugin`、未知 kind 与缺失
- * source 的消息默认被排除，因此标注能力需要显式显示被排除项才能观察到。
+ * 来源标注能力必须在 `--events` 下验证：默认可见性只保留 `user`、`compact-checkpoint`（历史取值，
+ * 当期日志不出现，见 visibility.ts）、`subagent-settled`、`agent-message`、`user-question-reply`
+ * 五种来源，`plugin`、未知 kind 与缺失 source 的消息默认被排除，
+ * 因此标注能力需要显式显示被排除项才能观察到。
  */
 function showTextWithInjections(overrides: Parameters<typeof showOptions>[0] = {}): string {
   return showMd(node([], EVENTS), showOptions({ events: true, ...overrides })).content;

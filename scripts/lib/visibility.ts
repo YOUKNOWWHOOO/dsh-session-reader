@@ -4,9 +4,9 @@
 // collectSubagentReplyCallIds（子代理调用回执的识别集合）、injectedEventCount（排除计数）。
 // 设计约束：
 // 1. 判据只能是日志字段（`user/message` 的 `data.source.kind`、事件 type、`tool/call` 的 `name` 与
-//    `callId`），禁止任何文本匹配。理由：同一注入换个文案就会漏；`<dsh-injection …>` 标签被
-//    `tool-jobs`、`agent-message`、`subagent-settled` 三类共用；`<system-reminder>` 也可能出现在
-//    用户本人输入里。凭标签或文案判定必然误判。
+//    `callId`），禁止任何文本匹配。理由：同一注入换个文案就会漏；`<dsh-injection …>` 由多种注入
+//    共用（类别集合随部署扩展），`<dsh-result …>` 只出现在工具结果上；`<system-reminder>` 也可能
+//    出现在用户本人输入里。凭标签或文案判定必然误判。
 // 2. 保留名单是"白名单"：名单外的 `source.kind` 一律排除。框架与插件的来源种类是合并可扩展的
 //    联合，黑名单必然漏掉未来新增的注入；白名单的失效方向是"新种类默认不显示"，属于安全方向。
 // 3. 本模块只判定"默认是否可见"，不决定用户显式要求查看时（`--events`）是否出现——那是渲染层
@@ -18,7 +18,10 @@ import { asRecord, type EventRecord, eventType, readString } from "./decode.ts";
  *
  * 每一条的存在理由都是实测或官方契约的数据形态，不是推测：
  * - `user`：用户本人的输入。
- * - `compact-checkpoint`：压缩产生的交接指令，携带被遮蔽区间的全部关键结论。
+ * - `compact-checkpoint`：**历史取值**。旧版压缩检查点曾用它承载交接指令；当期日志（本机全量实测）
+ *   不出现该种类，交接改由 `developer/message`（`handoff` 型）与 `agent/inbox/spliced`
+ *   承载，并在渲染层由 `**交接**` 条目呈现（真值源见 handoff.ts）。保留在名单内不改变任何可见性：
+ *   它若出现仍按真实交流内容呈现；但不得再把它描述成当期交接指令的来源。
  * - `subagent-settled`：子代理结算回传，携带子代理的最终结论。
  * - `agent-message`：子代理或其它代理的中途发言。
  * - `user-question-reply`：用户对 `ask_user_question` 的**延迟回答**（提问仍在等待时用户之后作答），

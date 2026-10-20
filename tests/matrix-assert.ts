@@ -40,6 +40,7 @@ const LABEL_WHITELIST = new Set([
   "回答",
   "子代理任务",
   "发往子代理",
+  "交接",
 ]);
 const LABEL_LINE = /^\*\*([^*]+)\*\*/u;
 const FENCE_OPEN = /^(`{3,})text$/u;
