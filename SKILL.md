@@ -16,17 +16,6 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 ## 运行前提
 
 - 平台：Windows。
-- 本机安装桌面版 dsh，且至少使用过一次，`sessions/` 下有会话日志。开发与验证基线为 dsh `0.2.1-rc.2`、会话日志格式 v4；版本不符时会以解码失败暴露，不会按旧结构勉强读取。
-- 必须用桌面版 Electron-as-Node 执行脚本，因为官方格式库在桌面版安装归档内，只有桌面运行时能读取。用 PATH 中的系统 Node 运行会以 `内部错误` 退出 3。
-- 推荐用桌面版自带的 shim 执行。它会设置 `ELECTRON_RUN_AS_NODE=1` 并转发 `--expose-internals`，PowerShell 会等待它并回传退出码：
-
-  ```powershell
-  $env:DSH_DESKTOP_NODE_EXECUTABLE = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/DeepSeek Harness.exe'
-  $desktopNode = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/resources/runtime/bin/node.cmd'
-  ```
-
-- 也可以自行设置 `ELECTRON_RUN_AS_NODE=1`，再直接调用桌面版可执行文件，并按 shim 的做法附 `--expose-internals`。不要用裸 `&` 调用它，因为它是 GUI 子系统程序，裸 `&` 不等待进程，取不到 stdout 与退出码；需要退出码时用 `Start-Process -Wait -PassThru`。
-- dsh 主目录默认取 `$DSH_HOME`，否则 `~\.dsh`，可用 `--dsh-home` 覆盖。该路径不存在，或其下缺 `sessions\` 时退出 1。`--dsh-home` 只选数据根，不改变官方格式库的来源与版本；指向另一份会话数据时，两边版本各随其安装，错配只会以解码失败暴露。
 - 官方格式库默认取桌面版安装内的 `node_modules`，该目录必须同时含 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-session-format-catalog`。锚点不成立或库加载失败时退出 3 并说明原因。可用 `--lib-root <目录>` 覆盖，取值必须是含 `@deepseek-ai` 的 `node_modules`。
 - 全部命令必须显式指定 `--output-dir`，缺省退出 2。
 
@@ -48,7 +37,7 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 
 ## 命令
 
-脚本路径相对于本技能目录。示例中的 `<project_tmp>` 是项目临时目录占位符，`<desktop_node>` 是上文登记的执行载体。
+脚本路径相对于本技能目录。示例中的 `<project_tmp>` 是项目临时目录占位符，`<desktop_node>` 是运行本技能的桌面版 node 执行载体。
 
 ```text
 <desktop_node> scripts/session-reader.ts list   --output-dir <project_tmp> [--name <basename>] [--workspace <路径|标题>]
