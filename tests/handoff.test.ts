@@ -116,7 +116,7 @@ describe("isHandoffEvent 判定", () => {
 describe("analyzeHandoffEvents 结构事实", () => {
   it("给出轮次、步、替换区间与被替换事件数", () => {
     const handoff = handoffEvent(2, 3, 7);
-    const entries = analyzeHandoffEvents([handoff]);
+    const entries = analyzeHandoffEvents([handoff]).entries;
     const entry = entries.get(handoff);
     assert.notEqual(entry, undefined);
     assert.equal(
@@ -129,7 +129,7 @@ describe("analyzeHandoffEvents 结构事实", () => {
     const body = "交接正文 BODY";
     const assistant = assistantEvent(1, body);
     const handoff = handoffEvent(2, 1, 1);
-    const entries = analyzeHandoffEvents([assistant, handoff]);
+    const entries = analyzeHandoffEvents([assistant, handoff]).entries;
     const entry = entries.get(handoff);
     assert.notEqual(entry, undefined);
     assert.equal(
@@ -142,14 +142,18 @@ describe("analyzeHandoffEvents 结构事实", () => {
 
   it("相邻 agent/inbox/spliced 给出投递目标", () => {
     const handoff = handoffEvent(2, 1, 1);
-    const entries = analyzeHandoffEvents([handoff, splicedEvent(3, "next-step")]);
+    const entries = analyzeHandoffEvents([handoff, splicedEvent(3, "next-step")]).entries;
     assert.equal(entries.get(handoff)?.structure.endsWith("投递 next-step；正文 -"), true);
   });
 
   it("三段式完整时同时给出投递目标与正文定位", () => {
     const assistant = assistantEvent(1, "正文");
     const handoff = handoffEvent(2, 5, 2);
-    const entries = analyzeHandoffEvents([assistant, handoff, splicedEvent(3, "next-turn")]);
+    const entries = analyzeHandoffEvents([
+      assistant,
+      handoff,
+      splicedEvent(3, "next-turn"),
+    ]).entries;
     const entry = entries.get(handoff);
     assert.equal(entry?.structure.startsWith("轮次 5／步 2\n"), true);
     assert.equal(entry?.structure.endsWith(`（${String([..."正文"].length)} 字符）`), true);
@@ -159,7 +163,7 @@ describe("analyzeHandoffEvents 结构事实", () => {
   it("surfaceOp 不是 replace 时替换区间显示空值 -", () => {
     const handoff = handoffEvent(2, 1, 1, { surfaceOp: "append" });
     assert.equal(
-      analyzeHandoffEvents([handoff]).get(handoff)?.structure.includes("历史替换 -"),
+      analyzeHandoffEvents([handoff]).entries.get(handoff)?.structure.includes("历史替换 -"),
       true,
     );
   });
@@ -171,7 +175,7 @@ describe("analyzeHandoffEvents 结构事实", () => {
       message: { role: "developer", id: "m-2", source: { kind: HANDOFF_SOURCE_KIND }, content: [] },
     });
     assert.equal(
-      analyzeHandoffEvents([handoff]).get(handoff)?.structure.includes("历史替换 -"),
+      analyzeHandoffEvents([handoff]).entries.get(handoff)?.structure.includes("历史替换 -"),
       true,
     );
   });
@@ -181,7 +185,7 @@ describe("analyzeHandoffEvents 结构事实", () => {
       message: { role: "developer", id: "m-2", source: { kind: HANDOFF_SOURCE_KIND }, content: [] },
     });
     assert.equal(
-      analyzeHandoffEvents([handoff]).get(handoff)?.structure.startsWith("轮次 -／步 -"),
+      analyzeHandoffEvents([handoff]).entries.get(handoff)?.structure.startsWith("轮次 -／步 -"),
       true,
     );
   });
@@ -192,7 +196,7 @@ describe("analyzeHandoffEvents 结构事实", () => {
       message: { role: "system", id: "m-2", content: [{ type: "text", text: "系统" }] },
     });
     const handoff = handoffEvent(3, 1, 1);
-    const entries = analyzeHandoffEvents([earlier, middle, handoff]);
+    const entries = analyzeHandoffEvents([earlier, middle, handoff]).entries;
     assert.equal(entries.get(handoff)?.structure.endsWith("投递 -；正文 -"), true);
   });
 
@@ -207,7 +211,7 @@ describe("analyzeHandoffEvents 结构事实", () => {
         content: [{ type: "text", text: "交接正文 INLINE" }],
       },
     });
-    const entry = analyzeHandoffEvents([handoff]).get(handoff);
+    const entry = analyzeHandoffEvents([handoff]).entries.get(handoff);
     assert.equal(entry?.body, "交接正文 INLINE");
     assert.equal(entry?.structure.includes("INLINE"), false);
   });
@@ -217,7 +221,7 @@ describe("analyzeHandoffEvents 结构事实", () => {
       ev("user/message", 0, { role: "user", content: [], source: { kind: "user" } }),
       assistantEvent(1, "正文"),
       splicedEvent(3, "next-step"),
-    ]);
+    ]).entries;
     assert.equal(entries.size, 0);
   });
 
@@ -238,7 +242,9 @@ describe("analyzeHandoffEvents 结构事实", () => {
       { surfaceOp: { op: "replace", startSeq: 2, endSeq: 10 } },
     );
     assert.equal(
-      analyzeHandoffEvents([handoff]).get(handoff)?.structure.includes("历史替换 seq 2-10（-）"),
+      analyzeHandoffEvents([handoff])
+        .entries.get(handoff)
+        ?.structure.includes("历史替换 seq 2-10（-）"),
       true,
     );
   });
@@ -260,7 +266,7 @@ describe("analyzeHandoffEvents 结构事实", () => {
       { surfaceOp: { op: "replace" }, sourceEventSeqs: [2] },
     );
     assert.equal(
-      analyzeHandoffEvents([handoff]).get(handoff)?.structure.includes("历史替换 -"),
+      analyzeHandoffEvents([handoff]).entries.get(handoff)?.structure.includes("历史替换 -"),
       true,
     );
   });
@@ -282,7 +288,7 @@ describe("analyzeHandoffEvents 结构事实", () => {
       { surfaceOp: ["replace"], sourceEventSeqs: [2] },
     );
     assert.equal(
-      analyzeHandoffEvents([handoff]).get(handoff)?.structure.includes("历史替换 -"),
+      analyzeHandoffEvents([handoff]).entries.get(handoff)?.structure.includes("历史替换 -"),
       true,
     );
   });
@@ -298,7 +304,7 @@ describe("analyzeHandoffEvents 结构事实", () => {
     };
     const handoff = handoffEvent(2, 1, 1);
     assert.equal(
-      analyzeHandoffEvents([assistant, handoff]).get(handoff)?.structure.endsWith("正文 -"),
+      analyzeHandoffEvents([assistant, handoff]).entries.get(handoff)?.structure.endsWith("正文 -"),
       true,
     );
   });
@@ -307,7 +313,9 @@ describe("analyzeHandoffEvents 结构事实", () => {
     const handoff = handoffEvent(2, 1, 1);
     const numericTarget = ev("agent/inbox/spliced", 3, { target: 42, start: 0, inserted: [] });
     assert.equal(
-      analyzeHandoffEvents([handoff, numericTarget]).get(handoff)?.structure.includes("投递 -"),
+      analyzeHandoffEvents([handoff, numericTarget])
+        .entries.get(handoff)
+        ?.structure.includes("投递 -"),
       true,
     );
   });
@@ -335,7 +343,7 @@ describe("analyzeHandoffEvents 结构事实", () => {
         content: "文本",
       },
     });
-    assert.equal(analyzeHandoffEvents([handoff]).get(handoff)?.body, "");
+    assert.equal(analyzeHandoffEvents([handoff]).entries.get(handoff)?.body, "");
   });
 
   it("turn 与 step 不是数字时逐项显示空值 -", () => {
@@ -345,7 +353,7 @@ describe("analyzeHandoffEvents 结构事实", () => {
       message: { role: "developer", id: "m-2", source: { kind: HANDOFF_SOURCE_KIND }, content: [] },
     });
     assert.equal(
-      analyzeHandoffEvents([handoff]).get(handoff)?.structure.startsWith("轮次 -／步 -"),
+      analyzeHandoffEvents([handoff]).entries.get(handoff)?.structure.startsWith("轮次 -／步 -"),
       true,
     );
   });

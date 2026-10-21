@@ -8,16 +8,22 @@
 
 ### Added
 
+- 同时支持 dsh 随附 `standard` 预设与自定义 `dsh-custom` 预设（显示名“自定义模式”）产生的会话：两种预设的日志格式相同，差异只在内容层（注入包装、工具结果信封、上下文替换形态），读取行为由同一套字段与结构位置判据决定，不按预设名分支。
+- 默认导出的时间线新增 `**上下文摘要**` 条目，承载上下文替换的摘要正文，取代此前把它显示成 `**用户**` 的形态。两种来源共用该标签：标准模式官方压缩产生的检查点（`source.kind` 为 `compact-checkpoint`，保留检查点前言与 `<compacted-summary>` 标签块），以及自定义模式交接投递的 `<compacted-summary>` 用户消息（保留信封标签）。该条目默认可见、没有关闭开关，不受 `--thinking`/`--tools`/`--events`/`--role` 控制，不计入隐藏计数，仍受 `--turn`/`--seq` 与 `--head`/`--tail` 影响；`--summary` 与 json 的 `turns` 不把摘要正文当成用户 prompt；`--format json` 仍是 `user/message`。
+- 默认导出的时间线新增 `**交接指令**` 条目，承载自定义模式交接生成摘要前的协议提示词。判据是结构位置：生成正文（`surfaceOp.endSeq` 起按候选顺序取到的 `assistant/message`）的前一条事件，必须是 `source.kind` 为 `user` 且不带 `rpcId` 的用户消息；带 `rpcId` 的真实用户输入不改标。可见性与 `**交接**` 相同。
+- 子代理会话自身的首条任务消息（header 的 `origin` 为 `subagent`、首条 `source.kind` 为 `user` 且不带 `rpcId`）渲染为 `**子代理任务**`，不再伪装成 `**用户**`；带 `rpcId` 的真实消息不标。父会话中 `subagent` 工具调用的任务条目复用同一标签名。
+- 可读正文统一剥离**完整**部署包装：注入消息的 `<dsh-injection …>…</dsh-injection>`（子代理初始任务的两个顺序信封一并剥离）与普通工具结果的 `<dsh-result …>…</dsh-result>`。不完整或形态异常的包装原样显示，不做尽力截取；`show --format jsonl` 保留原始事件，是逐字核对与取回被剥离标记的唯一入口。
 - 默认导出的时间线新增 `**交接**` 条目：上下文交接的结构事实，来自 `developer/message` 且其 `data.message.source.kind` 为 `handoff` 的事件。条目恒为三行——`轮次 <turn>／步 <step>`、`历史替换 seq <start>-<end>（<n> 条事件）`、`投递 <target>；正文 seq <seq>（<字符数> 字符）`；字段缺失按空值契约显示 `-`。该条目默认可见、没有关闭开关，不受 `--thinking`/`--tools`/`--events` 控制（`--events` 打开时同一事件不再以 `**事件**` 形态重复出现），不受 `--role` 影响，仍受 `--turn`/`--seq` 与 `--head`/`--tail` 影响，且不计入任何隐藏计数；`--summary` 不输出该条目，`--format json` 不新增条目类型。
-- 交接条目**只给结构事实、不复制正文**：实测每次交接都是「`assistant/message`（交接正文）→ `developer/message`（`handoff`，空正文，承载 `surfaceOp: replace` 与 `sourceEventSeqs`）→ `agent/inbox/spliced`（同一正文加 `<compacted-summary>` 包裹后投递）」三段式，拼接载荷正文剥去包裹后与助手正文逐字相同；正文因此仍由既有的 `**助手**` 条目承载，避免同一段内容在产物中出现两次。
 
 ### Changed
 
-- 标签词表由 12 个取值扩为 13 个（新增 `**交接**`）；结构门禁白名单、`SKILL.md`、`README.md` 与开发规范同步。
-- 登记校正：`compact-checkpoint` 标注为**历史取值**（本机全量日志不出现该来源种类，交接改由 `developer/message` 的 `handoff` 型与 `agent/inbox/spliced` 承载），保留在默认保留名单内不改变任何可见性。
+- 标签词表由 12 个取值扩为 15 个（新增 `**交接**`、`**上下文摘要**`、`**交接指令**`，`**子代理任务**` 复用既有标签名）；结构门禁白名单为 14 个名字（`**工具结果**` 与 `**工具结果**（错误）` 共用一个名字），`SKILL.md`、`README.md` 与开发规范同步。
+- `**交接**` 条目只给结构事实、不复制正文：交接成功的落账顺序为「生成指令 `user/message` → `assistant/message`（交接正文）→ `developer/message`（`handoff`，空正文，承载 `surfaceOp: replace` 与 `sourceEventSeqs`）→ `agent/inbox/spliced` → 投递 `user/message`（同一正文加 `<compacted-summary>` 信封）」，正文改由随后的 `**上下文摘要**` 条目承载，助手生成副本在 md、json 与检索的 `text`/`tools` 档被抑制（仅当正文与信封内层逐字相同时）；找不到投递消息时维持旧行为，正文由紧邻其前的 `**助手**` 条目承载。
+- 登记校正：`compact-checkpoint` 是标准模式官方压缩检查点的来源（`standard` 预设的上下文替换形态），由渲染层呈现为 `**上下文摘要**`，不显示成 `**用户**`；本机真实库只有一次失败的 compaction 尝试、没有成功检查点样本，该形态的支持依据官方源码与合成夹具，未经真实数据验证。
+- 登记数据源差异：`list` 的 `agentPreset` 来自投影缓存，`show` 头部的 `- 预设：` 来自日志 header，两者对同一会话可能给出不同取值；判定以 `show` 头部为准，`list` 的值只作筛选线索。
 - 登记校正：`historicalChildCatalogSource` 更正为由 `@deepseek-ai/dsh-session-format-v3-to-v4` 导出（不在 `@deepseek-ai/dsh-session-format-catalog` 内），实现一直按两个包分别解析。
 - 登记新增已知边界：投影缓存的版本校验是严格等值（必须恰为当前版本），官方写入端接受若干兼容旧版本；升版后列表与统计的元数据会整体退化为「不可用」，届时须按当期版本更新常量，不得放宽为区间匹配。
-- 检索边界登记：`text` 与 `tools` 档不为 `**交接**` 条目另建检索单元（它只含结构元数据，正文已由 `assistant/message` 在 `text` 档可检索）；`all` 档仍含 `developer/message` 与 `agent/inbox/spliced` 的完整载荷。
+- 检索边界：`text` 与 `tools` 档新增 `上下文摘要`、`交接指令`、`子代理任务` 三个检索单元（单元名即标签名）；被抑制的助手副本在 `text` 与 `tools` 档不建字段单元（同一段正文已由 `**上下文摘要**` 承载），`all` 档仍保留整条事件载荷单元。`text` 与 `tools` 档仍不为 `**交接**` 条目另建检索单元（它只含结构元数据，正文由 `上下文摘要` 或 `assistant/message` 在 `text` 档可检索）；`all` 档仍含 `developer/message` 与 `agent/inbox/spliced` 的完整载荷。
 - 修复：部署侧的边界插件会给工具结果加一层 `<dsh-result …>` 信封，`ask_user_question` 的回答正文因此可能不是裸 JSON，此前会让这类会话的 `show` 以退出码 3 报 `数据不可读`。现在解析回答载荷前先剥离一个完整信封；不以起点开头的正文（旧日志与未启用该插件的部署）仍按裸 JSON 解析，信封不完整或剥离后为空仍判为载荷异常并整体失败，不做尽力截取。
 - 官方格式库的默认解析锚点改为**桌面版安装内的 `%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\app.asar\dsh\node_modules`**：不再探测 npm 缓存的 npx 安装树与 `<dsh-home>\profiles\node_modules`，也不设任何回退；理由是桌面安装归档是库的唯一权威位置，另两处只取决于某次安装或运行的历史痕迹（`_npx` 安装树可能仍然存在），存在性与版本都随本机状态漂移。锚点必须同时含 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-session-format-catalog`，缺少 `%LOCALAPPDATA%`、非 Windows 或锚点不成立即退出 3 并说明。`--lib-root` 仍是显式覆盖入口，语义与取值约束不变。
 - 运行载体说明同步为**桌面版 Electron-as-Node**：官方格式库位于 Electron 归档 `app.asar` 的虚拟路径内，只有桌面运行时能解析（PATH 中的系统 Node 解析不了该路径——其 `existsSync` 对归档内路径恒为 false——直接运行会以退出 3 失败）；因此所有命令示例改用桌面版执行载体占位符，`--lib-root` 的默认说明与错误文案同步指向新锚点。
@@ -28,6 +34,10 @@
 
 ### Fixed
 
+- 修复默认导出把部署包装标记原样显示在 `**用户**` 与 `**工具结果**` 正文中的问题：此前 `<dsh-injection …>` 与 `<dsh-result …>` 的起点与终点行会被当成消息内容呈现，现在只剥离完整信封。
+- 修复交接正文重复出现的问题：此前助手生成副本与投递消息各呈现一次，现在只由 `**上下文摘要**` 呈现一次。
+- 修复标准模式的压缩检查点被当成普通用户消息显示的问题：现在呈现为 `**上下文摘要**`，不再与用户输入混同。
+- 修复子代理会话首条任务消息与自定义模式交接生成指令被标成 `**用户**` 的问题：现在分别呈现为 `**子代理任务**` 与 `**交接指令**`。
 - 修复桌面版安装形态下默认组合无法加载官方格式库的问题（原探测路径只在 npm 缓存安装树下成立）。
 - 现行文档与注释的事实性修正：删除"npm 缓存 npx 安装树已不存在"这一失真的理由（该树可能因某次 `npx dsh` 仍留在本机），改为按"桌面安装归档是库的唯一权威位置"说明唯一锚点；`profiles` 一项按当前布局改写为 `<dsh-home>\profiles\node_modules` 已不在、实际是每个 profile 各自的 `node_modules`。
 - 现行文档与注释的口径修正：系统 Node 的限制改为"解析不了 `app.asar` 虚拟路径"（其 `existsSync` 对归档内路径恒为 false），直接调用桌面版可执行文件的说明按 shim 的做法补上 `--expose-internals` 并保留其非硬性前提的实测结论；删除"物理行数与逻辑事件数一致性校验"这一与实现不符的旧判据，改为按真实失败形态（结构违规、整份日志解码失败）描述；登记 `--dsh-home` 只选数据根、不改变库的来源与版本；`tests/paths.test.ts` 的用例名按其实际覆盖范围改写。

@@ -12,7 +12,7 @@
 // 错误态结果（`isError`/`data.error`，即提问被中止或取消）不在此列：它是正常产品形态，
 // 按"没有回答"处理而不是载荷异常，判据与理由见 `isErrorResult`。
 // 回答结果的正文可能被部署侧的边界插件包上 `<dsh-result …>…</dsh-result>` 信封，解析前必须先剥离
-// 一个完整信封（见 `stripResultEnvelope`）：信封是传输层标记，不是载荷的一部分。
+// 一个完整信封（见 deployment-text.ts 的严格版）：信封是传输层标记，不是载荷的一部分。
 // 结构与文案逐字依据 doc\开发规范.md 的「提问与回答契约」一节。
 
 import {
@@ -24,6 +24,7 @@ import {
   readString,
   textFromBlocks,
 } from "./decode.ts";
+import { stripResultEnvelope } from "./deployment-text.ts";
 import type { Result } from "./paths.ts";
 import { EMPTY_VALUE } from "./render-core.ts";
 
@@ -36,18 +37,6 @@ export const ASK_USER_ANSWER_LABEL = "回答";
 
 /** 载荷结构不符合预期时的固定原因文本（`search` 覆盖声明的排除原因；取值即对外契约）。 */
 export const ASK_USER_PAYLOAD_MISMATCH_REASON = "问答载荷结构不符合预期";
-
-/**
- * 工具结果边界信封的起点前缀，由部署侧的边界插件在工具结果进入会话前补上。
- *
- * 本技能只解析它、不生成它。形态登记在 doc\开发规范.md 的「提问与回答契约」：起点形如
- * `<dsh-result tool="…" call="…">`，其后紧跟一个换行；终点是换行加 `</dsh-result>`。
- * 起点带属性，属性值不含换行（写入侧已清洗），因此正文起点前的第一个换行恒为起点行的结尾。
- */
-const RESULT_ENVELOPE_OPEN = "<dsh-result ";
-
-/** 工具结果边界信封的终点，含终点前那一个换行（与起点后那个换行成对）。 */
-const RESULT_ENVELOPE_CLOSE = "\n</dsh-result>";
 
 /** 问答条目的标签类型。 */
 export type AskUserLabel = typeof ASK_USER_QUESTION_LABEL | typeof ASK_USER_ANSWER_LABEL;
@@ -110,34 +99,6 @@ function fieldText(record: Record<string, unknown>, key: string): Result<string,
   if (value === undefined) return { success: true, data: EMPTY_VALUE };
   if (typeof value !== "string") return { success: false, error: `字段 ${key} 不是字符串` };
   return { success: true, data: value };
-}
-
-/**
- * 剥离工具结果正文外层的边界信封。
- *
- * 部署侧的边界插件在工具结果进入会话前把它改写成 `起点行\n正文\n</dsh-result>`，信封因此
- * 与正文一起落账。问答载荷是 JSON 文本，直接解析会被起点行破坏，所以这里先剥一层。只认
- * 「整段恰好是一个完整信封」这一种形态：
- *
- * - 不以起点前缀开头时原样返回。旧日志与未启用该插件的部署里，正文就是裸 JSON。
- * - 以起点前缀开头但起点行缺失、或终点不在末尾时返回 null，由调用方判为载荷异常。这里不做
- *   "尽量截取"：半截信封下解析出的任何结果都不再等于被记录的那份载荷。
- *
- * 正文里的终点字面量在写入侧已转义为 `<\/dsh-result>`。该形态在 JSON 字符串内是合法转义，
- * `JSON.parse` 会还原成 `/`，因此这里不再反转义——反转义反而会改坏正文本身含反斜杠的正规载荷。
- *
- * Args:
- *   text: 工具结果全部文本块拼接后的正文。
- *
- * Returns:
- *   剥离后的正文；不是信封时为原正文；信封不完整时为 null。
- */
-function stripResultEnvelope(text: string): string | null {
-  if (!text.startsWith(RESULT_ENVELOPE_OPEN)) return text;
-  const openEnd = text.indexOf("\n");
-  if (openEnd < 0) return null;
-  if (!text.endsWith(RESULT_ENVELOPE_CLOSE)) return null;
-  return text.slice(openEnd + 1, text.length - RESULT_ENVELOPE_CLOSE.length);
 }
 
 /**

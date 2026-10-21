@@ -60,6 +60,14 @@ const KNOWN_KINDS: readonly string[] = [
   "goal",
   "webhook",
   "session-reference",
+  // 自定义模式新增的来源种类：全局规范消息、注入边界消息（runtime-context / user-question-reply
+  // 两侧的独立边界消息）。它们是部署侧插件声明的取值，裸写可读性高于行内载体。
+  "global-spec",
+  "injection-boundary",
+  // 标准模式官方压缩检查点：来源种类固定为 compact-checkpoint，由官方包声明。
+  "compact-checkpoint",
+  // 标准模式的工作目录变更通知（runtime-context 之外的独立注入消息）。
+  "working-directory",
 ];
 
 /** 取非空字符串字段：缺失、非字符串与空串一律视为"无该字段"。 */

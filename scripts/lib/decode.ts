@@ -6,6 +6,7 @@
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { stripInjectionEnvelopes, stripResultEnvelopeLenient } from "./deployment-text.ts";
 import { splitLines } from "./frames.ts";
 import type { Result } from "./paths.ts";
 
@@ -331,6 +332,20 @@ export function textFromBlocks(blocks: unknown): string {
   return parts.join("\n");
 }
 
+/**
+ * 拼接 `user/message` 事件的可读正文，并剥离部署侧的注入边界信封。
+ *
+ * 自定义模式会给注入消息加 `<dsh-injection …>…</dsh-injection>`（子代理初始任务还会顺序出现
+ * 两个信封）。这些是传输层标记，不是消息内容；md、json 与检索面统一用本函数取正文，
+ * `show --format jsonl` 仍保留原始事件。信封不完整时原样返回（见 deployment-text.ts）。
+ *
+ * @param event 已解码的逻辑事件（应为 `user/message`；其它类型按 `data.content` 尽力取）。
+ * @returns 剥离完整注入信封后的正文。
+ */
+export function userMessageText(event: EventRecord): string {
+  return stripInjectionEnvelopes(textFromBlocks(eventData(event).content));
+}
+
 /** 拼接 content 块中的 reasoning（推理）文本。 */
 export function reasoningFromBlocks(blocks: unknown): string {
   const array = asArray(blocks);
@@ -379,6 +394,11 @@ export function toolCallsFromBlocks(blocks: unknown): ToolCallBlock[] {
  * - 当前 v4：内容块是普通的 `{type:"text", text}`，与消息正文同形；
  * - 旧版本日志：内容是 `{type:"tool-result", content:[…]}` 的嵌套块。
  * 两种都取，互不影响（同一事件不会同时出现两种形态）。
+ *
+ * 自定义模式还会在结果正文外补一层 `<dsh-result …>…</dsh-result>` 信封；本函数剥离一个完整信封，
+ * 使两种预设下的同一逻辑结果给出同一可读正文。信封不完整时原样返回（展示面不依赖信封结构），
+ * 原始事件仍由 `show --format jsonl` 提供。问答载荷解析使用 deployment-text.ts 的严格版，
+ * 因为 JSON 解析必须区分「裸正文」与「半截信封」。
  */
 export function toolResultText(event: EventRecord): string {
   const data = eventData(event);
@@ -399,5 +419,5 @@ export function toolResultText(event: EventRecord): string {
     const nested = textFromBlocks(record.content);
     if (nested.length > 0) parts.push(nested);
   }
-  return parts.join("\n");
+  return stripResultEnvelopeLenient(parts.join("\n"));
 }

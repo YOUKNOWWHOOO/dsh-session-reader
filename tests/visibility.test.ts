@@ -51,6 +51,20 @@ describe("默认可见性判定", () => {
     }
   });
 
+  it("标准模式压缩检查点默认可见（由 **上下文摘要** 呈现，不属注入）", () => {
+    // 标准预设用官方压缩把历史替换为一条 `source.kind` 为 `compact-checkpoint` 的用户消息。
+    // 它必须留在保留名单内：若被判为注入，`--events` 关闭时整条摘要消失，会话历史出现断层。
+    assert.equal(KEPT_USER_MESSAGE_KINDS.includes("compact-checkpoint"), true);
+    const event = userMessage({ kind: "compact-checkpoint" });
+    assert.equal(isInjectedUserMessage(event), false);
+    assert.equal(isVisibleEvent(event, new Set()), true);
+    // 它也不参与注入计数：摘要不是被隐藏的框架消息，而是已由专门标签呈现的结构条目。
+    assert.deepEqual(countExcludedInjections([event], new Set()), {
+      userMessages: 0,
+      subagentReceipts: 0,
+    });
+  });
+
   it("延迟回答必在保留名单内（它可能承载唯一的答案记录）", () => {
     // 提问在等待中被中止、取消或超时时不产生配对的 tool/result，此时本技能不产出 `**回答**`
     // 条目，用户的选择与自定义回答只存在这条消息里；因此它必须默认可见。

@@ -1,0 +1,146 @@
+// 用途：部署侧边界标记的解析与剥离——`<dsh-injection …>…</dsh-injection>`（用户角色注入消息）与
+// `<dsh-result …>…</dsh-result>`（普通工具结果），以及普通消息交接的 `<compacted-summary>` 信封。
+// 主要入口：stripInjectionEnvelopes（宽松：完整才剥离，不完整原样返回）、stripResultEnvelope（严格：
+// 不完整返回 null，供问答载荷解析显式失败）、stripResultEnvelopeLenient（宽松：不完整原样返回）、
+// compactedSummaryBody（完整信封时取内层正文）。
+// 关键依赖：无（纯字符串函数，不依赖事件模型，便于单测与复用）。
+// 设计约束：
+// 1. 标记形态、转义规则与幂等判据的唯一实现处是 `$DSH_HOME/preset-lib/injection-boundary.mjs`；
+//    本文件只解析它产出的形态，不生成标记，也不维护第二份形态定义。写入侧把正文里的终点字面量
+//    转义为 `<\/…>`，因此「第一个未转义的终点」就是真实终点。
+// 2. 完整信封的判据只有三条且缺一不可：以起点前缀加一个空格开头、起点行在首个换行处结束、
+//    终点前有一个换行且其后紧接文本结尾或另一个换行（允许两个信封顺序排列）。剥离只认完整信封；
+//    不完整或形态异常时**原样返回**，不尽力截取——半截信封下截出的任何内容都不再等于被记录的那份正文。
+// 3. 严格版 stripResultEnvelope 保留旧行为：不以起点开头按原正文返回，以起点开头但不完整返回 null。
+//    问答载荷是内容载体，解析不出来必须整体失败；普通工具结果的展示没有这个依赖，因此用宽松版。
+// 4. 本模块不判断"该不该显示某条消息"（那是 visibility.ts 的职责），只负责把部署包装从可读正文中剥离。
+//    是否剥离由调用方按展示面决定：md/json/search 剥离，`--format jsonl` 保留原始事件。
+
+/** 注入标记的起点前缀（含一个空格，避免匹配到 `<dsh-injection-extra` 之类同前缀文本）。 */
+export const INJECTION_OPEN_PREFIX = "<dsh-injection ";
+
+/** 注入标记的终点字面量。 */
+export const INJECTION_CLOSE = "</dsh-injection>";
+
+/** 工具结果标记的起点前缀。 */
+export const RESULT_OPEN_PREFIX = "<dsh-result ";
+
+/** 工具结果标记的终点字面量。 */
+export const RESULT_CLOSE = "</dsh-result>";
+
+/** 交接摘要信封的起点（单独成行）。 */
+const SUMMARY_OPEN = "<compacted-summary>";
+
+/** 交接摘要信封的终点（单独成行）。 */
+const SUMMARY_CLOSE = "</compacted-summary>";
+
+/** 一个从文本起点开始的完整信封在文本中的位置。 */
+interface EnvelopeSpan {
+  /** 内层正文的起始下标（起点行之后）。 */
+  readonly innerStart: number;
+  /** 内层正文的结束下标（终点前那个换行处）。 */
+  readonly innerEnd: number;
+  /** 信封结束后的下标（终点字面量之后）。 */
+  readonly end: number;
+}
+
+/**
+ * 解析从 `text` 起点开始的一个完整信封。
+ *
+ * @param text 待解析文本。
+ * @param openPrefix 起点前缀（含其后的空格）。
+ * @param close 终点字面量。
+ * @returns 完整信封的位置；不是完整信封时返回 null。
+ */
+function leadingEnvelope(text: string, openPrefix: string, close: string): EnvelopeSpan | null {
+  if (!text.startsWith(openPrefix)) return null;
+  // 起点行必须在首个换行处结束，且该行必须以 `>` 收尾：标记形态是「属性 + >」，起点行内不应有正文。
+  // 少了这条检查时，`<dsh-injection …>正文\n</dsh-injection>` 会被当成空正文信封，正文被静默丢弃。
+  const openEnd = text.indexOf("\n");
+  if (openEnd < 0 || text[openEnd - 1] !== ">") return null;
+  // 终点前必须有一个换行，避免把正文里恰好出现的终点字面量当成终点。
+  const closeAt = text.indexOf(`\n${close}`, openEnd);
+  if (closeAt < 0) return null;
+  const end = closeAt + 1 + close.length;
+  // 终点之后只能是文本结尾或换行（后者用于两个信封顺序排列）；其它形态不猜。
+  if (end !== text.length && text[end] !== "\n") return null;
+  return { innerStart: openEnd + 1, innerEnd: closeAt, end };
+}
+
+/**
+ * 剥离文本起点处一个或多个完整注入信封。
+ *
+ * 子代理初始任务消息由两个顺序排列的信封组成（任务块与回报指引块），本函数按顺序全部剥离，
+ * 内层正文之间以一个换行连接。任何一个信封不完整，或剥离后仍有非空残余，都原样返回整个输入。
+ *
+ * @param text 已拼接的完整消息正文。
+ * @returns 剥离后的正文；没有可剥离的完整信封时返回原文。
+ */
+export function stripInjectionEnvelopes(text: string): string {
+  const parts: string[] = [];
+  let rest = text;
+  let stripped = false;
+  for (;;) {
+    const span = leadingEnvelope(rest, INJECTION_OPEN_PREFIX, INJECTION_CLOSE);
+    if (span === null) break;
+    stripped = true;
+    parts.push(rest.slice(span.innerStart, span.innerEnd));
+    rest = rest.slice(span.end);
+    // `leadingEnvelope` 已保证终点之后只可能是文本结尾或一个换行（第三条判据），因此这里只需处理
+    // 换行：它属于两个信封之间的分隔形态，不进入正文。终点后紧跟其它内容的形态已在判据处被拒。
+    if (rest.startsWith("\n")) rest = rest.slice(1);
+  }
+  if (!stripped) return text;
+  // 所有信封剥离后仍有残余内容：不能确定残余是否属于正文，原样返回。
+  if (rest.length > 0) return text;
+  return parts.join("\n");
+}
+
+/**
+ * 严格剥离工具结果外层的边界信封。
+ *
+ * 保留问答载荷解析的历史语义：不以起点前缀开头时原样返回（旧日志与未启用该插件的部署是裸正文）；
+ * 以起点开头但起点行缺失、或终点不在末尾时返回 null，由调用方判为载荷异常。
+ *
+ * @param text 工具结果全部文本块拼接后的正文。
+ * @returns 剥离后的正文；不是信封时为原正文；信封不完整时为 null。
+ */
+export function stripResultEnvelope(text: string): string | null {
+  if (!text.startsWith(RESULT_OPEN_PREFIX)) return text;
+  const span = leadingEnvelope(text, RESULT_OPEN_PREFIX, RESULT_CLOSE);
+  if (span === null) return null;
+  if (span.end !== text.length) return null;
+  return text.slice(span.innerStart, span.innerEnd);
+}
+
+/**
+ * 宽松剥离工具结果外层的边界信封，供展示面使用。
+ *
+ * 完整信封被剥离；不是信封或信封不完整时原样返回——展示面不依赖信封结构，原样显示比丢弃或
+ * 猜测更诚实。原始正文始终可由 `show --format jsonl` 取回。
+ *
+ * @param text 工具结果全部文本块拼接后的正文。
+ * @returns 剥离后的正文或原文。
+ */
+export function stripResultEnvelopeLenient(text: string): string {
+  if (!text.startsWith(RESULT_OPEN_PREFIX)) return text;
+  const span = leadingEnvelope(text, RESULT_OPEN_PREFIX, RESULT_CLOSE);
+  if (span === null || span.end !== text.length) return text;
+  return text.slice(span.innerStart, span.innerEnd);
+}
+
+/**
+ * 取 `<compacted-summary>` 信封的内层正文。
+ *
+ * 只认「整段恰好是一个完整信封」：起点在开头且单独成行、终点在末尾且单独成行。官方压缩检查点的
+ * 正文前面还有一段英文检查点前言，因此不满足本判据；本函数只用于识别普通消息交接投递的那条
+ * 用户消息（其正文由交接插件写成严格的 `<compacted-summary>\n…\n</compacted-summary>`）。
+ *
+ * @param text 已拼接的完整消息正文。
+ * @returns 内层正文；不是完整信封时返回 null。
+ */
+export function compactedSummaryBody(text: string): string | null {
+  if (!text.startsWith(`${SUMMARY_OPEN}\n`)) return null;
+  if (!text.endsWith(`\n${SUMMARY_CLOSE}`)) return null;
+  return text.slice(SUMMARY_OPEN.length + 1, text.length - SUMMARY_CLOSE.length - 1);
+}

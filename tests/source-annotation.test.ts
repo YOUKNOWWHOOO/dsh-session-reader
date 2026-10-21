@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { attributeSource } from "../scripts/lib/message-source.ts";
+import { attributeSource, describeSource } from "../scripts/lib/message-source.ts";
 import { renderSearchJson, renderShowJson } from "../scripts/lib/render-json.ts";
 import { renderSearchMd } from "../scripts/lib/render-md.ts";
 import { runSearch } from "../scripts/lib/store-search.ts";
@@ -123,9 +123,9 @@ function showText(overrides: Parameters<typeof showOptions>[0] = {}): string {
 }
 
 /**
- * 来源标注能力必须在 `--events` 下验证：默认可见性只保留 `user`、`compact-checkpoint`（历史取值，
- * 当期日志不出现，见 visibility.ts）、`subagent-settled`、`agent-message`、`user-question-reply`
- * 五种来源，`plugin`、未知 kind 与缺失 source 的消息默认被排除，
+ * 来源标注能力必须在 `--events` 下验证：默认可见性只保留 `user`、`compact-checkpoint`（标准模式
+ * 压缩检查点的来源，渲染为 `**上下文摘要**`）、`subagent-settled`、`agent-message`、
+ * `user-question-reply` 五种来源，`plugin`、未知 kind 与缺失 source 的消息默认被排除，
  * 因此标注能力需要显式显示被排除项才能观察到。
  */
 function showTextWithInjections(overrides: Parameters<typeof showOptions>[0] = {}): string {
@@ -203,6 +203,19 @@ describe("md 标签行的来源标注", () => {
     assert.equal(content.includes("**用户**（来源 team-message）："), true);
     // 含换行的会话 id 被载体吸收：换行折叠为空格、反引号使跨度加长，标签行仍是单行。
     assert.match(content, /^\*\*用户\*\*（来源 agent-message ``bad id`x``）：$/mu);
+  });
+
+  it("新增的已知来源种类裸写，不入行内载体", () => {
+    // 这四个取值由部署侧插件与官方压缩声明，为双模式支持补入已知词表；词表外取值仍走载体分支
+    // （由上一用例覆盖），两者的边界只由 message-source.ts 的词表决定。
+    for (const kind of [
+      "global-spec",
+      "injection-boundary",
+      "compact-checkpoint",
+      "working-directory",
+    ]) {
+      assert.equal(describeSource(attributeSource({ kind })), `来源 ${kind}`, `kind=${kind}`);
+    }
   });
 
   it("--headers 时括号内顺序为 seq → 本地时间 → 来源", () => {

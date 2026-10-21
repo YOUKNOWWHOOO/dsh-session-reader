@@ -314,12 +314,15 @@ function specialEvents(texts: readonly string[], title: string): FixtureEvent[] 
 }
 
 /**
- * 交接样本事件：助手正文 → handoff 型 `developer/message` → `agent/inbox/spliced` 投递，
- * 另加一个非 handoff 型（`tool-registry`）`developer/message`。
+ * 交接样本事件：生成指令 → 助手正文 → handoff 型 `developer/message` → `agent/inbox/spliced` 投递 →
+ * 投递消息（正文为 `<compacted-summary>` 信封），另加一个非 handoff 型（`tool-registry`）
+ * `developer/message`。
  *
- * 交接正文只放在助手消息里，`developer/message` 的正文保持空数组（与当期插件写入形态一致），
- * 因此 `**交接**` 条目只呈现结构事实，正文由 `**助手**` 条目承载。非 handoff 型样本与它同处
- * 一个会话是有意的：门禁据此覆盖「进条目」与「仍由 `--events` 呈现」两条路径。
+ * 正文只由 `**上下文摘要**` 条目承载：助手的生成副本被抑制，投递消息是模型可见正文的落点；
+ * 生成指令渲染为 `**交接指令**`（它的结构位置就是"生成正文的前一条、来源为 user、不带 rpcId"）。
+ * `developer/message` 的正文保持空数组（与当期插件写入形态一致），`**交接**` 条目只呈现结构事实
+ * 并用 seq 指向投递消息。非 handoff 型样本与它同处一个会话是有意的：门禁据此覆盖
+ * 「进条目」与「仍由 `--events` 呈现」两条路径。
  */
 function handoffSampleEvents(): FixtureEvent[] {
   return [
@@ -328,7 +331,13 @@ function handoffSampleEvents(): FixtureEvent[] {
       "user/message",
       1,
       11,
-      { role: "user", content: [{ type: "text", text: "交接前的用户消息" }] },
+      {
+        role: "user",
+        // 生成正文的前一条且不带 rpcId：按合成上下文消息契约，它就是交接生成指令，
+        // 门禁据此覆盖 `**交接指令**` 标签。
+        content: [{ type: "text", text: "从现在起，你唯一的任务是给出交接指令 PROMPT-MARK" }],
+        source: { kind: "user" },
+      },
       { surfaceOp: "append" },
     ),
     ev(
@@ -371,22 +380,38 @@ function handoffSampleEvents(): FixtureEvent[] {
         },
       ],
     }),
-    ev("developer/message", 5, 15, {
+    ev(
+      "user/message",
+      5,
+      15,
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "<compacted-summary>\n交接正文 `code`\n第二行\n</compacted-summary>",
+          },
+        ],
+        source: { kind: "user" },
+      },
+      { surfaceOp: "append" },
+    ),
+    ev("developer/message", 6, 16, {
       turn: 1,
       step: 2,
       message: { role: "developer", source: { kind: "tool-registry" }, content: [] },
     }),
     ev(
       "assistant/message",
-      6,
-      16,
+      7,
+      17,
       {
         turn: 1,
         message: { role: "assistant", content: [{ type: "text", text: "交接后的普通回答" }] },
       },
       { surfaceOp: "append" },
     ),
-    ev("turn/end", 7, 17, { turn: 1, reason: { kind: "completed" } }),
+    ev("turn/end", 8, 18, { turn: 1, reason: { kind: "completed" } }),
   ];
 }
 

@@ -18,10 +18,10 @@ import { asRecord, type EventRecord, eventType, readString } from "./decode.ts";
  *
  * 每一条的存在理由都是实测或官方契约的数据形态，不是推测：
  * - `user`：用户本人的输入。
- * - `compact-checkpoint`：**历史取值**。旧版压缩检查点曾用它承载交接指令；当期日志（本机全量实测）
- *   不出现该种类，交接改由 `developer/message`（`handoff` 型）与 `agent/inbox/spliced`
- *   承载，并在渲染层由 `**交接**` 条目呈现（真值源见 handoff.ts）。保留在名单内不改变任何可见性：
- *   它若出现仍按真实交流内容呈现；但不得再把它描述成当期交接指令的来源。
+ * - `compact-checkpoint`：标准模式官方压缩产生的检查点（`standard` 预设唯一的上下文替换形态）。
+ *   本名单只决定它不被判为注入；它由渲染层呈现为 `**上下文摘要**`（真值源见 context-checkpoint.ts），
+ *   而不是 `**用户**`。本机真实库尚无成功的检查点样本，该形态依据官方源码与合成夹具，未经真实
+ *   数据验证。
  * - `subagent-settled`：子代理结算回传，携带子代理的最终结论。
  * - `agent-message`：子代理或其它代理的中途发言。
  * - `user-question-reply`：用户对 `ask_user_question` 的**延迟回答**（提问仍在等待时用户之后作答），

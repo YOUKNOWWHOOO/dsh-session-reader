@@ -14,6 +14,13 @@ import {
   analyzeAskUserEvents,
 } from "./ask-user.ts";
 import {
+  analyzeContextCheckpoints,
+  CONTEXT_CHECKPOINT_LABEL,
+  type ContextAnalysis,
+  HANDOFF_PROMPT_LABEL,
+  SUBAGENT_TASK_LABEL,
+} from "./context-checkpoint.ts";
+import {
   asArray,
   asRecord,
   type EventRecord,
@@ -24,7 +31,9 @@ import {
   reasoningFromBlocks,
   textFromBlocks,
   toolResultText,
+  userMessageText,
 } from "./decode.ts";
+import { analyzeHandoffEvents } from "./handoff.ts";
 import { attributeSource, type SourceAttribution } from "./message-source.ts";
 import type { Result } from "./paths.ts";
 import {
@@ -104,17 +113,31 @@ function collectSearchUnits(
   scope: "text" | "tools" | "all",
   ask: AskUserEntry | null,
   replyCallIds: ReadonlySet<string>,
+  context: ContextAnalysis,
 ): SearchUnit[] {
   const type = eventType(event);
+  const seq = eventSeq(event);
   // 可见性与 show 默认参数同源：注入消息与调度回执在 `text`/`tools` 两档都不进检索单元，
   // 否则"默认检索不到"会与"默认提取里有"互相矛盾，调用方会把被排除读成不存在。
   // `all` 是穷尽档，不做过滤——它同时是取回被排除内容的唯一检索入口。
   if (scope !== "all" && !isVisibleEvent(event, replyCallIds)) return [];
+  // 已由 `上下文摘要` 承载正文的助手副本：`text`/`tools` 档不建字段单元（与 show 默认视图同口径），
+  // `all` 档仍保留整条事件载荷单元，因此逐字原文始终可检索。
+  const suppressed = seq !== undefined && context.suppressedAssistantSeqs.has(seq);
   const units: TextUnit[] = [];
   if (type === "user/message") {
-    const text = textFromBlocks(asRecord(event.data)?.content);
-    if (text.length > 0) units.push({ label: "user", text });
-  } else if (type === "assistant/message") {
+    const checkpoint = context.checkpoints.get(event);
+    const prompt = context.handoffPrompts.get(event);
+    if (checkpoint !== undefined) {
+      units.push({ label: CONTEXT_CHECKPOINT_LABEL, text: checkpoint.text });
+    } else if (prompt !== undefined) {
+      units.push({ label: HANDOFF_PROMPT_LABEL, text: prompt.text });
+    } else {
+      const text = userMessageText(event);
+      const label = context.subagentTask === event ? SUBAGENT_TASK_LABEL : "user";
+      if (text.length > 0) units.push({ label, text });
+    }
+  } else if (type === "assistant/message" && !suppressed) {
     const text = textFromBlocks(messageContent(event));
     if (text.length > 0) units.push({ label: "assistant", text });
   } else if (scope !== "text" && type === "tool/call") {
@@ -324,6 +347,12 @@ export function runSearch(
     }
     const askEntries = new Map<EventRecord, AskUserEntry>();
     for (const entry of askAnalysis.data.entries) askEntries.set(entry.event, entry);
+    const handoff = analyzeHandoffEvents(file.data.decoded.events);
+    const context = analyzeContextCheckpoints(
+      file.data.decoded.header,
+      file.data.decoded.events,
+      handoff,
+    );
     // 回执识别集合按整会话事件算出：配对关系是会话级事实，按筛选后的事件子集计算会漏掉配对。
     const replyCallIds = collectSubagentReplyCallIds(file.data.decoded.events);
     // 排除量按**本次作用域**累加，供产物声明"默认检索看不到多少条"：调用方据此判断 0 命中
@@ -340,6 +369,7 @@ export function runSearch(
         options.scope,
         askEntries.get(event) ?? null,
         replyCallIds,
+        context,
       )) {
         const haystack = options.caseSensitive ? unit.text : unit.text.toLowerCase();
         let from = 0;

@@ -115,6 +115,205 @@ describe("runSearch", () => {
   });
 });
 
+describe("runSearch 的合成上下文消息检索单元", () => {
+  // 独立 home：断言的命中标签与次数依赖样本内容，不复用其它夹具，避免牵连无关用例的精确计数。
+  const root = fileURLToPath(new URL("./.tmp/search-context", import.meta.url));
+  const PROJECT = "--C-Users-Alice--";
+  const scopeFilters = { origin: "all" as const };
+  const options = { caseSensitive: false, context: 200, limit: 0 };
+  let home: string;
+
+  function search(keyword: string, scope: "text" | "all") {
+    const outcome = runSearch(contextOf(home), keyword, scopeFilters, { ...options, scope });
+    assert.equal(outcome.success, true, "检索应成功");
+    if (!outcome.success) throw new Error("检索失败");
+    return outcome.data;
+  }
+
+  before(() => {
+    home = writeFixtureHome(resetTempDir(root), {
+      sessions: [
+        {
+          id: "session-ctx-handoff-01",
+          projectDir: PROJECT,
+          createdAt: 1000,
+          events: [
+            { type: "turn/start", seq: 0, time: 100, data: { turn: 1 } },
+            {
+              type: "user/message",
+              seq: 1,
+              time: 101,
+              data: {
+                role: "user",
+                content: [{ type: "text", text: "生成交接指令 PROMPT-MARK" }],
+                source: { kind: "user" },
+              },
+            },
+            {
+              type: "assistant/message",
+              seq: 2,
+              time: 102,
+              data: {
+                turn: 1,
+                message: {
+                  role: "assistant",
+                  content: [{ type: "text", text: "交接正文 BODY-MARK" }],
+                },
+              },
+            },
+            {
+              type: "developer/message",
+              seq: 3,
+              time: 103,
+              data: {
+                turn: 1,
+                step: 1,
+                message: { role: "developer", source: { kind: "handoff" }, content: [] },
+              },
+              surfaceOp: { op: "replace", startSeq: 1, endSeq: 2 },
+              sourceEventSeqs: [1, 2],
+            },
+            {
+              type: "agent/inbox/spliced",
+              seq: 4,
+              time: 104,
+              data: {
+                target: "next-step",
+                start: 0,
+                inserted: [
+                  {
+                    role: "user",
+                    source: { kind: "user" },
+                    content: [
+                      {
+                        type: "text",
+                        text: "<compacted-summary>\n交接正文 BODY-MARK\n</compacted-summary>",
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+            {
+              type: "user/message",
+              seq: 5,
+              time: 105,
+              data: {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: "<compacted-summary>\n交接正文 BODY-MARK\n</compacted-summary>",
+                  },
+                ],
+                source: { kind: "user" },
+              },
+            },
+            { type: "turn/end", seq: 6, time: 106, data: { turn: 1 } },
+          ],
+        },
+        {
+          id: "session-ctx-subagent-02",
+          projectDir: PROJECT,
+          createdAt: 1100,
+          origin: "subagent",
+          parentSession: "session-ctx-handoff-01",
+          events: [
+            { type: "turn/start", seq: 0, time: 200, data: { turn: 1 } },
+            {
+              type: "user/message",
+              seq: 1,
+              time: 201,
+              data: {
+                role: "user",
+                content: [{ type: "text", text: "子代理任务 TASK-MARK" }],
+                source: { kind: "user" },
+              },
+            },
+            {
+              type: "assistant/message",
+              seq: 2,
+              time: 202,
+              data: {
+                turn: 1,
+                message: { role: "assistant", content: [{ type: "text", text: "子代理回答" }] },
+              },
+            },
+            { type: "turn/end", seq: 3, time: 203, data: { turn: 1 } },
+          ],
+        },
+        {
+          id: "session-ctx-standard-03",
+          projectDir: PROJECT,
+          createdAt: 1200,
+          agentPreset: "standard",
+          events: [
+            { type: "turn/start", seq: 0, time: 300, data: { turn: 1 } },
+            {
+              type: "user/message",
+              seq: 1,
+              time: 301,
+              data: {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: "检查点前言\n\n<compacted-summary>\n摘要 CHECKPOINT-MARK\n</compacted-summary>",
+                  },
+                ],
+                source: { kind: "compact-checkpoint" },
+              },
+            },
+            {
+              type: "assistant/message",
+              seq: 2,
+              time: 302,
+              data: {
+                turn: 1,
+                message: { role: "assistant", content: [{ type: "text", text: "压缩后的回答" }] },
+              },
+            },
+            { type: "turn/end", seq: 3, time: 303, data: { turn: 1 } },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("text 档：三类合成消息各有独立单元名", () => {
+    assert.deepEqual(
+      search("PROMPT-MARK", "text").hits.map((hit) => hit.label),
+      ["交接指令"],
+    );
+    assert.deepEqual(
+      search("TASK-MARK", "text").hits.map((hit) => hit.label),
+      ["子代理任务"],
+    );
+    assert.deepEqual(
+      search("CHECKPOINT-MARK", "text").hits.map((hit) => hit.label),
+      ["上下文摘要"],
+    );
+  });
+
+  it("text 档：被抑制的助手副本不建单元，摘要正文只命中一次", () => {
+    const data = search("BODY-MARK", "text");
+    assert.deepEqual(
+      data.hits.map((hit) => hit.label),
+      ["上下文摘要"],
+    );
+    assert.equal(data.totalHits, 1);
+  });
+
+  it("all 档：被抑制副本的原始载荷仍可检索", () => {
+    const data = search("BODY-MARK", "all");
+    const labels = new Set(data.hits.map((hit) => hit.label));
+    assert.equal(labels.has("上下文摘要"), true);
+    // `all` 档保留整条事件载荷单元，因此被抑制的助手正文仍可检索到（逐字核对入口）。
+    assert.equal(labels.has("assistant/message"), true);
+    assert.equal(data.totalHits > 1, true);
+  });
+});
+
 describe("runSearch 的问答检索单元", () => {
   // 专用夹具 home：四种问答样本各自一个会话。检索断言的命中数依赖样本内容，
   // 因此不复用 store-helpers 的通用夹具（那会让无关用例的精确计数被牵动）。

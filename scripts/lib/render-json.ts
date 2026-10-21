@@ -8,6 +8,12 @@
 // 键序稳定、`null` 表示空值；字段名与嵌套形态是 json 形态的对外契约，不得改写。show 的 coverage 与 md
 // 同源同口径：作用域是本目标及其子树，可归属的排除项恒为空。每个 json 渲染函数与 md 侧同签名返回
 // `{ content, summary }`：摘要是 stdout 第二行，只能取自 render-summary.ts，CLI 不得自行拼接。
+
+import {
+  analyzeContextCheckpoints,
+  type ContextAnalysis,
+  checkpointSeqsOf,
+} from "./context-checkpoint.ts";
 import {
   asArray,
   asRecord,
@@ -19,7 +25,9 @@ import {
   reasoningFromBlocks,
   textFromBlocks,
   toolResultText,
+  userMessageText,
 } from "./decode.ts";
+import { analyzeHandoffEvents } from "./handoff.ts";
 import { attributeSource } from "./message-source.ts";
 import {
   computeEventStats,
@@ -91,28 +99,35 @@ export function renderListJson(outcome: ListOutcome): RenderedOutput {
  *
  * 注意 `meta` 的统计口径不受影响——`userMessages` 等计数描述整会话，不是本数组的条数。
  */
-function buildMessageEntries(file: DecodedSessionFile): Record<string, unknown>[] {
+function buildMessageEntries(
+  file: DecodedSessionFile,
+  context: ContextAnalysis,
+): Record<string, unknown>[] {
   const entries: Record<string, unknown>[] = [];
   const replyCallIds = collectSubagentReplyCallIds(file.decoded.events);
   for (const event of file.decoded.events) {
     if (!isVisibleEvent(event, replyCallIds)) continue;
+    const seq = eventSeq(event);
+    // 已由 `**上下文摘要**` 承载正文的助手副本不进入 messages（与 md 时间线同口径；
+    // 原始事件仍由 jsonl 提供）。
+    if (seq !== undefined && context.suppressedAssistantSeqs.has(seq)) continue;
     const type = eventType(event);
     const data = asRecord(event.data) ?? {};
     if (type === "user/message") {
       entries.push({
-        seq: eventSeq(event) ?? null,
+        seq: seq ?? null,
         time: eventTime(event) ?? null,
         type,
         role: "user",
         // 来源归属必须是对象而非 kind 字符串：调用方要能区分"用户本人"与"子代理中继/插件注入"，
         // 且对 `agent-message`/`subagent-settled` 还要能定位是哪个子代理（senderSessionId）。
         source: attributeSource(data.source),
-        text: textFromBlocks(data.content),
+        text: userMessageText(event),
       });
     } else if (type === "assistant/message") {
       const message = asRecord(data.message) ?? {};
       entries.push({
-        seq: eventSeq(event) ?? null,
+        seq: seq ?? null,
         time: eventTime(event) ?? null,
         type,
         role: "assistant",
@@ -122,7 +137,7 @@ function buildMessageEntries(file: DecodedSessionFile): Record<string, unknown>[
       });
     } else if (type === "tool/call") {
       entries.push({
-        seq: eventSeq(event) ?? null,
+        seq: seq ?? null,
         time: eventTime(event) ?? null,
         type,
         role: "tool",
@@ -134,7 +149,7 @@ function buildMessageEntries(file: DecodedSessionFile): Record<string, unknown>[
       const message = asRecord(data.message) ?? {};
       const source = asRecord(message.source) ?? {};
       entries.push({
-        seq: eventSeq(event) ?? null,
+        seq: seq ?? null,
         time: eventTime(event) ?? null,
         type,
         role: "tool",
@@ -144,7 +159,7 @@ function buildMessageEntries(file: DecodedSessionFile): Record<string, unknown>[
       });
     } else if (type === "system/message") {
       entries.push({
-        seq: eventSeq(event) ?? null,
+        seq: seq ?? null,
         time: eventTime(event) ?? null,
         type,
         role: "system",
@@ -174,6 +189,12 @@ function nodeToJson(node: SessionNode, includeMessages: boolean): Record<string,
   const header = node.file.decoded.header;
   const usage = sumUsage(node.file);
   const stats = computeEventStats(node.file);
+  const handoff = analyzeHandoffEvents(node.file.decoded.events);
+  const context = analyzeContextCheckpoints(
+    node.file.decoded.header,
+    node.file.decoded.events,
+    handoff,
+  );
   return {
     session: {
       id: node.entry.id,
@@ -207,13 +228,13 @@ function nodeToJson(node: SessionNode, includeMessages: boolean): Record<string,
       },
       anomalies: node.file.decoded.anomalies.map((anomaly) => anomaly.detail),
     },
-    turns: computeTurns(node.file).map((turn) => ({
+    turns: computeTurns(node.file, checkpointSeqsOf(context)).map((turn) => ({
       turn: turn.turn,
       seq: turn.seq,
       prompt: turn.prompt,
       response: turn.response,
     })),
-    messages: includeMessages ? buildMessageEntries(node.file) : [],
+    messages: includeMessages ? buildMessageEntries(node.file, context) : [],
     subagents: node.children.map((child) => nodeToJson(child, includeMessages)),
   };
 }

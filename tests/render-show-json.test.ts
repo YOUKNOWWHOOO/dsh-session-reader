@@ -62,6 +62,62 @@ describe("renderShowJson / renderShowJsonl", () => {
     );
   });
 
+  it("messages 不重复交接正文：摘要仍是 user/message，助手副本被抑制", () => {
+    const BODY = "交接正文 JSON-BODY-MARK";
+    const events: Record<string, unknown>[] = [
+      { type: "turn/start", seq: 0, time: 10, data: { turn: 1 } },
+      {
+        type: "assistant/message",
+        seq: 1,
+        time: 11,
+        data: {
+          turn: 1,
+          message: { role: "assistant", content: [{ type: "text", text: BODY }] },
+        },
+      },
+      {
+        type: "developer/message",
+        seq: 2,
+        time: 12,
+        data: {
+          turn: 1,
+          step: 1,
+          message: { role: "developer", source: { kind: "handoff" }, content: [] },
+        },
+        surfaceOp: { op: "replace", startSeq: 0, endSeq: 1 },
+        sourceEventSeqs: [0, 1],
+      },
+      {
+        type: "user/message",
+        seq: 3,
+        time: 13,
+        data: {
+          role: "user",
+          content: [{ type: "text", text: `<compacted-summary>\n${BODY}\n</compacted-summary>` }],
+          source: { kind: "user" },
+        },
+      },
+      { type: "turn/end", seq: 4, time: 14, data: { turn: 1 } },
+    ];
+    const document = JSON.parse(
+      renderShowJson(node([], events), {
+        summary: false,
+        subagents: false,
+        unattributable: [],
+      }).content,
+    ) as { messages: Array<{ type: string; text: string }> };
+    const copies = document.messages.filter((message) => message.text.includes(BODY));
+    assert.equal(copies.length, 1);
+    // json 不新增条目类型：摘要仍是 `user/message`，不是专门的条目。
+    assert.equal(copies[0]?.type, "user/message");
+    // jsonl 逐事件穷尽：助手副本与投递消息都保留在原始行里。
+    const lines = renderShowJsonl(node([], events))
+      .content.split("\n")
+      .filter((line) => line.length > 0);
+    assert.equal(lines.length, 1 + events.length);
+    assert.equal(lines.filter((line) => line.includes(BODY)).length, 2);
+  });
+
   it("JSONL：首行逻辑 header，其后逐事件", () => {
     const rendered = renderShowJsonl(node());
     const lines = rendered.content.split("\n").filter((line) => line.length > 0);

@@ -12,6 +12,16 @@
 // 载体承载，禁止直接拼进骨架。层规则见 render-core.ts 文件头。
 import { type AskUserAnalysis, type AskUserEntry, analyzeAskUserEvents } from "./ask-user.ts";
 import {
+  analyzeContextCheckpoints,
+  CONTEXT_CHECKPOINT_LABEL,
+  type ContextAnalysis,
+  type ContextCheckpoint,
+  checkpointSeqsOf,
+  HANDOFF_PROMPT_LABEL,
+  type HandoffPromptEntry,
+  SUBAGENT_TASK_LABEL,
+} from "./context-checkpoint.ts";
+import {
   asRecord,
   type EventRecord,
   eventSeq,
@@ -22,6 +32,7 @@ import {
   reasoningFromBlocks,
   textFromBlocks,
   toolResultText,
+  userMessageText,
 } from "./decode.ts";
 import { analyzeHandoffEvents, HANDOFF_LABEL, type HandoffEntry } from "./handoff.ts";
 import { attributeSource, describeSource } from "./message-source.ts";
@@ -147,7 +158,12 @@ function nodeKvBlock(node: SessionNode, probe: ProbeReadout | null): string {
  * 括号内的标注项顺序固定为 `seq N` → 本地时间 → 来源；前两项仅 `--headers` 出现，来源项恒出现
  * （仅 `user/message` 事件、且来源不是用户本人时）。无任何标注项时括号整体不出现。
  */
-function labelLine(base: string, event: EventRecord, options: ShowMdOptions): string {
+function labelLine(
+  base: string,
+  event: EventRecord,
+  options: ShowMdOptions,
+  includeSource = true,
+): string {
   const items: string[] = [];
   if (options.headers) {
     const seq = eventSeq(event);
@@ -155,7 +171,7 @@ function labelLine(base: string, event: EventRecord, options: ShowMdOptions): st
     items.push(`seq ${seq === undefined ? EMPTY_VALUE : String(seq)}`);
     items.push(time === undefined ? EMPTY_VALUE : formatLocalIso(time));
   }
-  const source = sourceAnnotationOf(event);
+  const source = includeSource ? sourceAnnotationOf(event) : null;
   if (source !== null) items.push(source);
   return items.length === 0 ? `${base}：` : `${base}（${items.join("；")}）：`;
 }
@@ -175,8 +191,9 @@ function fencedItem(
   event: EventRecord,
   options: ShowMdOptions,
   payloadRaw: string,
+  includeSource = true,
 ): string[] {
-  return [labelLine(base, event, options), fenceBlock(payloadRaw)];
+  return [labelLine(base, event, options, includeSource), fenceBlock(payloadRaw)];
 }
 
 /**
@@ -344,9 +361,49 @@ function timelineItem(
   hidden: HiddenCounts,
   ask: AskUserEntry | null,
   handoff: HandoffEntry | null,
+  checkpoint: ContextCheckpoint | null,
+  handoffPrompt: HandoffPromptEntry | null,
+  isSubagentTask: boolean,
+  suppressed: boolean,
 ): string[] | null {
   const type = eventType(event);
   const data = asRecord(event.data) ?? {};
+  // 由上下文摘要条目承载正文的助手副本：不呈现、不计入隐藏计数（它不是被开关藏起来的，
+  // 而是同一段正文的另一种承载形态；原始事件仍在 jsonl 中）。
+  if (suppressed) return null;
+  if (checkpoint !== null) {
+    // 摘要条目的标签本身已表达来源（标准压缩检查点或普通消息交接），不再追加 `来源` 标注；
+    // 它与 `**交接**` 一样不受 `--thinking`/`--tools`/`--events`/`--role` 控制。
+    return fencedItem(
+      `**${CONTEXT_CHECKPOINT_LABEL}**`,
+      event,
+      options,
+      truncateText(checkpoint.text, options.truncate),
+      false,
+    );
+  }
+  if (handoffPrompt !== null) {
+    // 交接生成指令是协议提示词，不是用户输入；与 `**交接**` 同一可见性。
+    return fencedItem(
+      `**${HANDOFF_PROMPT_LABEL}**`,
+      event,
+      options,
+      truncateText(handoffPrompt.text, options.truncate),
+      false,
+    );
+  }
+  if (isSubagentTask) {
+    // 子代理会话的首条任务消息由父代理写入，来源字段是 user；标签表达真实来源。
+    const text = userMessageText(event);
+    if (text.length === 0) return null;
+    return fencedItem(
+      `**${SUBAGENT_TASK_LABEL}**`,
+      event,
+      options,
+      truncateText(text, options.truncate),
+      false,
+    );
+  }
   if (handoff !== null) {
     return fencedItem(`**${HANDOFF_LABEL}**`, event, options, handoffPayload(handoff, options));
   }
@@ -355,7 +412,7 @@ function timelineItem(
     if (options.role === "assistant") return null;
     // 注入消息默认不呈现；`--events` 是显式恢复入口（与 `**系统消息**` 同一开关语义）。
     if (isInjectedUserMessage(event) && !options.events) return null;
-    const text = textFromBlocks(data.content);
+    const text = userMessageText(event);
     if (text.length === 0) return null;
     return fencedItem("**用户**", event, options, truncateText(text, options.truncate));
   }
@@ -472,11 +529,13 @@ function renderTimelineMd(
   limitItems: boolean,
   askEntries: ReadonlyMap<EventRecord, AskUserEntry>,
   handoffEntries: ReadonlyMap<EventRecord, HandoffEntry>,
+  context: ContextAnalysis,
   subagentCallIds: ReadonlySet<string>,
 ): { sections: string[]; hidden: HiddenCounts; shownItems: number } {
   const hidden: HiddenCounts = { reasoning: 0, tools: 0, events: 0, injections: 0, receipts: 0 };
   const items: string[][] = [];
   for (const event of events) {
+    const seq = eventSeq(event);
     // 计数与呈现必须用同一判据，否则摘要行会与实物矛盾：
     // - 注入消息：默认排除，`--events` 恢复（与 `system/message` 的显示开关同一入口）；
     // - 调度回执：默认不呈现（它不是子代理的回答），`--tools` 下作为工具结果显示，
@@ -495,6 +554,10 @@ function renderTimelineMd(
       hidden,
       askEntries.get(event) ?? null,
       handoffEntries.get(event) ?? null,
+      context.checkpoints.get(event) ?? null,
+      context.handoffPrompts.get(event) ?? null,
+      context.subagentTask === event,
+      seq !== undefined && context.suppressedAssistantSeqs.has(seq),
     );
     if (item !== null) items.push(item);
   }
@@ -530,8 +593,12 @@ function hiddenSummaryMd(hidden: HiddenCounts, options: ShowMdOptions): string {
  * 载体另设固定上限——"0 即不截断"若在某载体上被固定上限覆盖，调用方据 `--truncate 0` 推断全文
  * 就会读错。换行折叠为空格是单行载体的要求（每轮一条）。
  */
-function outlineSections(node: SessionNode, options: ShowMdOptions): string[] {
-  const turns = computeTurns(node.file);
+function outlineSections(
+  node: SessionNode,
+  options: ShowMdOptions,
+  context: ContextAnalysis,
+): string[] {
+  const turns = computeTurns(node.file, checkpointSeqsOf(context));
   if (turns.length === 0) return ["无"];
   return turns.map((turn) => {
     const prompt =
@@ -571,10 +638,16 @@ function renderNodeSections(
   const probeMode = isRoot && options.probe;
   let askEntries: ReadonlyMap<EventRecord, AskUserEntry> = new Map();
   let handoffEntries: ReadonlyMap<EventRecord, HandoffEntry> = new Map();
+  let context: ContextAnalysis = {
+    checkpoints: new Map(),
+    handoffPrompts: new Map(),
+    subagentTask: null,
+    suppressedAssistantSeqs: new Set(),
+  };
   let probe: ProbeReadout | null = null;
   // 问答抽取只在"会用到"时进行：时间线模式需要条目；探测模式需要计数（并会连带渲染完整副本，
-  // 因此结构不符同样要在探测阶段暴露）。`--summary` 不输出这两类条目，`json`/`jsonl` 不走本函数。
-  // 交接抽取本身没有失败路径（结构字段缺失按空值契约显示 `-`），因此只在时间线模式下取值。
+  // 因此结构不符同样要在探测阶段暴露）。`--summary` 不输出这些条目，但轮次大纲需要摘要事件
+  // 的 seq 来跳过摘要正文，因此摘要分析在时间线与轮次大纲两条路径上都要做。
   if (timelineMode || probeMode) {
     const computed = analyzeAskUserEvents(node.file.decoded.events);
     if (!computed.success) return computed;
@@ -589,15 +662,23 @@ function renderNodeSections(
     }
     if (timelineMode) {
       askEntries = askEntriesByEvent(computed.data);
-      handoffEntries = analyzeHandoffEvents(node.file.decoded.events);
     }
+  }
+  if (!options.probe) {
+    const handoff = analyzeHandoffEvents(node.file.decoded.events);
+    handoffEntries = handoff.entries;
+    context = analyzeContextCheckpoints(
+      node.file.decoded.header,
+      node.file.decoded.events,
+      handoff,
+    );
   }
   const sections: string[] = [nodeKvBlock(node, probe)];
   if (options.probe) {
     // 探测模式下不输出任何会话正文：产物只回答"有多大、有多少条"。
   } else if (options.summary) {
     sections.push(`${"#".repeat(level)} 轮次大纲`);
-    sections.push(...outlineSections(node, options));
+    sections.push(...outlineSections(node, options, context));
   } else {
     sections.push(`${"#".repeat(level)} 时间线`);
     const ranged = selectEvents(node.file.decoded.events, options);
@@ -611,6 +692,7 @@ function renderNodeSections(
       isRoot,
       askEntries,
       handoffEntries,
+      context,
       subagentCallIds,
     );
     sections.push(...timeline.sections);

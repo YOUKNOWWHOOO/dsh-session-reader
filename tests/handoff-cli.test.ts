@@ -3,7 +3,8 @@
 // 覆盖的三条对外契约：
 // 1. `**交接**` 默认可见、不受 `--thinking`/`--tools`/`--events` 控制，且同一事件只产出一条条目
 //    （`--events` 打开时不得再以通用 `**事件**` 形态出现第二次）；
-// 2. 条目只给结构事实，不复制交接正文——正文由相邻 `**助手**` 条目承载，避免同一段内容出现两次；
+// 2. 条目只给结构事实，不复制交接正文——交接成功时正文由 `**上下文摘要**` 条目承载一次，
+//    助手副本被抑制；生成指令另由 `**交接指令**` 条目承载；
 // 3. 非 handoff 型的 `developer/message`（`tool-registry`）不进交接条目，仍由 `--events` 控制。
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -40,7 +41,7 @@ function ev(
   return { type, seq, time: 1000 + seq, data, ...extra };
 }
 
-/** 交接正文 + 交接边界 + 投递 + 非交接型 developer/message 的完整会话。 */
+/** 交接正文 + 交接边界 + 投递消息 + 非交接型 developer/message 的完整会话。 */
 function handoffEvents(): FixtureEvent[] {
   return [
     ev("turn/start", 0, { turn: 1 }),
@@ -49,7 +50,8 @@ function handoffEvents(): FixtureEvent[] {
       1,
       {
         role: "user",
-        content: [{ type: "text", text: "用户正文 USER-MARK" }],
+        // 生成正文的前一条且不带 rpcId：按合成上下文消息契约，它是交接生成指令。
+        content: [{ type: "text", text: "从现在起，你唯一的任务是给出交接指令 PROMPT-MARK" }],
         source: { kind: "user" },
       },
       { surfaceOp: "append" },
@@ -83,27 +85,39 @@ function handoffEvents(): FixtureEvent[] {
           content: [
             {
               type: "text",
-              text: "<compacted-summary>\n投递正文 SPLICED-MARK\n</compacted-summary>",
+              text: `<compacted-summary>\n${BODY_MARK}\n</compacted-summary>`,
             },
           ],
         },
       ],
     }),
-    ev("developer/message", 5, {
+    ev(
+      "user/message",
+      5,
+      {
+        role: "user",
+        content: [
+          { type: "text", text: `<compacted-summary>\n${BODY_MARK}\n</compacted-summary>` },
+        ],
+        source: { kind: "user" },
+      },
+      { surfaceOp: "append" },
+    ),
+    ev("developer/message", 6, {
       turn: 1,
       step: 2,
       message: { role: "developer", source: { kind: "tool-registry" }, content: [] },
     }),
     ev(
       "assistant/message",
-      6,
+      7,
       {
         role: "assistant",
         message: { role: "assistant", content: [{ type: "text", text: NORMAL_MARK }] },
       },
       { surfaceOp: "append" },
     ),
-    ev("turn/end", 7, { turn: 1 }),
+    ev("turn/end", 8, { turn: 1 }),
   ];
 }
 
@@ -176,14 +190,17 @@ describe("交接条目的默认呈现", () => {
     assert.equal(content.includes("轮次 1／步 1"), true);
     assert.equal(content.includes("历史替换 seq 0-2（3 条事件）"), true);
     assert.equal(
-      content.includes(`投递 next-step；正文 seq 2（${String([...BODY_MARK].length)} 字符）`),
+      content.includes(`投递 next-step；正文 seq 5（${String([...BODY_MARK].length)} 字符）`),
       true,
     );
   });
 
-  it("不复制交接正文：正文只由助手条目出现一次", () => {
+  it("正文只由上下文摘要条目出现一次，助手副本被抑制，生成指令单独成条", () => {
     const { content } = showMd();
+    assert.equal(countOf(content, "**上下文摘要**："), 1);
     assert.equal(countOf(content, BODY_MARK), 1);
+    assert.equal(countOf(content, "**交接指令**："), 1);
+    assert.equal(content.includes("PROMPT-MARK"), true);
     // 投递正文不进默认视图（它在 spliced 事件里，属框架注入路径）。
     assert.equal(content.includes("SPLICED-MARK"), false);
   });
@@ -216,24 +233,26 @@ describe("交接条目的默认呈现", () => {
     assert.equal(content.includes("轮次 1／步 1"), false);
   });
 
-  it("--role 不影响交接条目", () => {
+  it("--role 不影响交接条目与上下文摘要条目", () => {
     const { content } = showMd(["--role", "user"]);
     assert.equal(countOf(content, "**交接**："), 1);
-    assert.equal(content.includes(BODY_MARK), false);
+    assert.equal(countOf(content, "**上下文摘要**："), 1);
+    assert.equal(content.includes(BODY_MARK), true);
   });
 
-  it("--format json 不新增条目类型：messages 里没有 developer/message", () => {
+  it("--format json 不新增条目类型：messages 里没有 developer/message，助手副本不重复", () => {
     const result = runCli(["show", MAIN_ID, ...baseArgs(), "--format", "json"]);
     assert.equal(result.status, 0, `show --format json 失败: ${result.stderr}`);
     const lines = result.stdout.split("\n").filter((line) => line.length > 0);
     const pathMatch = /^完整输出已保存到: (.+)$/u.exec(lines[0]);
     if (pathMatch === null) throw new Error("stdout 首行不符合契约");
     const document = JSON.parse(readFileSync(pathMatch[1], "utf8")) as {
-      messages: { type: string }[];
+      messages: { type: string; text: string }[];
     };
     const types = document.messages.map((message) => message.type);
     assert.equal(types.includes("developer/message"), false);
     assert.equal(types.includes("user/message"), true);
     assert.equal(types.includes("assistant/message"), true);
+    assert.equal(document.messages.filter((message) => message.text.includes(BODY_MARK)).length, 1);
   });
 });

@@ -19,7 +19,15 @@
 //   末尾追加一行单个空格（MD014）；正文以外的结构纪律见 assembleDocument 与各渲染函数注释。
 // - json：JSON.stringify(value, null, 2) + 换行；
 // - jsonl：首行逻辑 header，其后每行一个已解码事件（键序稳定）。
-import { asRecord, eventSeq, eventType, readNumber, readString, textFromBlocks } from "./decode.ts";
+import {
+  asRecord,
+  eventSeq,
+  eventType,
+  readNumber,
+  readString,
+  textFromBlocks,
+  userMessageText,
+} from "./decode.ts";
 import type { IntegerRange } from "./paths.ts";
 import type {
   CoverageSkip,
@@ -219,8 +227,14 @@ interface TurnSummary {
  * （`visibility.ts`），否则框架注入的消息会被当成用户提问写进大纲，而时间线里根本看不到它
  * （实测：某会话首轮 prompt 落到了 `user-approval` 的"审批策略已变更"通知上）。
  * response 取自 `assistant/message`，该类型不在注入过滤范围内，无需判定。
+ *
+ * `skipPromptSeqs` 由上下文摘要分析提供：标准压缩检查点与自定义交接投递消息不是用户提问，
+ * 轮次大纲不得把摘要正文当成 prompt；跳过它们后，该轮的下一条真实用户消息（若有）成为 prompt。
  */
-export function computeTurns(file: DecodedSessionFile): TurnSummary[] {
+export function computeTurns(
+  file: DecodedSessionFile,
+  skipPromptSeqs: ReadonlySet<number> = new Set(),
+): TurnSummary[] {
   const turns: TurnSummary[] = [];
   const replyCallIds = collectSubagentReplyCallIds(file.decoded.events);
   let current: {
@@ -232,17 +246,19 @@ export function computeTurns(file: DecodedSessionFile): TurnSummary[] {
   for (const event of file.decoded.events) {
     const type = eventType(event);
     const data = asRecord(event.data) ?? {};
+    const seq = eventSeq(event);
     if (type === "turn/start") {
       const turn = readNumber(data, "turn") ?? turns.length + 1;
-      current = { turn, seq: eventSeq(event) ?? -1, prompt: null, response: null };
+      current = { turn, seq: seq ?? -1, prompt: null, response: null };
       turns.push(current);
     } else if (
       type === "user/message" &&
       current !== null &&
       current.prompt === null &&
+      (seq === undefined || !skipPromptSeqs.has(seq)) &&
       isVisibleEvent(event, replyCallIds)
     ) {
-      const text = textFromBlocks(data.content);
+      const text = userMessageText(event);
       if (text.length > 0) current.prompt = text;
     } else if (type === "assistant/message" && current !== null) {
       const text = textFromBlocks(asRecord(data.message)?.content);
