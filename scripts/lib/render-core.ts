@@ -23,9 +23,9 @@ import {
   asRecord,
   eventSeq,
   eventType,
+  messageTextFromBlocks,
   readNumber,
   readString,
-  textFromBlocks,
   userMessageText,
 } from "./decode.ts";
 import type { IntegerRange } from "./paths.ts";
@@ -261,7 +261,7 @@ export function computeTurns(
       const text = userMessageText(event);
       if (text.length > 0) current.prompt = text;
     } else if (type === "assistant/message" && current !== null) {
-      const text = textFromBlocks(asRecord(data.message)?.content);
+      const text = messageTextFromBlocks(asRecord(data.message)?.content);
       if (text.length > 0) current.response = text;
     }
   }

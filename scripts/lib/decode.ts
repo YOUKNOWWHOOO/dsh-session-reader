@@ -6,7 +6,11 @@
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { stripInjectionEnvelopes, stripResultEnvelopeLenient } from "./deployment-text.ts";
+import {
+  stripInjectionEnvelopes,
+  stripMessageEnvelope,
+  stripResultEnvelopeLenient,
+} from "./deployment-text.ts";
 import { splitLines } from "./frames.ts";
 import type { Result } from "./paths.ts";
 
@@ -317,7 +321,13 @@ export function eventData(event: EventRecord): Record<string, unknown> {
   return asRecord(event.data) ?? {};
 }
 
-/** 拼接 content 块中的 text 文本；只计 type 为 text 且 text 为非空字符串的块。 */
+/**
+ * 拼接 content 块中的 text 文本；只计 type 为 text 且 text 为非空字符串的块。
+ *
+ * 本函数只做原始拼接，不做部署信封剥离。可读正文一律用 `messageTextFromBlocks`（对话消息）或
+ * `toolResultText`（工具结果）；仅当载体本身不承载信封时（`system/message`、`developer/message`、
+ * 请求体里的消息数组、`agent/inbox/spliced` 的待投递载荷）才直接调用本函数。
+ */
 export function textFromBlocks(blocks: unknown): string {
   const array = asArray(blocks);
   if (array === undefined) return "";
@@ -333,17 +343,36 @@ export function textFromBlocks(blocks: unknown): string {
 }
 
 /**
- * 拼接 `user/message` 事件的可读正文，并剥离部署侧的注入边界信封。
+ * 拼接对话消息（用户与助手）的可读正文，并剥离部署侧的两层边界信封。
  *
- * 自定义模式会给注入消息加 `<dsh-injection …>…</dsh-injection>`（子代理初始任务还会顺序出现
- * 两个信封）。这些是传输层标记，不是消息内容；md、json 与检索面统一用本函数取正文，
- * `show --format jsonl` 仍保留原始事件。信封不完整时原样返回（见 deployment-text.ts）。
+ * 自定义模式在落账侧给两条路径各加一层传输标记：注入消息是 `<dsh-injection …>…</dsh-injection>`
+ * （子代理初始任务顺序出现两个），真实用户消息与带文本块的 assistant 消息是
+ * `<dsh-message …>…</dsh-message>`。这些是传输层标记，不是消息内容；md、json 与检索面统一用
+ * 本函数取正文，`show --format jsonl` 仍保留原始事件。
+ *
+ * 顺序是先剥注入信封再剥消息信封：注入消息不会被消息信封包裹（部署侧对首块已以
+ * `<dsh-injection` 开头的消息跳过消息包裹），因此两步互不干扰；任一信封不完整时该层原样返回
+ * （见 deployment-text.ts），不做尽力截取。
+ *
+ * @param blocks 消息的 content 块数组（`user/message` 的 `data.content` 或 `assistant/message` 的
+ *   `data.message.content`）。
+ * @returns 剥离完整信封后的正文。
+ */
+export function messageTextFromBlocks(blocks: unknown): string {
+  return stripMessageEnvelope(stripInjectionEnvelopes(textFromBlocks(blocks)));
+}
+
+/**
+ * 拼接 `user/message` 事件的可读正文，并剥离部署侧的注入边界信封与消息信封。
+ *
+ * 是 `messageTextFromBlocks` 的事件级包装：摘要、交接指令与子代理任务等合成消息的正文都经此出口，
+ * 与助手正文共用同一套剥离规则。信封不完整时原样返回（见 deployment-text.ts）。
  *
  * @param event 已解码的逻辑事件（应为 `user/message`；其它类型按 `data.content` 尽力取）。
- * @returns 剥离完整注入信封后的正文。
+ * @returns 剥离完整信封后的正文。
  */
 export function userMessageText(event: EventRecord): string {
-  return stripInjectionEnvelopes(textFromBlocks(eventData(event).content));
+  return messageTextFromBlocks(eventData(event).content);
 }
 
 /** 拼接 content 块中的 reasoning（推理）文本。 */

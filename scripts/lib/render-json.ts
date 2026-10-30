@@ -20,6 +20,7 @@ import {
   eventSeq,
   eventTime,
   eventType,
+  messageTextFromBlocks,
   readNumber,
   readString,
   reasoningFromBlocks,
@@ -131,7 +132,7 @@ function buildMessageEntries(
         time: eventTime(event) ?? null,
         type,
         role: "assistant",
-        text: textFromBlocks(message.content),
+        text: messageTextFromBlocks(message.content),
         reasoning: reasoningFromBlocks(message.content),
         toolCalls: readToolCallBlocks(message.content),
       });

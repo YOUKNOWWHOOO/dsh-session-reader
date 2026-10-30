@@ -27,6 +27,7 @@ import {
   eventSeq,
   eventTime,
   eventType,
+  messageTextFromBlocks,
   readString,
   reasoningFromBlocks,
   textFromBlocks,
@@ -138,7 +139,7 @@ function collectSearchUnits(
       if (text.length > 0) units.push({ label, text });
     }
   } else if (type === "assistant/message" && !suppressed) {
-    const text = textFromBlocks(messageContent(event));
+    const text = messageTextFromBlocks(messageContent(event));
     if (text.length > 0) units.push({ label: "assistant", text });
   } else if (scope !== "text" && type === "tool/call") {
     const argumentsText = readString(asRecord(event.data) ?? {}, "arguments");

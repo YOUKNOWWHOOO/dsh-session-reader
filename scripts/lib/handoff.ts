@@ -12,8 +12,9 @@
 //    `**上下文摘要**`，助手副本从时间线、JSON messages 与检索的 `text`/`tools` 档中抑制；
 //    原始助手事件仍保留在日志与 `show --format jsonl` 中。若找不到投递消息，则维持旧行为：
 //    结构条目指向相邻的 `assistant/message` 正文。
-// 3. `<compacted-summary>` 是交付形态，不是任意文本锚点：只把「来源为 `user`、正文恰好是完整信封」
-//    的第一条用户消息认作投递；先遇到的其它用户消息（例如真实用户输入）会使本次交接判为「无投递」。
+// 3. `<compacted-summary>` 是交付形态，不是任意文本锚点：只把「来源为 `user`、正文剥离部署信封后
+//    恰好是完整信封」的第一条用户消息认作投递；先遇到的其它用户消息（例如真实用户输入）会使本次
+//    交接判为「无投递」。
 // 4. 结构字段缺失不是载荷异常：按空值契约显示 `-`，不让整条 `show` 失败。
 // 5. 本模块是这类内容在全技能范围内的单一真值源；md 渲染只消费这里的产出，禁止另行解析载荷。
 
@@ -23,11 +24,12 @@ import {
   type EventRecord,
   eventSeq,
   eventType,
+  messageTextFromBlocks,
   readNumber,
   readString,
   textFromBlocks,
 } from "./decode.ts";
-import { compactedSummaryBody, stripInjectionEnvelopes } from "./deployment-text.ts";
+import { compactedSummaryBody, stripNestedMessageEnvelope } from "./deployment-text.ts";
 import { EMPTY_VALUE } from "./render-core.ts";
 
 /** `**交接**` 标签取值（对外契约，不得改写；标签词表因此由 12 个扩为 13 个）。 */
@@ -143,9 +145,10 @@ function deliveryTargetOf(event: EventRecord | undefined): string {
  * 一次交接的投递事实。
  *
  * 判据只取字段与登记的信封形态：从交接事件之后按事件顺序寻找第一条 `source.kind === "user"`
- * 的用户消息；若它的正文是完整的 `<compacted-summary>` 信封，即为本次交接的投递消息。
- * 先遇到的其它来源（运行时上下文、技能目录、时间上下文等）跳过；先遇到一条普通用户消息
- * （正文不是该信封）则判为「无投递」，避免把用户自己粘贴的交接指令误认成插件投递。
+ * 的用户消息；把它的正文剥离部署信封（消息信封与注入信封）后是完整的 `<compacted-summary>` 信封，
+ * 即为本次交接的投递消息。先遇到的其它来源（运行时上下文、技能目录、时间上下文等）跳过；先遇到
+ * 一条普通用户消息（正文剥信封后不是该信封）则判为「无投递」，避免把用户自己粘贴的交接指令误认成
+ * 插件投递。
  *
  * @param events 会话的已解码逻辑事件。
  * @param handoffIndex 交接事件在数组中的下标。
@@ -166,10 +169,14 @@ function deliveryOf(events: readonly EventRecord[], handoffIndex: number): Hando
     const kind = readString(asRecord(data.source) ?? {}, "kind");
     // 注入类消息可能排在同一步的队列里；它们不是投递，继续向前找。
     if (kind !== "user") continue;
-    const text = stripInjectionEnvelopes(textFromBlocks(data.content));
-    const body = compactedSummaryBody(text);
-    if (body === null) return null;
-    return { event, target, body };
+    // 部署侧给真实用户消息套了 `<dsh-message>`，投递消息的正文因此不再以 `<compacted-summary>` 开头。
+    // 必须先剥掉这一层再判摘要信封，否则交接成功会被误判成「无投递」。
+    const text = messageTextFromBlocks(data.content);
+    const inner = compactedSummaryBody(text);
+    if (inner === null) return null;
+    // 内层是助手落账文本，带着 `<dsh-message role="assistant">` 与其被转义的终点；剥掉这一层残形，
+    // 与助手副本比较的才是两侧的纯正文。
+    return { event, target, body: stripNestedMessageEnvelope(inner) };
   }
   return null;
 }
@@ -202,7 +209,8 @@ function generationSeqCandidates(event: EventRecord): readonly number[] {
  */
 function bodyLocatorOf(previous: EventRecord | undefined): string {
   if (previous === undefined || eventType(previous) !== "assistant/message") return EMPTY_VALUE;
-  const text = textFromBlocks(asRecord(asRecord(previous.data)?.message)?.content);
+  // 助手消息同样被部署侧套了 `<dsh-message>`；字符数按剥离后的正文计，否则回溯坐标会带上信封长度。
+  const text = messageTextFromBlocks(asRecord(asRecord(previous.data)?.message)?.content);
   const seq = eventSeq(previous);
   if (seq === undefined) return EMPTY_VALUE;
   return `seq ${String(seq)}（${String(codePointsOf(text))} 字符）`;
@@ -232,7 +240,7 @@ function generationOf(
  *
  * 结构判据：生成正文的前一条事件是 `source.kind === "user"` 且不带 `rpcId` 的用户消息。
  * 带 `rpcId` 的是客户端提交的真实用户输入，不得改标；不带 `rpcId` 的才是交接插件写入的协议提示词。
- * 正文先剥离部署注入信封，再由渲染层按 `--truncate` 处理。
+ * 正文先剥离部署信封（注入信封与消息信封），再由渲染层按 `--truncate` 处理。
  */
 function promptOf(
   events: readonly EventRecord[],
@@ -246,7 +254,7 @@ function promptOf(
   if (readString(source, "rpcId") !== undefined) return undefined;
   return {
     event: previous,
-    text: stripInjectionEnvelopes(textFromBlocks(asRecord(previous.data)?.content)),
+    text: messageTextFromBlocks(asRecord(previous.data)?.content),
   };
 }
 
@@ -297,7 +305,11 @@ export function analyzeHandoffEvents(events: readonly EventRecord[]): HandoffAna
           : `seq ${String(deliverySeq)}（${String(codePointsOf(delivery.body))} 字符）`;
       deliveryLine = `投递 ${delivery.target}；正文 ${locator}`;
       if (generation !== undefined) {
-        const text = textFromBlocks(asRecord(asRecord(generation.event.data)?.message)?.content);
+        // 比较的双方都取剥离部署信封后的正文：助手消息在落账时也被 `<dsh-message>` 包裹，
+        // 直接比较原始拼接结果会恒不相等，助手副本因此永远不会被抑制。
+        const text = messageTextFromBlocks(
+          asRecord(asRecord(generation.event.data)?.message)?.content,
+        );
         if (text === delivery.body) suppressedAssistantSeqs.add(generation.seq);
       }
     }

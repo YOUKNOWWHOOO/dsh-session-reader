@@ -1,19 +1,29 @@
-// 用途：部署侧边界标记的解析与剥离——`<dsh-injection …>…</dsh-injection>`（用户角色注入消息）与
-// `<dsh-result …>…</dsh-result>`（普通工具结果），以及普通消息交接的 `<compacted-summary>` 信封。
-// 主要入口：stripInjectionEnvelopes（宽松：完整才剥离，不完整原样返回）、stripResultEnvelope（严格：
-// 不完整返回 null，供问答载荷解析显式失败）、stripResultEnvelopeLenient（宽松：不完整原样返回）、
-// compactedSummaryBody（完整信封时取内层正文）。
+// 用途：部署侧边界标记的解析与剥离——`<dsh-injection …>…</dsh-injection>`（用户角色注入消息）、
+// `<dsh-message role="…" …>…</dsh-message>`（真实用户消息与带文本块的 assistant 消息，即消息时间
+// 标记）、`<dsh-result …>…</dsh-result>`（普通工具结果），以及普通消息交接的 `<compacted-summary>` 信封。
+// 主要入口：stripInjectionEnvelopes（宽松：完整才剥离，不完整原样返回）、stripMessageEnvelope（宽松：
+// 消息信封最多一个且位于最外层）、stripResultEnvelope（严格：不完整返回 null，供问答载荷解析显式
+// 失败）、stripResultEnvelopeLenient（宽松：不完整原样返回）、compactedSummaryBody（完整信封时取内层
+// 正文）、stripNestedMessageEnvelope（交接摘要内层的消息信封残形）、cleanCompactedSummary（清理摘要
+// 内层残形并保留标签）。
 // 关键依赖：无（纯字符串函数，不依赖事件模型，便于单测与复用）。
 // 设计约束：
 // 1. 标记形态、转义规则与幂等判据的唯一实现处是 `$DSH_HOME/preset-lib/injection-boundary.mjs`；
 //    本文件只解析它产出的形态，不生成标记，也不维护第二份形态定义。写入侧把正文里的终点字面量
 //    转义为 `<\/…>`，因此「第一个未转义的终点」就是真实终点。
 // 2. 完整信封的判据只有三条且缺一不可：以起点前缀加一个空格开头、起点行在首个换行处结束、
-//    终点前有一个换行且其后紧接文本结尾或另一个换行（允许两个信封顺序排列）。剥离只认完整信封；
-//    不完整或形态异常时**原样返回**，不尽力截取——半截信封下截出的任何内容都不再等于被记录的那份正文。
+//    终点前有一个换行且其后紧接文本结尾或另一个换行（允许两个注入信封顺序排列）。三种信封共用
+//    这一组判据，只有起点前缀与终点字面量不同。剥离只认完整信封；不完整或形态异常时**原样返回**，
+//    不尽力截取——半截信封下截出的任何内容都不再等于被记录的那份正文。
 // 3. 严格版 stripResultEnvelope 保留旧行为：不以起点开头按原正文返回，以起点开头但不完整返回 null。
 //    问答载荷是内容载体，解析不出来必须整体失败；普通工具结果的展示没有这个依赖，因此用宽松版。
-// 4. 本模块不判断"该不该显示某条消息"（那是 visibility.ts 的职责），只负责把部署包装从可读正文中剥离。
+// 4. 消息信封没有严格版：它不承载需要解析的结构化载荷，展示面与检索面一律用宽松版。消息信封最多
+//    一个且是真实用户消息或 assistant 消息的最外层，因此不做顺序排列的循环；终点之后还有内容时
+//    不是完整信封，原样返回。
+// 5. 嵌套残形是唯一允许剥「非完整」形态的地方：它只作用于 `<compacted-summary>` 内层，判据三条
+//    缺一不可（消息起点前缀、起点行以 `>` 收尾、末尾是换行加转义终点），剥离只去掉起点行与转义
+//    终点行，不反转义也不改动正文。它不是「尽力截取」，而是写入侧两种包裹叠加后的确定结果。
+// 6. 本模块不判断"该不该显示某条消息"（那是 visibility.ts 的职责），只负责把部署包装从可读正文中剥离。
 //    是否剥离由调用方按展示面决定：md/json/search 剥离，`--format jsonl` 保留原始事件。
 
 /** 注入标记的起点前缀（含一个空格，避免匹配到 `<dsh-injection-extra` 之类同前缀文本）。 */
@@ -21,6 +31,12 @@ export const INJECTION_OPEN_PREFIX = "<dsh-injection ";
 
 /** 注入标记的终点字面量。 */
 export const INJECTION_CLOSE = "</dsh-injection>";
+
+/** 消息标记的起点前缀（含一个空格，避免匹配到 `<dsh-message-extra` 之类同前缀文本）。 */
+export const MESSAGE_OPEN_PREFIX = "<dsh-message ";
+
+/** 消息标记的终点字面量。 */
+export const MESSAGE_CLOSE = "</dsh-message>";
 
 /** 工具结果标记的起点前缀。 */
 export const RESULT_OPEN_PREFIX = "<dsh-result ";
@@ -130,6 +146,27 @@ export function stripResultEnvelopeLenient(text: string): string {
 }
 
 /**
+ * 宽松剥离对话消息外层的消息信封。
+ *
+ * 部署侧在会话 `append` 包装层给真实用户消息与带文本块的 assistant 消息各加一对 `<dsh-message>`，
+ * 起点行承载 `role`/`id`/`ts` 三个属性，终点行单独成形（纯工具调用的 assistant 消息不包裹）。
+ * 它是传输层标记而不是消息内容；md、json 与检索面统一用本函数取正文，`--format jsonl` 仍保留原始事件。
+ *
+ * 与工具结果的宽松版同形：完整即剥离，否则原样返回。消息信封没有严格版——它不承载需要解析的
+ * 结构化载荷，展示与检索不依赖信封结构，原样显示比丢弃或猜测更诚实。消息信封最多一个且位于
+ * 最外层，因此不做顺序排列的循环；终点之后还有内容时不是完整信封，原样返回。
+ *
+ * @param text 已拼接的完整消息正文。
+ * @returns 剥离后的正文；不是信封或信封不完整时为原文。
+ */
+export function stripMessageEnvelope(text: string): string {
+  if (!text.startsWith(MESSAGE_OPEN_PREFIX)) return text;
+  const span = leadingEnvelope(text, MESSAGE_OPEN_PREFIX, MESSAGE_CLOSE);
+  if (span === null || span.end !== text.length) return text;
+  return text.slice(span.innerStart, span.innerEnd);
+}
+
+/**
  * 取 `<compacted-summary>` 信封的内层正文。
  *
  * 只认「整段恰好是一个完整信封」：起点在开头且单独成行、终点在末尾且单独成行。官方压缩检查点的
@@ -143,4 +180,51 @@ export function compactedSummaryBody(text: string): string | null {
   if (!text.startsWith(`${SUMMARY_OPEN}\n`)) return null;
   if (!text.endsWith(`\n${SUMMARY_CLOSE}`)) return null;
   return text.slice(SUMMARY_OPEN.length + 1, text.length - SUMMARY_CLOSE.length - 1);
+}
+
+/**
+ * 消息终点的转义形态。
+ *
+ * 外层包裹对内层终点统一转义（`preset-lib/injection-boundary.mjs` 的 `wrapSegments`），转义后的
+ * 字面量是「反斜杠 + 斜杠 + 标签名」。本常量只用于识别嵌套残形的终点，不做任何反转义——反转义会
+ * 改坏正文本身含反斜杠的正规载荷。
+ */
+const ESCAPED_MESSAGE_CLOSE = "<\\/dsh-message>";
+
+/**
+ * 剥掉交接摘要内层的消息信封残形。
+ *
+ * 投递消息的内层是助手消息落账后的文本，因此带着一对 `<dsh-message>`；外层
+ * `<dsh-message role="user">` 又把它的终点转义为 `<\/dsh-message>`，使它不构成完整信封。
+ * 本函数只处理这一种确定形态，判据三条缺一不可：以消息起点前缀开头、起点行在首个换行处结束
+ * 且该行以 `>` 收尾、末尾是换行加转义终点。任一不满足即原样返回，不猜、不截取。
+ *
+ * 剥离只去掉起点行与转义终点行，不反转义，也不改动内层正文的任何字符。
+ *
+ * @param text 已取出的 `<compacted-summary>` 内层文本。
+ * @returns 剥掉残形后的正文；不是该形态时原样返回。
+ */
+export function stripNestedMessageEnvelope(text: string): string {
+  if (!text.startsWith(MESSAGE_OPEN_PREFIX)) return text;
+  const openEnd = text.indexOf("\n");
+  if (openEnd < 0 || text[openEnd - 1] !== ">") return text;
+  const suffix = `\n${ESCAPED_MESSAGE_CLOSE}`;
+  if (!text.endsWith(suffix)) return text;
+  return text.slice(openEnd + 1, text.length - suffix.length);
+}
+
+/**
+ * 清理交接摘要条目正文里内层的嵌套残形。
+ *
+ * 只对「整段恰好是一个 `<compacted-summary>` 信封」生效，判据与 `compactedSummaryBody` 相同；
+ * 官方压缩检查点的正文前面还有检查点前言，因此原样返回，不会被二次切分。清理后保留标签本身，
+ * 使调用方仍能从正文读出这是摘要而不是用户输入。
+ *
+ * @param text 已剥离外层消息信封的 `user/message` 正文。
+ * @returns 清理内层残形后的完整摘要文本；不是整段信封时原样返回。
+ */
+export function cleanCompactedSummary(text: string): string {
+  const inner = compactedSummaryBody(text);
+  if (inner === null) return text;
+  return `${SUMMARY_OPEN}\n${stripNestedMessageEnvelope(inner)}\n${SUMMARY_CLOSE}`;
 }

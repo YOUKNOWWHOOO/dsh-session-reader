@@ -27,6 +27,7 @@ import {
   eventSeq,
   eventTime,
   eventType,
+  messageTextFromBlocks,
   readNumber,
   readString,
   reasoningFromBlocks,
@@ -419,7 +420,7 @@ function timelineItem(
   if (type === "assistant/message") {
     if (options.role === "user") return null;
     const content = asRecord(data.message)?.content;
-    const text = textFromBlocks(content);
+    const text = messageTextFromBlocks(content);
     if (text.length > 0) {
       items.push(...fencedItem("**助手**", event, options, truncateText(text, options.truncate)));
     }

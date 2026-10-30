@@ -25,6 +25,7 @@ import {
   readString,
   userMessageText,
 } from "./decode.ts";
+import { cleanCompactedSummary } from "./deployment-text.ts";
 import type { HandoffAnalysis } from "./handoff.ts";
 
 /** `**上下文摘要**` 标签取值（对外契约，不得改写）。 */
@@ -43,7 +44,7 @@ export const COMPACT_CHECKPOINT_KIND = "compact-checkpoint";
 export interface ContextCheckpoint {
   /** 承载摘要正文的事件对象；渲染层按事件身份取回，范围筛选因此天然生效。 */
   readonly event: EventRecord;
-  /** 摘要正文（已剥离部署注入信封；标准检查点保留官方的检查点前言与标签）。 */
+  /** 摘要正文（已剥离部署信封；标准检查点保留官方的检查点前言与标签）。 */
   readonly text: string;
 }
 
@@ -119,7 +120,9 @@ export function analyzeContextCheckpoints(
   for (const delivery of handoff.deliveries.values()) {
     checkpoints.set(delivery.event, {
       event: delivery.event,
-      text: userMessageText(delivery.event),
+      // 交接投递的内层复制了助手落账文本，因此带着 `<dsh-message role="assistant">` 与其被转义的
+      // 终点；清理这一层残形后再呈现，标签本身保留。
+      text: cleanCompactedSummary(userMessageText(delivery.event)),
     });
   }
   const handoffPrompts = new Map<EventRecord, HandoffPromptEntry>();
