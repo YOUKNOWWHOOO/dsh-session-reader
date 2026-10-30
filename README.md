@@ -25,7 +25,17 @@ dsh 有两套代理预设：随附的 `standard` 与自定义的 `dsh-custom`（
 ## 适用环境
 
 - **平台**：Windows。技能的路径处理、输出文件名校验与文件移动语义都按 Windows 实现（例如拒绝 `CON`、`PRN`、`NUL`、`COM1`-`COM9`、`LPT1`-`LPT9` 这 22 个保留设备名）。
-- **执行载体**：必须是桌面版 DeepSeek Harness 的 Electron-as-Node。脚本是 TypeScript（ESM），由该运行时原生类型剥离直接执行，没有构建步骤，也不需要 `tsconfig.json` 参与运行。PATH 中的系统 Node（v26 线）同样能原生执行 TypeScript，但解析不了桌面版安装归档 `app.asar` 内的虚拟路径（其 `existsSync` 对归档内路径恒为 false），默认锚点因此定位不到、无法加载官方格式库；本技能不承诺用系统 Node 直接运行，这种用法只适用于用 `--lib-root` 指向真实目录的开发场景。可用的调用方式：`"$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\bin\node.cmd"`（该 shim 设置 `ELECTRON_RUN_AS_NODE=1` 并转发 `--expose-internals`，要求 `DSH_DESKTOP_NODE_EXECUTABLE` 指向桌面版可执行文件），或自行设置 `ELECTRON_RUN_AS_NODE=1` 再直接调用桌面版可执行文件并附 `--expose-internals`（按 shim 的做法；实测默认锚点下不附也能完成一次 `list`，故它按 shim 的一致性保留，而非硬性前提）。在 PowerShell 中优先用该 shim，它是 `.cmd`，PowerShell 会等待它并回传退出码；改为直接调用桌面版可执行文件时必须自行设置 `ELECTRON_RUN_AS_NODE=1` 并按 shim 的做法附 `--expose-internals`，且不要用裸 `&` 调用（桌面版可执行文件是 GUI 子系统程序，裸 `&` 不等待进程，stdout 与 `$LASTEXITCODE` 都取不到，实测），需要退出码时用 `Start-Process -Wait -PassThru`。
+- **执行载体**：必须是桌面版 DeepSeek Harness 的 Electron-as-Node。脚本是 TypeScript（ESM），由该运行时原生类型剥离直接执行，没有构建步骤，也不需要 `tsconfig.json` 参与运行。PATH 中的系统 Node（v26 线）同样能原生执行 TypeScript，但解析不了桌面版安装归档 `app.asar` 内的虚拟路径（其 `existsSync` 对归档内路径恒为 false），默认锚点因此定位不到、无法加载官方格式库；本技能不承诺用系统 Node 直接运行，这种用法只适用于用 `--lib-root` 指向真实目录的开发场景。
+
+  用法固定为两行设置加 `& $desktopNode` 调用：
+
+  ```powershell
+  $env:DSH_DESKTOP_NODE_EXECUTABLE = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/DeepSeek Harness.exe'
+  $desktopNode = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/resources/runtime/bin/node.cmd'
+  & $desktopNode scripts/session-reader.ts list --output-dir .\tmp
+  ```
+
+  该 shim 设置 `ELECTRON_RUN_AS_NODE=1` 并转发 `--expose-internals`，其第三行直接引用 `DSH_DESKTOP_NODE_EXECUTABLE`，缺这个变量时会以 `'""' is not recognized as an internal or external command`、退出码 1 失败。它是 `.cmd`，PowerShell 会等待并回传退出码，因此优先用它；改为直接调用桌面版可执行文件时必须自行设置 `ELECTRON_RUN_AS_NODE=1` 并按 shim 的做法附 `--expose-internals`，且不要用裸 `&` 调用（桌面版可执行文件是 GUI 子系统程序，裸 `&` 不等待进程，stdout 与 `$LASTEXITCODE` 都取不到，实测），需要退出码时用 `Start-Process -Wait -PassThru`。
 - **dsh**：本机需有一份可用的 dsh 安装。它需要提供两样东西，即会话数据本身，以及随发行版提供的官方会话格式库 `@deepseek-ai/dsh-session-format-catalog`。
 - **会话日志格式**：当前为 v4。技能通过官方格式库解码日志，不自行解析格式细节。
 - **主目录**：默认取环境变量 `DSH_HOME`，未设置时取 `~/.dsh`；可用 `--dsh-home` 覆盖。该目录不存在、或其下缺 `sessions/` 时，命令以退出码 1 结束。`--dsh-home` 只决定数据来源，不改变官方格式库的来源与版本——库恒取桌面版安装内那一份（或用 `--lib-root` 显式指定的那一份），因此指向另一份会话数据时，两边的版本各随其安装，错配只会以解码失败暴露。
@@ -135,50 +145,54 @@ dsh 有两套代理预设：随附的 `standard` 与自定义的 `dsh-custom`（
 
 ### 基本调用
 
-所有命令都必须显式给出 `--output-dir`，它没有默认值，缺省即退出码 2。惯例是指向项目临时目录。下例中的 `<desktop_node>` 是「适用环境」登记的桌面版 Electron-as-Node 执行载体。
+所有命令都必须显式给出 `--output-dir`，它没有默认值，缺省即退出码 2。惯例是指向项目临时目录。示例统一用 `& $desktopNode` 作为执行载体，变量在下列代码块开头设置一次即可。
 
 ```powershell
+# 设置执行载体，每个新会话执行一次
+$env:DSH_DESKTOP_NODE_EXECUTABLE = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/DeepSeek Harness.exe'
+$desktopNode = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/resources/runtime/bin/node.cmd'
+
 # 列出最近活动的 20 个会话
-<desktop_node> scripts/session-reader.ts list --output-dir .\tmp --limit 20
+& $desktopNode scripts/session-reader.ts list --output-dir .\tmp --limit 20
 
 # 只看某个工作区的会话，按大小排序
-<desktop_node> scripts/session-reader.ts list --output-dir .\tmp --workspace "C:\Users\me\project" --sort size
+& $desktopNode scripts/session-reader.ts list --output-dir .\tmp --workspace "C:\Users\me\project" --sort size
 
 # 只看子代理会话
-<desktop_node> scripts/session-reader.ts list --output-dir .\tmp --origin subagent
+& $desktopNode scripts/session-reader.ts list --output-dir .\tmp --origin subagent
 
 # 读取最近活动的主会话（默认只显示用户与助手消息）
-<desktop_node> scripts/session-reader.ts show last --output-dir .\tmp
+& $desktopNode scripts/session-reader.ts show last --output-dir .\tmp
 
 # 先量规模，再决定是否完整读取
-<desktop_node> scripts/session-reader.ts show last --output-dir .\tmp --probe
+& $desktopNode scripts/session-reader.ts show last --output-dir .\tmp --probe
 
 # 完整读取，含推理、工具调用与参数、工具结果，并标注事件序号与时间
-<desktop_node> scripts/session-reader.ts show last --output-dir .\tmp --thinking --tools --headers
+& $desktopNode scripts/session-reader.ts show last --output-dir .\tmp --thinking --tools --headers
 
 # 只看第 3 到第 5 轮里用户发出的消息
-<desktop_node> scripts/session-reader.ts show last --output-dir .\tmp --turn 3-5 --role user
+& $desktopNode scripts/session-reader.ts show last --output-dir .\tmp --turn 3-5 --role user
 
 # 先看轮次大纲
-<desktop_node> scripts/session-reader.ts show last --output-dir .\tmp --summary
+& $desktopNode scripts/session-reader.ts show last --output-dir .\tmp --summary
 
 # 连带子代理会话一起导出，并用 JSON 交给程序处理
-<desktop_node> scripts/session-reader.ts show last --output-dir .\tmp --subagents --format json
+& $desktopNode scripts/session-reader.ts show last --output-dir .\tmp --subagents --format json
 
 # 逐事件穷尽枚举，每行一个事件
-<desktop_node> scripts/session-reader.ts show last --output-dir .\tmp --format jsonl
+& $desktopNode scripts/session-reader.ts show last --output-dir .\tmp --format jsonl
 
 # 全库检索某个错误串，范围含所有事件载荷
-<desktop_node> scripts/session-reader.ts search "ECONNRESET" --output-dir .\tmp --scope all
+& $desktopNode scripts/session-reader.ts search "ECONNRESET" --output-dir .\tmp --scope all
 
 # 检索时排除自己这次会话及其子代理
-<desktop_node> scripts/session-reader.ts search "timeout" --output-dir .\tmp --scope all --exclude-session last
+& $desktopNode scripts/session-reader.ts search "timeout" --output-dir .\tmp --scope all --exclude-session last
 
 # 全局用量统计
-<desktop_node> scripts/session-reader.ts stats --output-dir .\tmp
+& $desktopNode scripts/session-reader.ts stats --output-dir .\tmp
 
 # 校验全库日志完整性
-<desktop_node> scripts/session-reader.ts check --output-dir .\tmp
+& $desktopNode scripts/session-reader.ts check --output-dir .\tmp
 ```
 
 ### 指定输出文件名
@@ -207,7 +221,7 @@ dsh 有两套代理预设：随附的 `standard` 与自定义的 `dsh-custom`（
 - 关键词以 `-` 开头时用 `--` 终止选项解析；必需选项要写在 `--` 之前：
 
   ```powershell
-  <desktop_node> scripts/session-reader.ts search --output-dir .\tmp -- "- item"
+  & $desktopNode scripts/session-reader.ts search --output-dir .\tmp -- "- item"
   ```
 
 - 目标的解析有三种结果：唯一匹配且可读时正常执行；匹配到多个会话时以退出码 1 报错并给出候选数；目标存在于磁盘但会话头不可读时以退出码 3 报 `数据不可读`，与"不存在"可以区分。其余无匹配以退出码 1 报 `目标不存在`。
@@ -305,13 +319,15 @@ doc/开发规范.md    开发与维护要求（契约、边界、测试与校验
 修改代码后依次运行（在技能目录下）：
 
 ```powershell
+$env:DSH_DESKTOP_NODE_EXECUTABLE = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/DeepSeek Harness.exe'
+$desktopNode = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/resources/runtime/bin/node.cmd'
 npm ci
 npx --no-install biome ci .                    # 格式化与 lint
 npx --no-install tsc --noEmit                  # 类型检查
-<desktop_node> --test "tests/**/*.test.ts"     # 测试
-<desktop_node> tests/lint-matrix.ts --workdir tests/.tmp/matrix --real-home $env:USERPROFILE\.dsh   # 全组合 lint 门禁
+& $desktopNode --test "tests/**/*.test.ts"     # 测试
+& $desktopNode tests/lint-matrix.ts --workdir tests/.tmp/matrix --real-home $env:USERPROFILE\.dsh   # 全组合 lint 门禁
 npx --no-install markdownlint-cli --config .markdownlint.jsonc .
-<desktop_node> --test --experimental-test-coverage --test-coverage-lines=80 --test-coverage-branches=85 "tests/**/*.test.ts"
+& $desktopNode --test --experimental-test-coverage --test-coverage-lines=80 --test-coverage-branches=85 "tests/**/*.test.ts"
 ```
 
 `node --test tests`（目录形式）在桌面版运行时的 Node 线（24.x）上不可用，故测试入口统一写 `"tests/**/*.test.ts"`；`npx` 在两种宿主下都可用（普通 Node 会忽略 `ELECTRON_RUN_AS_NODE`）。

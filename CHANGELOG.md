@@ -31,6 +31,7 @@
 - 开发与维护文档的校验链改用桌面版运行时执行，并把测试入口写成 `"tests/**/*.test.ts"` glob（目录形式 `--test tests` 在桌面版运行时的 Node 线上不可用）。
 - 测试以子进程驱动 CLI 与门禁时统一传递 `ELECTRON_RUN_AS_NODE=1`：`process.execPath` 在桌面版宿主下是 Electron 可执行文件，缺少该变量会让子进程被当作桌面应用启动。
 - 总帮助与各子命令帮助的用法行改用 `<desktop_node>` 占位符，并说明它指桌面版 Electron-as-Node 执行载体（原写法 `node session-reader.ts` 会被读成用 PATH 中的系统 Node 运行）；载体说明补上 shim 的 `DSH_DESKTOP_NODE_EXECUTABLE` 前提与它转发的 `--expose-internals`，使只读帮助的调用方不必另查文档即可凑齐调用参数。
+- `SKILL.md`、`README.md` 与开发规范的命令示例改为可直接复制的三步形态：先设置 `DSH_DESKTOP_NODE_EXECUTABLE`、再取得 shim 路径、最后用 `& $desktopNode` 调用。此前只写占位符，调用方漏设该变量时 shim 以 `'""' is not recognized`、退出码 1 失败，而文档没有给出足以避免该失败的信息。同时把这条要求写进开发规范，使后续文档改动必须维持可复制的完整命令。
 - 文档一致性修正：`SKILL.md` 命令块补回 `list` 的完整用法行，运行前提登记 PowerShell 直接调用桌面版可执行文件不等待、取不到退出码的边界；开发与验证基线更新为本机桌面版安装实物 `0.2.1-rc.3`。
 
 ### Fixed

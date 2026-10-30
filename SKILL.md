@@ -16,6 +16,14 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 ## 运行前提
 
 - 平台：Windows。
+- 执行载体：在运行本技能的 PowerShell 里先执行下列两条，后续示例中的 `& $desktopNode` 即用它运行。
+
+  ```powershell
+  $env:DSH_DESKTOP_NODE_EXECUTABLE = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/DeepSeek Harness.exe'
+  $desktopNode = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/resources/runtime/bin/node.cmd'
+  ```
+
+  shim 直接引用该环境变量，缺它时以 `'""' is not recognized`、退出码 1 失败。本文件的命令示例写 `& $desktopNode`，`--help` 输出的用法行写同义的 `<desktop_node>` 占位符。
 - 官方格式库默认取桌面版安装内的 `node_modules`，该目录必须同时含 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-session-format-catalog`。锚点不成立或库加载失败时退出 3 并说明原因。可用 `--lib-root <目录>` 覆盖，取值必须是含 `@deepseek-ai` 的 `node_modules`。
 - 全部命令必须显式指定 `--output-dir`，缺省退出 2。
 
@@ -33,24 +41,24 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 
 ## 命令
 
-脚本路径相对于本技能目录。示例中的 `<project_tmp>` 是项目临时目录占位符，`<desktop_node>` 是运行本技能的桌面版 node 执行载体。
+脚本路径相对于本技能目录。`<project_tmp>` 是项目临时目录占位符，`& $desktopNode` 是「运行前提」里设置的执行载体。
 
 ```text
-<desktop_node> scripts/session-reader.ts list   --output-dir <project_tmp> [--name <basename>] [--workspace <路径|标题>]
+& $desktopNode scripts/session-reader.ts list   --output-dir <project_tmp> [--name <basename>] [--workspace <路径|标题>]
                                       [--since <时间>] [--until <时间>] [--title <关键词>]
                                       [--origin all|main|subagent] [--include-blank] [--limit N]
                                       [--sort time|created|title|size|turns] [--full] [--format md|json]
-<desktop_node> scripts/session-reader.ts show   <id|唯一前缀|last> --output-dir <project_tmp> [--name <basename>] [--summary]
+& $desktopNode scripts/session-reader.ts show   <id|唯一前缀|last> --output-dir <project_tmp> [--name <basename>] [--summary]
                                       [--role user|assistant] [--thinking] [--tools] [--events] [--subagents]
                                       [--headers] [--truncate N] [--turn <A-B|A>] [--seq <A-B|A>]
                                       [--head N] [--tail N] [--probe] [--format md|json|jsonl]
-<desktop_node> scripts/session-reader.ts search <关键词> --output-dir <project_tmp> [--name <basename>] [--scope text|tools|all]
+& $desktopNode scripts/session-reader.ts search <关键词> --output-dir <project_tmp> [--name <basename>] [--scope text|tools|all]
                                       [--case-sensitive] [--context N] [--limit N] [--session <会话标识>]
                                       [--exclude-session <会话标识>] [--workspace <路径|标题>]
                                       [--since <时间>] [--until <时间>] [--origin all|main|subagent] [--format md|json]
-<desktop_node> scripts/session-reader.ts stats  [<id|唯一前缀|last>] --output-dir <project_tmp> [--name <basename>]
+& $desktopNode scripts/session-reader.ts stats  [<id|唯一前缀|last>] --output-dir <project_tmp> [--name <basename>]
                                       [--workspace/--since/--until/--origin；仅全局聚合可用] [--format md|json]
-<desktop_node> scripts/session-reader.ts check  [<id|唯一前缀|last>] --output-dir <project_tmp> [--name <basename>] [--format md|json]
+& $desktopNode scripts/session-reader.ts check  [<id|唯一前缀|last>] --output-dir <project_tmp> [--name <basename>] [--format md|json]
 ```
 
 全局选项为 `--dsh-home <路径>`、`--lib-root <目录>`、`--output-dir`、`--name`、`--format` 与 `-h/--help`。选项不可重复，否则退出 2；开关不接受值；支持 `--opt=value`；位置参数不终止选项解析。
@@ -102,12 +110,12 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 示例：
 
 ```text
-<desktop_node> scripts/session-reader.ts list --output-dir <project_tmp> --workspace <工作区路径> --limit 20 --name 会话清单
-<desktop_node> scripts/session-reader.ts show 39b27999 --output-dir <project_tmp> --thinking --tools
-<desktop_node> scripts/session-reader.ts show last --output-dir <project_tmp> --subagents --format json
-<desktop_node> scripts/session-reader.ts show last --output-dir <project_tmp> --turn 3-5
-<desktop_node> scripts/session-reader.ts show last --output-dir <project_tmp> --probe
-<desktop_node> scripts/session-reader.ts search compact --output-dir <project_tmp> --scope all
+& $desktopNode scripts/session-reader.ts list --output-dir <project_tmp> --workspace <工作区路径> --limit 20 --name 会话清单
+& $desktopNode scripts/session-reader.ts show 39b27999 --output-dir <project_tmp> --thinking --tools
+& $desktopNode scripts/session-reader.ts show last --output-dir <project_tmp> --subagents --format json
+& $desktopNode scripts/session-reader.ts show last --output-dir <project_tmp> --turn 3-5
+& $desktopNode scripts/session-reader.ts show last --output-dir <project_tmp> --probe
+& $desktopNode scripts/session-reader.ts search compact --output-dir <project_tmp> --scope all
 ```
 
 ## 默认调用
@@ -115,11 +123,11 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 默认调用只写命令、目标与 `--output-dir`，其余选项全部取默认值：
 
 ```text
-<desktop_node> scripts/session-reader.ts list                      --output-dir <project_tmp>
-<desktop_node> scripts/session-reader.ts show   <id|唯一前缀|last> --output-dir <project_tmp>
-<desktop_node> scripts/session-reader.ts search <关键词>            --output-dir <project_tmp>
-<desktop_node> scripts/session-reader.ts stats                     --output-dir <project_tmp>
-<desktop_node> scripts/session-reader.ts check                     --output-dir <project_tmp>
+& $desktopNode scripts/session-reader.ts list                      --output-dir <project_tmp>
+& $desktopNode scripts/session-reader.ts show   <id|唯一前缀|last> --output-dir <project_tmp>
+& $desktopNode scripts/session-reader.ts search <关键词>            --output-dir <project_tmp>
+& $desktopNode scripts/session-reader.ts stats                     --output-dir <project_tmp>
+& $desktopNode scripts/session-reader.ts check                     --output-dir <project_tmp>
 ```
 
 默认行为：
