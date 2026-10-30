@@ -32,6 +32,40 @@ const MAIN_ID = "session-handoff-main-01";
 const BODY_MARK = "交接正文 HANDOFF-BODY-MARK";
 const NORMAL_MARK = "普通回答 NORMAL-MARK";
 
+/** 部署侧消息时间标记的固定时间戳，形态取自 `preset-lib/injection-boundary.mjs` 的 RFC 3339 秒级带偏移。 */
+const MESSAGE_TS = "2026-10-29T22:59:57+08:00";
+
+/**
+ * 给对话消息正文套上部署侧的消息信封。
+ *
+ * 当期部署在会话 `append` 包装层给真实用户消息与带文本块的助手消息各加一对 `<dsh-message>`
+ * （纯工具调用的 assistant 消息不包裹）。夹具必须复现这一形态：投递判定与助手副本抑制的
+ * 回归只有在信封存在时才会暴露，不带信封的旧形态会让缺陷假通过。`id` 取值不是解析判据
+ * （剥离只认形态），此处用固定值保持夹具确定性。
+ *
+ * @param role 消息角色，取 `user` 或 `assistant`。
+ * @param text 原始正文（已被部署侧转义前的形态）。
+ * @returns 起点行、正文与终点行三段组成的信封形态。
+ */
+function enveloped(role: "user" | "assistant", text: string): string {
+  return `<dsh-message role="${role}" id="abcdef12" ts="${MESSAGE_TS}">\n${text}\n</dsh-message>`;
+}
+
+/**
+ * 投递消息的内层：助手落账文本被原样复制进摘要，外层包裹再把它的终点转义。
+ *
+ * 真实数据里投递消息的内层不是纯正文，而是「助手消息落账后的文本」：带着一对 `<dsh-message>`
+ * 与 `role`/`id`/`ts` 起点行；随后 `<dsh-message role="user">` 的外层包裹把它的终点转义为
+ * `<\/dsh-message>`（`preset-lib/injection-boundary.mjs` 的 `wrapSegments` 对三种终点统一转义）。
+ * 夹具必须复现这一形态，否则摘要正文的标记清理与助手副本抑制会在"内层是纯正文"的假形态下假通过。
+ *
+ * @param text 交接正文（助手消息的正文）。
+ * @returns 带助手消息标记、终点已转义的文本。
+ */
+function deliveryInner(text: string): string {
+  return enveloped("assistant", text).replace("</dsh-message>", "<\\/dsh-message>");
+}
+
 function ev(
   type: string,
   seq: number,
@@ -51,7 +85,12 @@ function handoffEvents(): FixtureEvent[] {
       {
         role: "user",
         // 生成正文的前一条且不带 rpcId：按合成上下文消息契约，它是交接生成指令。
-        content: [{ type: "text", text: "从现在起，你唯一的任务是给出交接指令 PROMPT-MARK" }],
+        content: [
+          {
+            type: "text",
+            text: enveloped("user", "从现在起，你唯一的任务是给出交接指令 PROMPT-MARK"),
+          },
+        ],
         source: { kind: "user" },
       },
       { surfaceOp: "append" },
@@ -61,7 +100,10 @@ function handoffEvents(): FixtureEvent[] {
       2,
       {
         role: "assistant",
-        message: { role: "assistant", content: [{ type: "text", text: BODY_MARK }] },
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: enveloped("assistant", BODY_MARK) }],
+        },
       },
       { surfaceOp: "append" },
     ),
@@ -97,7 +139,13 @@ function handoffEvents(): FixtureEvent[] {
       {
         role: "user",
         content: [
-          { type: "text", text: `<compacted-summary>\n${BODY_MARK}\n</compacted-summary>` },
+          {
+            type: "text",
+            text: enveloped(
+              "user",
+              `<compacted-summary>\n${deliveryInner(BODY_MARK)}\n</compacted-summary>`,
+            ),
+          },
         ],
         source: { kind: "user" },
       },
@@ -113,7 +161,10 @@ function handoffEvents(): FixtureEvent[] {
       7,
       {
         role: "assistant",
-        message: { role: "assistant", content: [{ type: "text", text: NORMAL_MARK }] },
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: enveloped("assistant", NORMAL_MARK) }],
+        },
       },
       { surfaceOp: "append" },
     ),
@@ -203,6 +254,11 @@ describe("交接条目的默认呈现", () => {
     assert.equal(content.includes("PROMPT-MARK"), true);
     // 投递正文不进默认视图（它在 spliced 事件里，属框架注入路径）。
     assert.equal(content.includes("SPLICED-MARK"), false);
+    // 消息信封是传输层标记：任何可读正文都不得带它的起点行或终点行。
+    assert.equal(content.includes("<dsh-message"), false);
+    assert.equal(content.includes("</dsh-message>"), false);
+    // 摘要内层的嵌套残形同样不得泄漏：正文里既没有助手起点行，也没有转义终点行。
+    assert.equal(content.includes("<\\/dsh-message>"), false);
   });
 
   it("非 handoff 型 developer/message 不进交接条目，且计入隐藏的生命周期事件", () => {
@@ -231,6 +287,9 @@ describe("交接条目的默认呈现", () => {
     const { content } = showMd(["--summary"]);
     assert.equal(content.includes("**交接**"), false);
     assert.equal(content.includes("轮次 1／步 1"), false);
+    // 轮次大纲的 response 同样取剥离后的助手正文，不得带信封标记。
+    assert.equal(content.includes(NORMAL_MARK), true);
+    assert.equal(content.includes("<dsh-message"), false);
   });
 
   it("--role 不影响交接条目与上下文摘要条目", () => {

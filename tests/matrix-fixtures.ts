@@ -135,6 +135,38 @@ function ev(
   return { type, seq, time, data: withSource, ...extra };
 }
 
+/** 部署侧消息时间标记的固定时间戳；形态取自 `preset-lib/injection-boundary.mjs` 的 RFC 3339 秒级带偏移。 */
+const MESSAGE_TS = "2026-10-29T22:59:57+08:00";
+
+/**
+ * 给对话消息正文套上部署侧的消息信封。
+ *
+ * 门禁夹具必须复现当期部署形态：真实用户消息与带文本块的 assistant 消息在会话 `append` 包装层
+ * 各被加一对 `<dsh-message>`（纯工具调用的 assistant 消息不包裹）。夹具只在交接样本上使用它——
+ * 其余样本的价值在于敌意内容本身，加信封只会让命中片段与快照更难对照。
+ *
+ * @param role 消息角色，取 `user` 或 `assistant`。
+ * @param text 原始正文。
+ * @returns 起点行、正文与终点行组成的信封形态。
+ */
+function enveloped(role: "user" | "assistant", text: string): string {
+  return `<dsh-message role="${role}" id="abcdef12" ts="${MESSAGE_TS}">\n${text}\n</dsh-message>`;
+}
+
+/**
+ * 投递摘要的内层：助手落账文本被原样复制进来，终点被外层包裹转义。
+ *
+ * 真实数据里投递消息的内层带着 `<dsh-message role="assistant">` 起点行，终点则是
+ * `<\/dsh-message>`（`preset-lib/injection-boundary.mjs` 的 `wrapSegments` 对外层正文的三种终点
+ * 统一转义）。门禁夹具必须复现这一形态，否则摘要正文的标记清理与助手副本抑制会在假形态下通过。
+ *
+ * @param text 交接正文。
+ * @returns 带助手消息标记、终点已转义的文本。
+ */
+function deliveryInner(text: string): string {
+  return enveloped("assistant", text).replace("</dsh-message>", "<\\/dsh-message>");
+}
+
 /** 主会话事件：把敌意内容分散注入到消息/工具/系统/压缩/命令/标题请求/web/交付物字段。 */
 function mainEvents(): FixtureEvent[] {
   return [
@@ -335,7 +367,12 @@ function handoffSampleEvents(): FixtureEvent[] {
         role: "user",
         // 生成正文的前一条且不带 rpcId：按合成上下文消息契约，它就是交接生成指令，
         // 门禁据此覆盖 `**交接指令**` 标签。
-        content: [{ type: "text", text: "从现在起，你唯一的任务是给出交接指令 PROMPT-MARK" }],
+        content: [
+          {
+            type: "text",
+            text: enveloped("user", "从现在起，你唯一的任务是给出交接指令 PROMPT-MARK"),
+          },
+        ],
         source: { kind: "user" },
       },
       { surfaceOp: "append" },
@@ -348,7 +385,7 @@ function handoffSampleEvents(): FixtureEvent[] {
         turn: 1,
         message: {
           role: "assistant",
-          content: [{ type: "text", text: "交接正文 `code`\n第二行" }],
+          content: [{ type: "text", text: enveloped("assistant", "交接正文 `code`\n第二行") }],
         },
       },
       { surfaceOp: "append" },
@@ -389,7 +426,10 @@ function handoffSampleEvents(): FixtureEvent[] {
         content: [
           {
             type: "text",
-            text: "<compacted-summary>\n交接正文 `code`\n第二行\n</compacted-summary>",
+            text: enveloped(
+              "user",
+              `<compacted-summary>\n${deliveryInner("交接正文 `code`\n第二行")}\n</compacted-summary>`,
+            ),
           },
         ],
         source: { kind: "user" },
@@ -407,7 +447,10 @@ function handoffSampleEvents(): FixtureEvent[] {
       17,
       {
         turn: 1,
-        message: { role: "assistant", content: [{ type: "text", text: "交接后的普通回答" }] },
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: enveloped("assistant", "交接后的普通回答") }],
+        },
       },
       { surfaceOp: "append" },
     ),

@@ -140,6 +140,21 @@ describe("analyzeHandoffEvents 结构事实", () => {
     assert.equal(entry?.body, "");
   });
 
+  it("前驱助手消息带消息信封时正文定位按剥离后的正文计字符数", () => {
+    // 无投递时第三行指向紧邻其前的 assistant 正文；部署侧给它套了 `<dsh-message>`，
+    // 字符数必须按剥离后的正文计，否则回溯坐标会带上信封长度。
+    const body = "交接正文 BODY";
+    const open = '<dsh-message role="assistant" id="abcdef12" ts="2026-10-29T22:59:57+08:00">';
+    const assistant = assistantEvent(1, `${open}\n${body}\n</dsh-message>`);
+    const handoff = handoffEvent(2, 1, 1);
+    const entry = analyzeHandoffEvents([assistant, handoff]).entries.get(handoff);
+    assert.notEqual(entry, undefined);
+    assert.equal(
+      entry?.structure.endsWith(`投递 -；正文 seq 1（${String([...body].length)} 字符）`),
+      true,
+    );
+  });
+
   it("相邻 agent/inbox/spliced 给出投递目标", () => {
     const handoff = handoffEvent(2, 1, 1);
     const entries = analyzeHandoffEvents([handoff, splicedEvent(3, "next-step")]).entries;

@@ -454,3 +454,92 @@ describe("runSearch 的问答检索单元", () => {
     assert.equal(outcome.data.totalHits, 2);
   });
 });
+
+describe("runSearch 的部署消息信封剥离", () => {
+  // 专用夹具：用户与助手消息都带部署侧的 `<dsh-message>` 信封。检索单元与命中片段必须取剥离后的
+  // 正文；`all` 档另含的整条事件载荷单元是逐字取回入口（开发规范的数据契约），不在此列。
+  const root = fileURLToPath(new URL("./.tmp/search-message-envelope", import.meta.url));
+  const PROJECT = "--C-Users-Alice--";
+  const MESSAGE_TS = "2026-10-29T22:59:57+08:00";
+  const enveloped = (role: "user" | "assistant", text: string): string =>
+    `<dsh-message role="${role}" id="abcdef12" ts="${MESSAGE_TS}">\n${text}\n</dsh-message>`;
+  let home: string;
+
+  before(() => {
+    home = writeFixtureHome(resetTempDir(root), {
+      sessions: [
+        {
+          id: "session-envelope-01",
+          projectDir: PROJECT,
+          createdAt: 1000,
+          events: [
+            { type: "turn/start", seq: 0, time: 10, data: { turn: 1 } },
+            {
+              type: "user/message",
+              seq: 1,
+              time: 11,
+              data: {
+                role: "user",
+                content: [{ type: "text", text: enveloped("user", "用户正文 ENVELOPE-USER") }],
+                source: { kind: "user" },
+              },
+              surfaceOp: "append",
+            },
+            {
+              type: "assistant/message",
+              seq: 2,
+              time: 12,
+              data: {
+                turn: 1,
+                message: {
+                  role: "assistant",
+                  content: [
+                    { type: "text", text: enveloped("assistant", "助手正文 ENVELOPE-ASSIST") },
+                  ],
+                },
+              },
+              surfaceOp: "append",
+            },
+            {
+              type: "turn/end",
+              seq: 3,
+              time: 13,
+              data: { turn: 1, reason: { kind: "completed" } },
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  for (const scope of ["text", "tools"] as const) {
+    it(`${scope} 档的检索单元与命中片段不含消息信封`, () => {
+      const outcome = runSearch(
+        contextOf(home),
+        "ENVELOPE",
+        { origin: "all" },
+        { caseSensitive: false, context: 20, limit: 0, scope },
+      );
+      assert.equal(outcome.success, true);
+      if (!outcome.success) return;
+      assert.deepEqual(outcome.data.hits.map((hit) => hit.label).sort(), ["assistant", "user"]);
+      for (const hit of outcome.data.hits) {
+        assert.equal(hit.excerpt.includes("<dsh-message"), false);
+        assert.equal(hit.excerpt.includes("</dsh-message>"), false);
+      }
+    });
+  }
+
+  it("命中片段给出剥离后的正文本身", () => {
+    const outcome = runSearch(
+      contextOf(home),
+      "ENVELOPE-USER",
+      { origin: "all" },
+      { caseSensitive: false, context: 60, limit: 0, scope: "text" },
+    );
+    assert.equal(outcome.success, true);
+    if (!outcome.success) return;
+    assert.equal(outcome.data.hits.length, 1);
+    assert.equal(outcome.data.hits[0]?.excerpt, "用户正文 ENVELOPE-USER");
+  });
+});

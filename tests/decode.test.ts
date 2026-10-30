@@ -13,6 +13,7 @@ import {
   eventTime,
   eventType,
   loadCatalog,
+  messageTextFromBlocks,
   readBoolean,
   readNumber,
   readString,
@@ -21,6 +22,7 @@ import {
   textFromBlocks,
   toolCallsFromBlocks,
   toolResultText,
+  userMessageText,
 } from "../scripts/lib/decode.ts";
 import { defaultLibRoot } from "../scripts/lib/paths.ts";
 import { createFakeCatalog, resetTempDir } from "./fixtures.ts";
@@ -244,6 +246,54 @@ describe("事件模型工具", () => {
     assert.equal(eventTime(event), 123);
     assert.equal(textFromBlocks(eventData(event).message), "");
     assert.equal(toolResultText(event), "结果文本");
+  });
+});
+
+describe("messageTextFromBlocks（对话正文的统一出口）", () => {
+  const MESSAGE_TS = "2026-10-29T22:59:57+08:00";
+  const MESSAGE_OPEN = `<dsh-message role="user" id="abcdef12" ts="${MESSAGE_TS}">`;
+
+  it("剥离对话消息外层的完整消息信封", () => {
+    const blocks = [{ type: "text", text: `${MESSAGE_OPEN}\n用户输入\n</dsh-message>` }];
+    assert.equal(messageTextFromBlocks(blocks), "用户输入");
+  });
+
+  it("注入信封同样剥离（子代理初始任务的两个顺序信封）", () => {
+    const task = '<dsh-injection kind="subagent-task" src="s-1" id="t1">';
+    const guidance = '<dsh-injection kind="subagent-return-guidance" src="dsh-subagent" id="t1">';
+    const blocks = [
+      {
+        type: "text",
+        text: `${task}\n任务正文\n</dsh-injection>\n${guidance}\n回报指引\n</dsh-injection>`,
+      },
+    ];
+    assert.equal(messageTextFromBlocks(blocks), "任务正文\n回报指引");
+  });
+
+  it("普通正文原样返回，非文本块不计入", () => {
+    const blocks = [
+      { type: "text", text: "普通正文" },
+      { type: "reasoning", text: "推理不计入" },
+      { type: "text", text: "" },
+    ];
+    assert.equal(messageTextFromBlocks(blocks), "普通正文");
+  });
+
+  it("信封不完整时原样返回整个拼接结果", () => {
+    const blocks = [{ type: "text", text: `${MESSAGE_OPEN}\n半截` }];
+    assert.equal(messageTextFromBlocks(blocks), `${MESSAGE_OPEN}\n半截`);
+  });
+
+  it("userMessageText 对事件走同一出口", () => {
+    const event = {
+      type: "user/message",
+      data: {
+        role: "user",
+        content: [{ type: "text", text: `${MESSAGE_OPEN}\n用户输入\n</dsh-message>` }],
+        source: { kind: "user" },
+      },
+    };
+    assert.equal(userMessageText(event), "用户输入");
   });
 });
 

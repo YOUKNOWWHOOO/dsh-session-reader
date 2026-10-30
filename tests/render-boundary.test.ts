@@ -483,4 +483,66 @@ describe("render 边界与分支", () => {
     assert.equal(rendered.content.includes("\r"), false);
     assert.equal(rendered.content.includes("line1\nline2\nline3"), true);
   });
+
+  it("消息信封在 md 时间线、轮次大纲与 json 的 text 中都被剥离", () => {
+    const ts = "2026-10-29T22:59:57+08:00";
+    const enveloped = (role: "user" | "assistant", text: string): string =>
+      `<dsh-message role="${role}" id="abcdef12" ts="${ts}">\n${text}\n</dsh-message>`;
+    const events: Record<string, unknown>[] = [
+      { type: "turn/start", seq: 0, time: 10, data: { turn: 1 } },
+      {
+        type: "user/message",
+        seq: 1,
+        time: 11,
+        data: {
+          role: "user",
+          content: [{ type: "text", text: enveloped("user", "用户内容 USER-TEXT") }],
+          source: { kind: "user" },
+        },
+        surfaceOp: "append",
+      },
+      {
+        type: "assistant/message",
+        seq: 2,
+        time: 12,
+        data: {
+          turn: 1,
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: enveloped("assistant", "助手内容 ASSIST-TEXT") }],
+          },
+        },
+        surfaceOp: "append",
+      },
+      { type: "turn/end", seq: 3, time: 13, data: { turn: 1 } },
+    ];
+    const md = showMd(node([], events), showOptions()).content;
+    assert.equal(md.includes("<dsh-message"), false);
+    assert.equal(md.includes("USER-TEXT"), true);
+    assert.equal(md.includes("ASSIST-TEXT"), true);
+
+    const outline = showMd(node([], events), showOptions({ summary: true })).content;
+    assert.equal(outline.includes("<dsh-message"), false);
+    assert.equal(outline.includes("ASSIST-TEXT"), true);
+
+    const document = JSON.parse(
+      renderShowJson(node([], events), { summary: false, subagents: false, unattributable: [] })
+        .content,
+    ) as {
+      messages: { text: string }[];
+      turns: { prompt: string | null; response: string | null }[];
+    };
+    assert.equal(
+      document.messages.some((message) => message.text.includes("<dsh-message")),
+      false,
+    );
+    assert.deepEqual(
+      document.turns.map((turn) => turn.prompt),
+      ["用户内容 USER-TEXT"],
+    );
+    assert.deepEqual(
+      document.turns.map((turn) => turn.response),
+      ["助手内容 ASSIST-TEXT"],
+    );
+  });
 });

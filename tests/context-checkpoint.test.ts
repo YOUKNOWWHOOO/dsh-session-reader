@@ -157,6 +157,45 @@ describe("自定义模式的交接投递", () => {
     assert.equal(context.checkpoints.has(events[3] as EventRecord), false);
   });
 
+  it("投递消息与助手副本都带消息信封、内层带嵌套残形时判定不变", () => {
+    // 真实形态：投递消息外层被 `<dsh-message role="user">` 包裹，内层复制的助手落账文本又带着
+    // `<dsh-message role="assistant">`，且它的终点被外层转义为 `<\/dsh-message>`。
+    const ts = "2026-10-29T22:59:57+08:00";
+    const openOf = (role: "user" | "assistant"): string =>
+      `<dsh-message role="${role}" id="abcdef12" ts="${ts}">`;
+    const enveloped = (role: "user" | "assistant", text: string): string =>
+      `${openOf(role)}\n${text}\n</dsh-message>`;
+    // 助手落账文本（内层副本的原始形态）：外层终点未转义。
+    const assistantText = enveloped("assistant", BODY);
+    // 投递内层：把助手落账文本复制进去后，外层包裹把它的终点转义为 `<\/dsh-message>`。
+    const innerText = assistantText.replace("</dsh-message>", "<\\/dsh-message>");
+    const assistant = assistantMessage(0, assistantText);
+    const handoff = handoffEvent(1, 0, 0);
+    const delivery = userMessage(
+      2,
+      enveloped("user", `<compacted-summary>\n${innerText}\n</compacted-summary>`),
+    );
+    const events: EventRecord[] = [assistant, handoff, delivery];
+    const analysis = analyzeHandoffEvents(events);
+    const context = analyzeContextCheckpoints({}, events, analysis);
+    assert.equal(analysis.deliveries.size, 1);
+    assert.equal(context.checkpoints.size, 1);
+    // 正文只在 `<compacted-summary>` 内出现一次：助手副本必须被抑制。
+    assert.equal(context.suppressedAssistantSeqs.has(0), true);
+    // 摘要正文保留标签，内层的嵌套残形被清理。
+    assert.equal(
+      context.checkpoints.get(delivery)?.text,
+      `<compacted-summary>\n${BODY}\n</compacted-summary>`,
+    );
+    // 第三行指向投递消息 seq 与剥净后的正文码点数，不含任何信封字符。
+    assert.equal(
+      analysis.entries
+        .get(handoff)
+        ?.structure.endsWith(`正文 seq 2（${String([...BODY].length)} 字符）`),
+      true,
+    );
+  });
+
   it("先出现普通用户消息时不认定投递，保持旧行为", () => {
     const events: EventRecord[] = [
       assistantMessage(0, BODY),
@@ -207,6 +246,27 @@ describe("自定义模式的交接投递", () => {
     const content = showMd(node([], events), showOptions()).content;
     assert.equal(content.includes(`**${HANDOFF_PROMPT_LABEL}**：`), true);
     assert.equal(content.includes("PROMPT-MARK"), true);
+  });
+
+  it("交接生成指令带消息信封时正文被剥离", () => {
+    const ts = "2026-10-29T22:59:57+08:00";
+    const enveloped = (role: "user" | "assistant", text: string): string =>
+      `<dsh-message role="${role}" id="abcdef12" ts="${ts}">\n${text}\n</dsh-message>`;
+    const promptText = "从现在起，你唯一的任务是给出交接指令。PROMPT-MARK";
+    const prompt = userMessage(1, enveloped("user", promptText));
+    const events: EventRecord[] = [
+      prompt,
+      assistantMessage(2, enveloped("assistant", BODY)),
+      handoffEvent(3, 1, 2),
+      userMessage(4, enveloped("user", `<compacted-summary>\n${BODY}\n</compacted-summary>`)),
+    ];
+    const analysis = analyzeHandoffEvents(events);
+    // 生成指令正文只剥消息信封，其余逐字保留。
+    assert.equal(analysis.prompts.get(events[2] as EventRecord)?.text, promptText);
+    assert.equal(analysis.suppressedAssistantSeqs.has(2), true);
+    const content = showMd(node([], events), showOptions()).content;
+    assert.equal(content.includes(`**${HANDOFF_PROMPT_LABEL}**：`), true);
+    assert.equal(content.includes("<dsh-message"), false);
   });
 
   it("带 rpcId 的用户消息不被当成交接生成指令", () => {
