@@ -23,7 +23,7 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 
 本技能支持 dsh 随附 `standard` 预设与自定义 `dsh-custom` 预设（显示名“自定义模式”）产生的会话。
 
-可读正文统一剥离完整的部署包装，包括注入消息的 `<dsh-injection …>…</dsh-injection>` 与普通工具结果的 `<dsh-result …>…</dsh-result>`。不完整或形态异常的包装原样显示，不做截取。需要逐字原文时用 `show --format jsonl`，它保留全部原始事件。
+可读正文统一剥离部署包装，包括注入消息的 `<dsh-injection …>…</dsh-injection>`、用户消息与助手消息的 `<dsh-message …>…</dsh-message>`、普通工具结果的 `<dsh-result …>…</dsh-result>`，以及交接摘要内层复制的助手消息标记。其余不完整或形态异常的包装原样显示，不做截取。需要逐字原文时用 `show --format jsonl`，它保留全部原始事件。
 
 上下文替换与其它合成消息不会显示成 `**用户**`：
 
