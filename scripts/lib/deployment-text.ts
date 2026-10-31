@@ -32,6 +32,30 @@ export const INJECTION_OPEN_PREFIX = "<dsh-injection ";
 /** 注入标记的终点字面量。 */
 export const INJECTION_CLOSE = "</dsh-injection>";
 
+/**
+ * 取文本开头一个完整注入标记的 `kind` 属性。
+ *
+ * 这是给合成消息判定用的结构性读取，不用于可见性判定。只解析起点行内的 `kind="…"`，
+ * 起点行必须以 `>` 收尾且存在换行；属性缺失、空值或形态不完整时返回 null。
+ * 不解析、不反转义正文，也不把正文里的同形文字当作标记。
+ *
+ * @param text 消息首个文本块的原始文本。
+ * @returns 注入类别；不是完整注入起点时返回 null。
+ */
+export function leadingInjectionKind(text: string): string | null {
+  if (!text.startsWith(INJECTION_OPEN_PREFIX)) return null;
+  const openEnd = text.indexOf("\n");
+  if (openEnd < 0 || text[openEnd - 1] !== ">") return null;
+  const line = text.slice(0, openEnd);
+  const marker = 'kind="';
+  const start = line.indexOf(marker);
+  if (start < 0) return null;
+  const valueStart = start + marker.length;
+  const valueEnd = line.indexOf('"', valueStart);
+  if (valueEnd <= valueStart) return null;
+  return line.slice(valueStart, valueEnd);
+}
+
 /** 消息标记的起点前缀（含一个空格，避免匹配到 `<dsh-message-extra` 之类同前缀文本）。 */
 export const MESSAGE_OPEN_PREFIX = "<dsh-message ";
 

@@ -17,6 +17,7 @@ import {
   analyzeContextCheckpoints,
   CONTEXT_CHECKPOINT_LABEL,
   type ContextAnalysis,
+  HANDOFF_NOTICE_LABEL,
   HANDOFF_PROMPT_LABEL,
   SUBAGENT_TASK_LABEL,
 } from "./context-checkpoint.ts";
@@ -128,9 +129,12 @@ function collectSearchUnits(
   const units: TextUnit[] = [];
   if (type === "user/message") {
     const checkpoint = context.checkpoints.get(event);
+    const notice = context.handoffNotices.get(event);
     const prompt = context.handoffPrompts.get(event);
     if (checkpoint !== undefined) {
       units.push({ label: CONTEXT_CHECKPOINT_LABEL, text: checkpoint.text });
+    } else if (notice !== undefined) {
+      units.push({ label: HANDOFF_NOTICE_LABEL, text: notice.text });
     } else if (prompt !== undefined) {
       units.push({ label: HANDOFF_PROMPT_LABEL, text: prompt.text });
     } else {

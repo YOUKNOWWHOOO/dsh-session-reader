@@ -1,11 +1,13 @@
 // 交接条目的端到端行为：合成 DSH_HOME + 真实官方格式库驱动 CLI，断言产物里出现什么、不出现什么。
 //
-// 覆盖的三条对外契约：
+// 覆盖的对外契约：
 // 1. `**交接**` 默认可见、不受 `--thinking`/`--tools`/`--events` 控制，且同一事件只产出一条条目
 //    （`--events` 打开时不得再以通用 `**事件**` 形态出现第二次）；
-// 2. 条目只给结构事实，不复制交接正文——交接成功时正文由 `**上下文摘要**` 条目承载一次，
-//    助手副本被抑制；生成指令另由 `**交接指令**` 条目承载；
-// 3. 非 handoff 型的 `developer/message`（`tool-registry`）不进交接条目，仍由 `--events` 控制。
+// 2. 旧格式交接只给结构事实，正文由 `**上下文摘要**` 条目承载一次、助手副本被抑制；生成指令另由
+//    `**交接指令**` 条目承载；
+// 3. 新格式交接不投递摘要：正文保留在 `**助手**` 条目，`context-compacted` 通知由 `**交接通知**`
+//    单独承载；维护指令经多步工具往返后仍被定位为 `**交接指令**`；
+// 4. 非 handoff 型的 `developer/message`（`tool-registry`）不进交接条目，仍由 `--events` 控制。
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -28,9 +30,15 @@ const HOME = join(TEMP_ROOT, "handoff-dsh");
 const OUT_DIR = join(TEMP_ROOT, "out");
 const PROJECT_DIR = "--C-Users-Alice-user_projects--";
 const MAIN_ID = "session-handoff-main-01";
+/** 新格式交接夹具会话 id：与旧格式样本分处两个会话，两种期望互不覆盖。 */
+const NOTICE_ID = "session-handoff-notice-02";
 
 const BODY_MARK = "交接正文 HANDOFF-BODY-MARK";
 const NORMAL_MARK = "普通回答 NORMAL-MARK";
+const NOTICE_INSTRUCTION_MARK = "维护指令 NOTICE-INSTRUCTION-MARK";
+const NOTICE_MARK = "压缩通知 NOTICE-MARK";
+const NOTICE_BODY_MARK = "新格式交接正文 NOTICE-BODY-MARK";
+const NOTICE_CONTINUE_MARK = "继续 NOTICE-CONTINUE-MARK";
 
 /** 部署侧消息时间标记的固定时间戳，形态取自 `preset-lib/injection-boundary.mjs` 的 RFC 3339 秒级带偏移。 */
 const MESSAGE_TS = "2026-10-29T22:59:57+08:00";
@@ -64,6 +72,20 @@ function enveloped(role: "user" | "assistant", text: string): string {
  */
 function deliveryInner(text: string): string {
   return enveloped("assistant", text).replace("</dsh-message>", "<\\/dsh-message>");
+}
+
+/**
+ * 部署侧注入信封（新格式交接的两条协议消息都由交接插件自己包裹）。
+ *
+ * 形态取自 `preset-lib/injection-boundary.mjs`：起点单独成行、正文另起一行、终点单独成行。
+ * `kind` 是合成条目判定的结构锚点；`src` 恒为 `handoff`。
+ *
+ * @param kind 注入类别，取 `handoff-instruction` 或 `context-compacted`。
+ * @param text 原始正文。
+ * @returns 起止标记包裹后的文本。
+ */
+function injected(kind: string, text: string): string {
+  return `<dsh-injection kind="${kind}" src="handoff" id="abcdef12" ts="${MESSAGE_TS}">\n${text}\n</dsh-injection>`;
 }
 
 function ev(
@@ -172,12 +194,129 @@ function handoffEvents(): FixtureEvent[] {
   ];
 }
 
+/**
+ * 新格式交接：维护指令 → 多步工具往返 → 最终回复 → 交接事件 → 投递 → `context-compacted` 通知。
+ *
+ * 生成阶段刻意跨两个步骤（第一步只有工具调用、第二步才是最终文本），复现真实日志里"维护指令与
+ * 最终回复不相邻"的形态；只看前一条事件的判据在这里会失败，因此本夹具能拦住该回归。
+ */
+function handoffNoticeEvents(): FixtureEvent[] {
+  return [
+    ev("turn/start", 0, { turn: 1 }),
+    ev("step/start", 1, { turn: 1, step: 1 }),
+    ev(
+      "user/message",
+      2,
+      {
+        role: "user",
+        content: [{ type: "text", text: injected("handoff-instruction", NOTICE_INSTRUCTION_MARK) }],
+        source: { kind: "handoff" },
+      },
+      { surfaceOp: "append" },
+    ),
+    ev(
+      "assistant/message",
+      3,
+      {
+        turn: 1,
+        message: {
+          role: "assistant",
+          content: [{ type: "tool-call", id: "call-1", name: "read", arguments: '{"path":"x"}' }],
+        },
+      },
+      { surfaceOp: "append" },
+    ),
+    ev("tool/call", 4, {
+      turn: 1,
+      step: 1,
+      callId: "call-1",
+      name: "read",
+      arguments: '{"path":"x"}',
+    }),
+    ev(
+      "tool/result",
+      5,
+      {
+        turn: 1,
+        step: 1,
+        message: {
+          role: "tool",
+          source: { kind: "tool", callId: "call-1" },
+          toolCallId: "call-1",
+          isError: false,
+          content: [{ type: "text", text: "工具结果" }],
+        },
+      },
+      { surfaceOp: "append" },
+    ),
+    ev("step/end", 6, { turn: 1, step: 1 }),
+    ev("step/start", 7, { turn: 1, step: 2 }),
+    ev(
+      "assistant/message",
+      8,
+      {
+        turn: 1,
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: enveloped("assistant", NOTICE_BODY_MARK) }],
+        },
+      },
+      { surfaceOp: "append" },
+    ),
+    ev(
+      "developer/message",
+      9,
+      {
+        turn: 1,
+        step: 2,
+        message: { role: "developer", source: { kind: "handoff" }, content: [] },
+      },
+      { surfaceOp: { op: "replace", startSeq: 2, endSeq: 8 }, sourceEventSeqs: [2, 8] },
+    ),
+    ev("agent/inbox/spliced", 10, { target: "next-step", start: 0, inserted: [] }),
+    ev("step/end", 11, { turn: 1, step: 2 }),
+    ev("step/start", 12, { turn: 1, step: 3 }),
+    ev(
+      "user/message",
+      13,
+      {
+        role: "user",
+        content: [{ type: "text", text: injected("context-compacted", NOTICE_MARK) }],
+        source: { kind: "handoff" },
+      },
+      { surfaceOp: "append" },
+    ),
+    ev(
+      "user/message",
+      14,
+      {
+        role: "user",
+        content: [{ type: "text", text: enveloped("user", NOTICE_CONTINUE_MARK) }],
+        source: { kind: "user" },
+      },
+      { surfaceOp: "append" },
+    ),
+    ev(
+      "assistant/message",
+      15,
+      {
+        turn: 1,
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: enveloped("assistant", "新格式交接后的回答") }],
+        },
+      },
+      { surfaceOp: "append" },
+    ),
+    ev("turn/end", 16, { turn: 1 }),
+  ];
+}
+
 interface CliResult {
   readonly status: number | null;
   readonly stdout: string;
   readonly stderr: string;
 }
-
 function runCli(args: readonly string[]): CliResult {
   const result = spawnSync(process.execPath, [SCRIPT, ...args], {
     encoding: "utf8",
@@ -191,8 +330,11 @@ function baseArgs(): string[] {
   return ["--dsh-home", HOME, "--lib-root", REQUIRED_LIB_ROOT, "--output-dir", OUT_DIR];
 }
 
-function showMd(extra: readonly string[] = []): { content: string; summary: string } {
-  const result = runCli(["show", MAIN_ID, ...baseArgs(), ...extra]);
+function showMd(
+  extra: readonly string[] = [],
+  target = MAIN_ID,
+): { content: string; summary: string } {
+  const result = runCli(["show", target, ...baseArgs(), ...extra]);
   assert.equal(result.status, 0, `show 失败: ${result.stderr}`);
   const lines = result.stdout.split("\n").filter((line) => line.length > 0);
   const pathMatch = /^完整输出已保存到: (.+)$/u.exec(lines[0]);
@@ -202,6 +344,37 @@ function showMd(extra: readonly string[] = []): { content: string; summary: stri
     content: readFileSync(pathMatch[1], "utf8"),
     summary: /^(.*)；输出文件共 \d+ 行$/u.exec(lines[1])?.[1] ?? "",
   };
+}
+
+/**
+ * 执行 show 并解析 JSON 产物（--format json）。
+ *
+ * `text` 是可选的：`tool/call` 条目只有 arguments，没有 text 字段。
+ */
+function showJson(target: string): {
+  messages: Array<{ type: string; text?: string }>;
+} {
+  const result = runCli(["show", target, ...baseArgs(), "--format", "json"]);
+  assert.equal(result.status, 0, `show --format json 失败: ${result.stderr}`);
+  const lines = result.stdout.split("\n").filter((line) => line.length > 0);
+  const pathMatch = /^完整输出已保存到: (.+)$/u.exec(lines[0]);
+  if (pathMatch === null) throw new Error("stdout 首行不符合契约");
+  return JSON.parse(readFileSync(pathMatch[1], "utf8")) as {
+    messages: Array<{ type: string; text?: string }>;
+  };
+}
+
+/** 执行 search 并返回指定会话在 json 产物里的命中标签。 */
+function searchLabels(keyword: string, target: string): string[] {
+  const result = runCli(["search", keyword, ...baseArgs(), "--format", "json"]);
+  assert.equal(result.status, 0, `search 失败: ${result.stderr}`);
+  const lines = result.stdout.split("\n").filter((line) => line.length > 0);
+  const pathMatch = /^完整输出已保存到: (.+)$/u.exec(lines[0]);
+  if (pathMatch === null) throw new Error("stdout 首行不符合契约");
+  const document = JSON.parse(readFileSync(pathMatch[1], "utf8")) as {
+    matches: Array<{ sessionId: string; label: string }>;
+  };
+  return document.matches.filter((match) => match.sessionId === target).map((match) => match.label);
 }
 
 /** 统计子串出现次数（用于断言"只出现一次"）。 */
@@ -229,6 +402,16 @@ before(() => {
         turns: 1,
         steps: 2,
         lastPromptAt: 2000,
+      },
+      {
+        id: NOTICE_ID,
+        projectDir: PROJECT_DIR,
+        createdAt: 900,
+        events: handoffNoticeEvents(),
+        title: "新格式交接夹具",
+        turns: 1,
+        steps: 3,
+        lastPromptAt: 1900,
       },
     ],
   });
@@ -313,5 +496,77 @@ describe("交接条目的默认呈现", () => {
     assert.equal(types.includes("user/message"), true);
     assert.equal(types.includes("assistant/message"), true);
     assert.equal(document.messages.filter((message) => message.text.includes(BODY_MARK)).length, 1);
+  });
+});
+
+describe("新格式交接的默认呈现", () => {
+  it("维护指令、交接结构、通知与助手正文各自成条，正文只出现一次", () => {
+    const { content } = showMd([], NOTICE_ID);
+    assert.equal(countOf(content, "**交接**："), 1);
+    assert.equal(
+      content.includes(
+        `投递 next-step；正文 seq 8（${String([...NOTICE_BODY_MARK].length)} 字符）`,
+      ),
+      true,
+    );
+    assert.equal(countOf(content, "**交接指令**："), 1);
+    assert.equal(content.includes(NOTICE_INSTRUCTION_MARK), true);
+    assert.equal(countOf(content, "**交接通知**："), 1);
+    assert.equal(content.includes(NOTICE_MARK), true);
+    // 新格式不投递摘要，也不抑制助手副本。
+    assert.equal(countOf(content, "**上下文摘要**："), 0);
+    assert.equal(countOf(content, NOTICE_BODY_MARK), 1);
+    // 注入标记是传输层形态，任何可读正文都不得带它。
+    assert.equal(content.includes("<dsh-injection"), false);
+  });
+
+  it("维护指令与压缩通知不进入轮次大纲，用户继续成为 prompt", () => {
+    const { content } = showMd(["--summary"], NOTICE_ID);
+    assert.equal(content.includes("**交接**"), false);
+    assert.equal(content.includes("**交接指令**"), false);
+    assert.equal(content.includes("**交接通知**"), false);
+    assert.equal(content.includes(NOTICE_MARK), false);
+    assert.equal(content.includes(NOTICE_CONTINUE_MARK), true);
+  });
+
+  it("--role user 不影响交接通知，但助手正文按角色过滤", () => {
+    const { content } = showMd(["--role", "user"], NOTICE_ID);
+    assert.equal(countOf(content, "**交接通知**："), 1);
+    assert.equal(content.includes(NOTICE_MARK), true);
+    assert.equal(content.includes(NOTICE_BODY_MARK), false);
+  });
+
+  it("--events 下交接条目仍只有一条，且不再以通用事件形态重复出现", () => {
+    const { content } = showMd(["--events"], NOTICE_ID);
+    assert.equal(countOf(content, "**交接**："), 1);
+    // 本会话没有非 handoff 型的 developer/message，因此 `--events` 下不得再出现通用事件形态。
+    assert.equal(countOf(content, "developer/message"), 0);
+  });
+
+  it("JSON messages 里通知与维护指令都是 user/message，正文已剥离注入信封", () => {
+    const document = showJson(NOTICE_ID);
+    const noticeEntry = document.messages.find((message) => message.text?.includes(NOTICE_MARK));
+    assert.equal(noticeEntry?.type, "user/message");
+    assert.equal(noticeEntry?.text, NOTICE_MARK);
+    const instructionEntry = document.messages.find((message) =>
+      message.text?.includes(NOTICE_INSTRUCTION_MARK),
+    );
+    assert.equal(instructionEntry?.type, "user/message");
+    assert.equal(instructionEntry?.text, NOTICE_INSTRUCTION_MARK);
+    assert.equal(
+      document.messages.filter((message) => message.text === NOTICE_BODY_MARK).length,
+      1,
+    );
+    assert.equal(
+      document.messages.some((message) => message.type === "developer/message"),
+      false,
+    );
+  });
+
+  it("search 的 text 档按新标签命中，各合成消息互不混淆", () => {
+    assert.deepEqual(searchLabels(NOTICE_MARK, NOTICE_ID), ["交接通知"]);
+    assert.deepEqual(searchLabels(NOTICE_INSTRUCTION_MARK, NOTICE_ID), ["交接指令"]);
+    assert.deepEqual(searchLabels(NOTICE_BODY_MARK, NOTICE_ID), ["assistant"]);
+    assert.deepEqual(searchLabels(NOTICE_CONTINUE_MARK, NOTICE_ID), ["user"]);
   });
 });

@@ -1,21 +1,22 @@
-// 用途：合成上下文消息的判定与正文抽取——标准模式的官方压缩检查点、自定义模式交接的投递消息、
-// 交接生成指令与子代理会话的首条任务消息。它们都不是人类用户输入，分别渲染为
-// `**上下文摘要**`、`**交接指令**` 与 `**子代理任务**`，而不是伪装成 `**用户**` 正文。
+// 用途：合成上下文消息的判定与正文抽取——标准模式的官方压缩检查点、自定义模式交接的旧摘要投递、
+// 新格式交接通知、交接生成指令与子代理会话的首条任务消息。它们都不是人类用户输入，分别渲染为
+// `**上下文摘要**`、`**交接通知**`、`**交接指令**` 与 `**子代理任务**`，而不是伪装成 `**用户**` 正文。
 // 主要入口：`analyzeContextCheckpoints`（按事件身份索引的合成条目 + 应抑制的助手副本 seq）。
-// 关键依赖：decode.ts（事件读取基元与 `userMessageText`）、handoff.ts（交接投递、生成指令与抑制集合）。
+// 关键依赖：decode.ts（事件读取基元与 `userMessageText`）、handoff.ts（交接投递、通知、生成指令与
+// 抑制集合）。
 // 设计约束：
 // 1. 标准模式判据：`user/message` 的 `source.kind` 为 `compact-checkpoint`（官方
 //    `compactCheckpointSource` 产出的固定标记），不依赖正文文案。
-// 2. 自定义模式判据：由 handoff.ts 判定的投递消息与生成指令（来源均为 `user`，但结构位置不同：
-//    投递消息在交接事件之后且正文是完整 `<compacted-summary>` 信封；生成指令是生成正文的前一条
-//    无 `rpcId` 用户消息）。本模块不重复判定，只消费它的产出。
-// 3. 子代理任务判据：会话 header 的 `origin` 为 `subagent`，且首条 `source.kind === "user"` 的消息
+// 2. 自定义模式旧格式：由 handoff.ts 判定的 `<compacted-summary>` 投递消息与生成指令；旧摘要正文
+//    与助手副本相同时抑制副本。
+// 3. 自定义模式新格式：交接后投递的 `context-compacted` 通知单独渲染为 `**交接通知**`，交接正文
+//    保留在助手事件中，不抑制；生成指令由 handoff.ts 按结构位置判定。
+// 4. 子代理任务判据：会话 header 的 `origin` 为 `subagent`，且首条 `source.kind === "user"` 的消息
 //    不带 `rpcId`。带 `rpcId` 的是客户端提交的真实用户输入，不标为任务。
-// 4. 正文只呈现一次：标准检查点没有独立的助手副本；自定义交接的助手生成副本由 handoff.ts 在正文
-//    逐字相同时列入抑制集合，md、json 与检索的 `text`/`tools` 档据此跳过。`--format jsonl` 仍保留
-//    全部原始事件。
 // 5. 这些合成条目的可见性不随 `--thinking`/`--tools`/`--events`/`--role` 改变（它们是上下文结构，
 //    不是对话双方之一），也不计入任何隐藏计数；仍受 `--turn`/`--seq` 与 `--head`/`--tail` 影响。
+//    新格式通知与生成指令的来源 `handoff` 已加入 visibility.ts 的保留名单，因此专门条目不会
+//    在进入渲染前被当作普通注入丢弃。
 
 import {
   asRecord,
@@ -30,6 +31,9 @@ import type { HandoffAnalysis } from "./handoff.ts";
 
 /** `**上下文摘要**` 标签取值（对外契约，不得改写）。 */
 export const CONTEXT_CHECKPOINT_LABEL = "上下文摘要";
+
+/** `**交接通知**` 标签取值（新格式交接投递的上下文压缩通知）。 */
+export const HANDOFF_NOTICE_LABEL = "交接通知";
 
 /** `**交接指令**` 标签取值（生成交接摘要的协议提示词）。 */
 export const HANDOFF_PROMPT_LABEL = "交接指令";
@@ -54,10 +58,18 @@ export interface HandoffPromptEntry {
   readonly text: string;
 }
 
+/** 新格式交接的压缩通知条目。 */
+export interface HandoffNoticeEntry {
+  readonly event: EventRecord;
+  readonly text: string;
+}
+
 /** 合成上下文消息的分析结果。 */
 export interface ContextAnalysis {
   /** 摘要事件 → 条目。 */
   readonly checkpoints: ReadonlyMap<EventRecord, ContextCheckpoint>;
+  /** 新格式交接通知事件 → 条目。 */
+  readonly handoffNotices: ReadonlyMap<EventRecord, HandoffNoticeEntry>;
   /** 交接生成指令事件 → 条目。 */
   readonly handoffPrompts: ReadonlyMap<EventRecord, HandoffPromptEntry>;
   /** 子代理会话的首条任务消息；主会话或无法判定时为 null。 */
@@ -120,10 +132,14 @@ export function analyzeContextCheckpoints(
   for (const delivery of handoff.deliveries.values()) {
     checkpoints.set(delivery.event, {
       event: delivery.event,
-      // 交接投递的内层复制了助手落账文本，因此带着 `<dsh-message role="assistant">` 与其被转义的
+      // 旧交接投递的内层复制了助手落账文本，因此带着 `<dsh-message role="assistant">` 与其被转义的
       // 终点；清理这一层残形后再呈现，标签本身保留。
       text: cleanCompactedSummary(userMessageText(delivery.event)),
     });
+  }
+  const handoffNotices = new Map<EventRecord, HandoffNoticeEntry>();
+  for (const notice of handoff.notices.values()) {
+    handoffNotices.set(notice.event, { event: notice.event, text: notice.text });
   }
   const handoffPrompts = new Map<EventRecord, HandoffPromptEntry>();
   for (const prompt of handoff.prompts.values()) {
@@ -131,6 +147,7 @@ export function analyzeContextCheckpoints(
   }
   return {
     checkpoints,
+    handoffNotices,
     handoffPrompts,
     subagentTask: subagentTaskOf(header, events),
     suppressedAssistantSeqs: handoff.suppressedAssistantSeqs,
@@ -138,13 +155,17 @@ export function analyzeContextCheckpoints(
 }
 
 /**
- * 摘要与生成指令事件对应的 prompt 跳过集合：`--summary` 的轮次大纲与 json 的 `turns` 不得把
- * 摘要正文或交接协议提示词当成用户提问。子代理任务不在此列——它就是该轮的任务来源。
+ * 摘要、交接通知与生成指令事件对应的 prompt 跳过集合：`--summary` 的轮次大纲与 json 的 `turns`
+ * 不得把这些合成消息当成用户提问。子代理任务不在此列——它就是该轮的任务来源。
  * 返回事件 seq 集合，供 `computeTurns` 使用。
  */
 export function checkpointSeqsOf(analysis: ContextAnalysis): ReadonlySet<number> {
   const seqs = new Set<number>();
   for (const event of analysis.checkpoints.keys()) {
+    const seq = eventSeq(event);
+    if (seq !== undefined) seqs.add(seq);
+  }
+  for (const event of analysis.handoffNotices.keys()) {
     const seq = eventSeq(event);
     if (seq !== undefined) seqs.add(seq);
   }

@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 import {
   cleanCompactedSummary,
   compactedSummaryBody,
+  leadingInjectionKind,
   stripInjectionEnvelopes,
   stripMessageEnvelope,
   stripNestedMessageEnvelope,
@@ -221,5 +222,41 @@ describe("compactedSummaryBody", () => {
   it("缺少成对换行时不命中", () => {
     assert.equal(compactedSummaryBody("<compacted-summary>摘要</compacted-summary>"), null);
     assert.equal(compactedSummaryBody("<compacted-summary>\n摘要"), null);
+  });
+});
+
+describe("leadingInjectionKind（合成消息判定的结构读取）", () => {
+  const OPEN = '<dsh-injection kind="context-compacted" src="handoff" id="abcdef12">';
+
+  it("完整起点行给出 kind 取值", () => {
+    assert.equal(leadingInjectionKind(`${OPEN}\n正文\n</dsh-injection>`), "context-compacted");
+  });
+
+  it("起点行之前没有换行时不命中（起点行未结束）", () => {
+    assert.equal(leadingInjectionKind(OPEN), null);
+  });
+
+  it("起点行不以 > 收尾时不命中（正文写进起点行）", () => {
+    assert.equal(
+      leadingInjectionKind(`<dsh-injection kind="context-compacted" src="handoff"\n正文`),
+      null,
+    );
+  });
+
+  it("不以注入起点前缀开头时一律不命中", () => {
+    assert.equal(leadingInjectionKind(`前缀\n${OPEN}\n正文`), null);
+    assert.equal(leadingInjectionKind("<dsh-injection>\n正文"), null);
+  });
+
+  it("kind 属性缺失或为空时不命中", () => {
+    assert.equal(leadingInjectionKind('<dsh-injection src="handoff">\n正文'), null);
+    assert.equal(leadingInjectionKind('<dsh-injection kind="" src="handoff">\n正文'), null);
+  });
+
+  it("只解析起点行，正文里的同形文字不参与判定", () => {
+    assert.equal(
+      leadingInjectionKind(`${OPEN}\n正文 <dsh-injection kind="other" src="x"> 之后的文字`),
+      "context-compacted",
+    );
   });
 });

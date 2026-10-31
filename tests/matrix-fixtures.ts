@@ -117,6 +117,14 @@ export const ASK_MALFORMED_ID = "session-adv-ask-malformed-20";
  * 「进 `**交接**` 条目」与「仍由 `--events` 按通用事件呈现」两条路径。
  */
 export const HANDOFF_ID = "session-adv-handoff-21";
+/**
+ * 新格式交接夹具会话 id：维护指令（来源 `handoff` 的 `handoff-instruction` 注入）→ 助手正文 →
+ * handoff 型 `developer/message` → 投递 → `context-compacted` 通知。
+ *
+ * 与 `HANDOFF_ID` 分处两个会话：旧格式的正文由 `**上下文摘要**` 承载且抑制助手副本，新格式的正文
+ * 保留在 `**助手**`、通知单独成条；混在同一会话里会让两种期望互相覆盖。
+ */
+export const HANDOFF_NOTICE_ID = "session-adv-handoff-notice-22";
 /** 夹具主/子会话共用的工作目录（含空格、方括号与井号）。 */
 export const MAIN_CWD = "C:\\Users\\Alice\\user projects [v2] #tag_under";
 
@@ -458,8 +466,108 @@ function handoffSampleEvents(): FixtureEvent[] {
   ];
 }
 
-/** 健康夹具：含子代理两代、空会话、projcache 四态、问答样本与交接样本。 */
-export function healthySpec(): FixtureHomeSpec {
+/**
+ * 新格式交接样本事件：维护指令注入 → 助手正文 → handoff 型 `developer/message` → 投递 →
+ * `context-compacted` 通知。
+ *
+ * 两条协议消息都带部署侧的注入标记（来源 `handoff`），门禁据此覆盖 `**交接指令**` 与
+ * `**交接通知**` 两个新标签；助手正文不被抑制，因此同一段正文只由 `**助手**` 承载一次。
+ * 注入正文里带反引号与换行，使围栏长度与多行载体的规则也在新标签上受检。
+ */
+function handoffNoticeSampleEvents(): FixtureEvent[] {
+  const ts = "2026-10-31T12:44:50+08:00";
+  const injected = (kind: string, text: string): string =>
+    `<dsh-injection kind="${kind}" src="handoff" id="abcdef12" ts="${ts}">\n${text}\n</dsh-injection>`;
+  return [
+    ev("turn/start", 0, 10, { turn: 1 }),
+    ev(
+      "user/message",
+      1,
+      11,
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: injected(
+              "handoff-instruction",
+              "从现在起，你唯一的任务是完成对交接文件的维护 `code`\n第二行",
+            ),
+          },
+        ],
+        source: { kind: "handoff" },
+      },
+      { surfaceOp: "append" },
+    ),
+    ev(
+      "assistant/message",
+      2,
+      12,
+      {
+        turn: 1,
+        message: {
+          role: "assistant",
+          content: [
+            { type: "text", text: enveloped("assistant", "新格式交接正文 `code`\n第二行") },
+          ],
+        },
+      },
+      { surfaceOp: "append" },
+    ),
+    ev(
+      "developer/message",
+      3,
+      13,
+      {
+        turn: 1,
+        step: 1,
+        message: { role: "developer", source: { kind: "handoff" }, content: [] },
+      },
+      { surfaceOp: { op: "replace", startSeq: 0, endSeq: 2 }, sourceEventSeqs: [0, 1, 2] },
+    ),
+    ev("agent/inbox/spliced", 4, 14, {
+      target: "next-step",
+      start: 0,
+      inserted: [
+        {
+          role: "user",
+          source: { kind: "handoff" },
+          content: [
+            {
+              type: "text",
+              text: injected(
+                "context-compacted",
+                "本会话刚才发生了上下文压缩，你是接续会话。你必须完整读取 C:\\Users\\Alice\\tmp\\交接指令.md，依据其中的所有内容继续原任务。",
+              ),
+            },
+          ],
+        },
+      ],
+    }),
+    ev(
+      "user/message",
+      5,
+      15,
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: injected(
+              "context-compacted",
+              "本会话刚才发生了上下文压缩，你是接续会话。你必须完整读取 C:\\Users\\Alice\\tmp\\交接指令.md，依据其中的所有内容继续原任务。",
+            ),
+          },
+        ],
+        source: { kind: "handoff" },
+      },
+      { surfaceOp: "append" },
+    ),
+    ev("turn/end", 6, 16, { turn: 1, reason: { kind: "completed" } }),
+  ];
+}
+
+/** 健康夹具：含子代理两代、空会话、projcache 四态、问答样本与交接样本。 */ export function healthySpec(): FixtureHomeSpec {
   return {
     sessions: [
       {
@@ -712,6 +820,18 @@ export function healthySpec(): FixtureHomeSpec {
         turns: 1,
         steps: 2,
         lastPromptAt: 740,
+      },
+      // 新格式交接样本：与旧格式样本同样的 createdAt/lastPromptAt 取值区间，不影响 `last` 的指向。
+      {
+        id: HANDOFF_NOTICE_ID,
+        projectDir: PROJECT_DIR,
+        cwd: MAIN_CWD,
+        createdAt: 650,
+        events: handoffNoticeSampleEvents(),
+        title: "新格式交接夹具",
+        turns: 1,
+        steps: 1,
+        lastPromptAt: 750,
       },
     ],
     workspace: {

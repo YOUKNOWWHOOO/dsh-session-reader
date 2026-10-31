@@ -7,11 +7,12 @@ import {
   analyzeContextCheckpoints,
   CONTEXT_CHECKPOINT_LABEL,
   checkpointSeqsOf,
+  HANDOFF_NOTICE_LABEL,
   HANDOFF_PROMPT_LABEL,
   SUBAGENT_TASK_LABEL,
 } from "../scripts/lib/context-checkpoint.ts";
 import type { EventRecord } from "../scripts/lib/decode.ts";
-import { analyzeHandoffEvents } from "../scripts/lib/handoff.ts";
+import { analyzeHandoffEvents, HANDOFF_LABEL } from "../scripts/lib/handoff.ts";
 import { computeTurns } from "../scripts/lib/render-core.ts";
 import { decodedFile, node, showMd, showOptions } from "./render-helpers.ts";
 
@@ -317,5 +318,87 @@ describe("子代理会话的首条任务消息", () => {
       analyzeHandoffEvents([message]),
     );
     assert.equal(analysis.subagentTask, null);
+  });
+});
+
+describe("新格式交接的压缩通知", () => {
+  const NOTICE = "本会话刚才发生了上下文压缩，你是接续会话。NOTICE-MARK";
+  const INSTRUCTION = "从现在起，你唯一的任务是完成对交接文件的维护。INSTRUCTION-MARK";
+  const CONTINUE = "继续 CONTINUE-MARK";
+
+  /** 部署侧注入起点（形态取自 `preset-lib/injection-boundary.mjs`）。 */
+  function injection(kind: string, text: string): string {
+    const ts = "2026-10-31T12:44:50+08:00";
+    return `<dsh-injection kind="${kind}" src="handoff" id="abcdef12" ts="${ts}">\n${text}\n</dsh-injection>`;
+  }
+
+  /**
+   * 新格式的完整交接：维护指令注入 → 助手正文 → 交接事件 → 投递 →
+   * `context-compacted` 通知 → 用户继续。
+   *
+   * 顺序取自真实日志：通知在交接事件之后、下一次真实用户消息之前落账。
+   */
+  function noticeEvents(): EventRecord[] {
+    return [
+      ev("turn/start", 0, { turn: 1 }),
+      userMessage(1, injection("handoff-instruction", INSTRUCTION), "handoff"),
+      assistantMessage(2, BODY),
+      handoffEvent(3, 1, 2),
+      splicedEvent(4, "next-step"),
+      userMessage(5, injection("context-compacted", NOTICE), "handoff"),
+      userMessage(6, CONTINUE),
+      assistantMessage(7, NORMAL),
+      ev("turn/end", 8, { turn: 1 }),
+    ];
+  }
+
+  /** 取包含给定文本的行之前最近的标签名（用于断言"这段正文归属哪个条目"）。 */
+  function labelBefore(content: string, needle: string): string | null {
+    const lines = content.split("\n");
+    const index = lines.findIndex((line) => line.includes(needle));
+    if (index < 0) return null;
+    for (let cursor = index; cursor >= 0; cursor -= 1) {
+      const matched = /^\*\*([^*]+)\*\*/u.exec(lines[cursor]);
+      if (matched !== null) return matched[1];
+    }
+    return null;
+  }
+
+  it("通知渲染为 **交接通知**，交接正文保留为 **助手**，不产生上下文摘要", () => {
+    const events = noticeEvents();
+    const content = showMd(node([], events), showOptions()).content;
+    assert.equal(content.includes(`**${HANDOFF_NOTICE_LABEL}**：`), true);
+    assert.equal(content.includes(NOTICE), true);
+    assert.equal(content.includes(`**${HANDOFF_PROMPT_LABEL}**：`), true);
+    assert.equal(content.includes(INSTRUCTION), true);
+    assert.equal(content.includes(`**${HANDOFF_LABEL}**：`), true);
+    assert.equal(content.includes(`**${CONTEXT_CHECKPOINT_LABEL}**`), false);
+    // 交接正文只由助手条目承载一次（新格式不抑制助手副本）。
+    assert.equal(content.split(BODY).length - 1, 1);
+    // 通知不是人类输入：承载它的条目标签必须是 交接通知，而不是 用户。
+    assert.equal(labelBefore(content, NOTICE), HANDOFF_NOTICE_LABEL);
+  });
+
+  it("通知与维护指令都不进入轮次大纲的 prompt", () => {
+    const events = noticeEvents();
+    const analysis = analyzeHandoffEvents(events);
+    const context = analyzeContextCheckpoints({}, events, analysis);
+    const notice = events[5] as EventRecord;
+    const instruction = events[1] as EventRecord;
+    assert.equal(context.handoffNotices.has(notice), true);
+    assert.equal(context.handoffNotices.get(notice)?.text, NOTICE);
+    assert.equal(context.handoffPrompts.has(instruction), true);
+    const turns = computeTurns(decodedFile(events), checkpointSeqsOf(context));
+    assert.equal(turns[0]?.prompt, CONTINUE);
+  });
+
+  it("不受 --role 与 --summary 影响：--role user 仍呈现通知，--summary 不输出通知", () => {
+    const events = noticeEvents();
+    const roleContent = showMd(node([], events), showOptions({ role: "user" })).content;
+    assert.equal(roleContent.includes(`**${HANDOFF_NOTICE_LABEL}**：`), true);
+    const summaryContent = showMd(node([], events), showOptions({ summary: true })).content;
+    assert.equal(summaryContent.includes(`**${HANDOFF_NOTICE_LABEL}**`), false);
+    assert.equal(summaryContent.includes(NOTICE), false);
+    assert.equal(summaryContent.includes(CONTINUE), true);
   });
 });

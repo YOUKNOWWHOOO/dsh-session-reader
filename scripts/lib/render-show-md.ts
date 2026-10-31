@@ -17,7 +17,9 @@ import {
   type ContextAnalysis,
   type ContextCheckpoint,
   checkpointSeqsOf,
+  HANDOFF_NOTICE_LABEL,
   HANDOFF_PROMPT_LABEL,
+  type HandoffNoticeEntry,
   type HandoffPromptEntry,
   SUBAGENT_TASK_LABEL,
 } from "./context-checkpoint.ts";
@@ -363,6 +365,7 @@ function timelineItem(
   ask: AskUserEntry | null,
   handoff: HandoffEntry | null,
   checkpoint: ContextCheckpoint | null,
+  handoffNotice: HandoffNoticeEntry | null,
   handoffPrompt: HandoffPromptEntry | null,
   isSubagentTask: boolean,
   suppressed: boolean,
@@ -373,13 +376,23 @@ function timelineItem(
   // 而是同一段正文的另一种承载形态；原始事件仍在 jsonl 中）。
   if (suppressed) return null;
   if (checkpoint !== null) {
-    // 摘要条目的标签本身已表达来源（标准压缩检查点或普通消息交接），不再追加 `来源` 标注；
+    // 摘要条目的标签本身已表达来源（标准压缩检查点或旧格式普通消息交接），不再追加 `来源` 标注；
     // 它与 `**交接**` 一样不受 `--thinking`/`--tools`/`--events`/`--role` 控制。
     return fencedItem(
       `**${CONTEXT_CHECKPOINT_LABEL}**`,
       event,
       options,
       truncateText(checkpoint.text, options.truncate),
+      false,
+    );
+  }
+  if (handoffNotice !== null) {
+    // 新格式交接通知只含投影层路径与读取要求，不是用户输入，也不与交接正文重复。
+    return fencedItem(
+      `**${HANDOFF_NOTICE_LABEL}**`,
+      event,
+      options,
+      truncateText(handoffNotice.text, options.truncate),
       false,
     );
   }
@@ -556,6 +569,7 @@ function renderTimelineMd(
       askEntries.get(event) ?? null,
       handoffEntries.get(event) ?? null,
       context.checkpoints.get(event) ?? null,
+      context.handoffNotices.get(event) ?? null,
       context.handoffPrompts.get(event) ?? null,
       context.subagentTask === event,
       seq !== undefined && context.suppressedAssistantSeqs.has(seq),
@@ -641,6 +655,7 @@ function renderNodeSections(
   let handoffEntries: ReadonlyMap<EventRecord, HandoffEntry> = new Map();
   let context: ContextAnalysis = {
     checkpoints: new Map(),
+    handoffNotices: new Map(),
     handoffPrompts: new Map(),
     subagentTask: null,
     suppressedAssistantSeqs: new Set(),

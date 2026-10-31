@@ -75,6 +75,35 @@ function splicedEvent(seq: number, target: string): EventRecord {
   });
 }
 
+/**
+ * 部署侧注入起点（形态取自 `preset-lib/injection-boundary.mjs`：起点单独成行，正文另起一行）。
+ *
+ * 新格式交接的两条协议消息都由交接插件自己包裹，来源为 `handoff`；`kind` 是判定合成条目的
+ * 结构锚点，本文件的用例据此区分维护指令与压缩通知。
+ */
+function injectionText(kind: string, text: string): string {
+  const ts = "2026-10-31T12:44:50+08:00";
+  return `<dsh-injection kind="${kind}" src="handoff" id="abcdef12" ts="${ts}">\n${text}\n</dsh-injection>`;
+}
+
+/** 新格式的维护指令消息（来源 `handoff`）。 */
+function instructionEvent(seq: number, text: string): EventRecord {
+  return ev("user/message", seq, {
+    role: "user",
+    content: [{ type: "text", text: injectionText("handoff-instruction", text) }],
+    source: { kind: HANDOFF_SOURCE_KIND },
+  });
+}
+
+/** 新格式的压缩通知消息（来源 `handoff`）。 */
+function noticeEvent(seq: number, text: string): EventRecord {
+  return ev("user/message", seq, {
+    role: "user",
+    content: [{ type: "text", text: injectionText("context-compacted", text) }],
+    source: { kind: HANDOFF_SOURCE_KIND },
+  });
+}
+
 describe("isHandoffEvent 判定", () => {
   it("developer/message 且来源种类为 handoff 时命中", () => {
     assert.equal(isHandoffEvent(handoffEvent(2, 1, 1)), true);
@@ -375,5 +404,171 @@ describe("analyzeHandoffEvents 结构事实", () => {
 
   it("标签取值为对外契约的 交接", () => {
     assert.equal(HANDOFF_LABEL, "交接");
+  });
+});
+
+describe("新格式交接的压缩通知", () => {
+  const NOTICE = "本会话刚才发生了上下文压缩，你是接续会话。NOTICE-MARK";
+
+  it("按来源 handoff 与注入起点的 kind 认定，正文剥离注入信封", () => {
+    const handoff = handoffEvent(2, 1, 1);
+    const notice = noticeEvent(4, NOTICE);
+    const analysis = analyzeHandoffEvents([handoff, splicedEvent(3, "next-step"), notice]);
+    const found = analysis.notices.get(handoff);
+    assert.notEqual(found, undefined);
+    assert.equal(found?.event, notice);
+    assert.equal(found?.text, NOTICE);
+    assert.equal(found?.text.includes("<dsh-injection"), false);
+  });
+
+  it("先遇到真实用户消息时不再认定通知，禁止跨轮误认", () => {
+    const handoff = handoffEvent(1, 1, 1);
+    const real = ev("user/message", 2, {
+      role: "user",
+      content: [{ type: "text", text: "用户自己插话" }],
+      source: { kind: "user" },
+    });
+    const analysis = analyzeHandoffEvents([handoff, real, noticeEvent(3, NOTICE)]);
+    assert.equal(analysis.notices.size, 0);
+  });
+
+  it("扫描在下一条交接事件处停止", () => {
+    const first = handoffEvent(1, 1, 1);
+    const second = handoffEvent(7, 2, 1);
+    const analysis = analyzeHandoffEvents([
+      first,
+      noticeEvent(2, NOTICE),
+      splicedEvent(6, "next-step"),
+      second,
+    ]);
+    assert.equal(analysis.notices.size, 1);
+    assert.equal(analysis.notices.has(first), true);
+    assert.equal(analysis.notices.has(second), false);
+  });
+
+  it("来源同为 handoff 但 kind 不是 context-compacted 时不认定通知", () => {
+    const handoff = handoffEvent(1, 1, 1);
+    const analysis = analyzeHandoffEvents([handoff, instructionEvent(2, "维护指令正文")]);
+    assert.equal(analysis.notices.size, 0);
+  });
+
+  it("新格式没有旧摘要投递，也不抑制助手副本", () => {
+    const body = "交接正文 NEW-BODY";
+    const instruction = instructionEvent(0, "维护指令 INSTRUCTION-MARK");
+    const assistant = assistantEvent(1, body);
+    const handoff = handoffEvent(2, 1, 1, {
+      surfaceOp: { op: "replace", startSeq: 0, endSeq: 1 },
+      sourceEventSeqs: [0, 1],
+    });
+    const analysis = analyzeHandoffEvents([
+      instruction,
+      assistant,
+      handoff,
+      splicedEvent(3, "next-step"),
+      noticeEvent(4, NOTICE),
+    ]);
+    assert.equal(analysis.deliveries.size, 0);
+    assert.equal(analysis.suppressedAssistantSeqs.size, 0);
+    const entry = analysis.entries.get(handoff);
+    // 无投递时正文定位指向紧邻其前的助手消息，字符数按正文计。
+    assert.equal(entry?.structure.endsWith(`正文 seq 1（${String([...body].length)} 字符）`), true);
+    // 交接事件自身没有正文，因此条目正文为空串。
+    assert.equal(entry?.body, "");
+  });
+});
+
+describe("新格式交接的维护指令定位", () => {
+  const INSTRUCTION = "从现在起，你唯一的任务是完成对交接文件的维护。INSTRUCTION-MARK";
+
+  /** 多步生成中的一步：step/start → assistant（可带工具调用）→ 工具往返 → step/end。 */
+  function stepEvents(seq: number, assistantText: string): EventRecord[] {
+    return [
+      ev("step/start", seq, { turn: 1, step: seq }),
+      assistantEvent(seq + 1, assistantText),
+      ev("tool/call", seq + 2, { callId: `c-${seq}`, name: "read", arguments: "{}" }),
+      ev("tool/result", seq + 3, { message: { role: "tool", content: [] } }),
+      ev("step/end", seq + 4, { turn: 1, step: seq }),
+    ];
+  }
+
+  it("最终回复与维护指令之间隔着多步工具往返时仍能定位", () => {
+    // 真实新格式的生成阶段必然调用工具（读真值源、改真值源、跑生成器），最终回复与维护指令之间
+    // 因此不是相邻事件；只看前一条事件会让 `**交接指令**` 永不出现。
+    const instruction = instructionEvent(1, INSTRUCTION);
+    const firstStep = stepEvents(2, "");
+    const secondStep = stepEvents(7, "");
+    const finalAssistant = assistantEvent(12, "交接正文 FINAL-BODY");
+    const handoff = handoffEvent(13, 1, 3, {
+      surfaceOp: { op: "replace", startSeq: 1, endSeq: 12 },
+      sourceEventSeqs: [1, 12],
+    });
+    const analysis = analyzeHandoffEvents([
+      ev("turn/start", 0, { turn: 1 }),
+      instruction,
+      ...firstStep,
+      ...secondStep,
+      finalAssistant,
+      handoff,
+      splicedEvent(14, "next-step"),
+      noticeEvent(15, "通知正文"),
+    ]);
+    const prompt = analysis.prompts.get(handoff);
+    assert.notEqual(prompt, undefined);
+    assert.equal(prompt?.event, instruction);
+    assert.equal(prompt?.text, INSTRUCTION);
+    // 多步之间的助手消息不因"不是最终回复"而影响维护指令的定位。
+    assert.equal(analysis.prompts.size, 1);
+  });
+
+  it("向前扫描遇到上一个交接事件即停止，不把上一次的指令认成本次", () => {
+    const instruction = instructionEvent(0, "第一次的维护指令");
+    const firstAssistant = assistantEvent(1, "第一次正文");
+    const firstHandoff = handoffEvent(2, 1, 1, {
+      surfaceOp: { op: "replace", startSeq: 0, endSeq: 1 },
+      sourceEventSeqs: [0, 1],
+    });
+    const secondAssistant = assistantEvent(3, "第二次正文");
+    const secondHandoff = handoffEvent(4, 2, 1, {
+      surfaceOp: { op: "replace", startSeq: 2, endSeq: 3 },
+      sourceEventSeqs: [2, 3],
+    });
+    const analysis = analyzeHandoffEvents([
+      instruction,
+      firstAssistant,
+      firstHandoff,
+      secondAssistant,
+      secondHandoff,
+    ]);
+    assert.equal(analysis.prompts.get(firstHandoff)?.event, instruction);
+    assert.equal(analysis.prompts.has(secondHandoff), false);
+  });
+
+  it("旧格式紧邻前一条无 rpcId 用户消息仍按结构位置定位", () => {
+    const prompt = ev("user/message", 0, {
+      role: "user",
+      content: [{ type: "text", text: "从现在起，你唯一的任务是给出交接指令 PROMPT-MARK" }],
+      source: { kind: "user" },
+    });
+    const assistant = assistantEvent(1, "旧格式正文");
+    const handoff = handoffEvent(2, 1, 1, {
+      surfaceOp: { op: "replace", startSeq: 0, endSeq: 1 },
+      sourceEventSeqs: [0, 1],
+    });
+    const analysis = analyzeHandoffEvents([prompt, assistant, handoff]);
+    assert.equal(analysis.prompts.get(handoff)?.event, prompt);
+  });
+
+  it("旧格式前一事件带 rpcId 时不认作维护指令", () => {
+    const prompt = ev("user/message", 0, {
+      role: "user",
+      content: [{ type: "text", text: "真实用户输入" }],
+      source: { kind: "user", rpcId: "rpc-1" },
+    });
+    const assistant = assistantEvent(1, "旧格式正文");
+    const handoff = handoffEvent(2, 1, 1, {
+      surfaceOp: { op: "replace", startSeq: 0, endSeq: 1 },
+      sourceEventSeqs: [0, 1],
+    });
+    assert.equal(analyzeHandoffEvents([prompt, assistant, handoff]).prompts.size, 0);
   });
 });

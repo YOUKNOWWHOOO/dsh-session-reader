@@ -118,6 +118,92 @@ describe("renderShowJson / renderShowJsonl", () => {
     assert.equal(lines.filter((line) => line.includes(BODY)).length, 2);
   });
 
+  it("新格式交接：通知与维护指令都是 user/message，不新增条目类型，正文已剥离信封", () => {
+    const ts = "2026-10-31T12:44:50+08:00";
+    const injection = (kind: string, text: string): string =>
+      `<dsh-injection kind="${kind}" src="handoff" id="abcdef12" ts="${ts}">\n${text}\n</dsh-injection>`;
+    const INSTRUCTION = "维护指令 NEW-INSTRUCTION-MARK";
+    const NOTICE = "压缩通知 NEW-NOTICE-MARK";
+    const BODY = "交接正文 NEW-BODY-MARK";
+    const events: Record<string, unknown>[] = [
+      { type: "turn/start", seq: 0, time: 10, data: { turn: 1 } },
+      {
+        type: "user/message",
+        seq: 1,
+        time: 11,
+        data: {
+          role: "user",
+          content: [{ type: "text", text: injection("handoff-instruction", INSTRUCTION) }],
+          source: { kind: "handoff" },
+        },
+      },
+      {
+        type: "assistant/message",
+        seq: 2,
+        time: 12,
+        data: {
+          turn: 1,
+          message: { role: "assistant", content: [{ type: "text", text: BODY }] },
+        },
+      },
+      {
+        type: "developer/message",
+        seq: 3,
+        time: 13,
+        data: {
+          turn: 1,
+          step: 1,
+          message: { role: "developer", source: { kind: "handoff" }, content: [] },
+        },
+        surfaceOp: { op: "replace", startSeq: 1, endSeq: 2 },
+        sourceEventSeqs: [1, 2],
+      },
+      {
+        type: "agent/inbox/spliced",
+        seq: 4,
+        time: 14,
+        data: { target: "next-step", start: 0, inserted: [] },
+      },
+      {
+        type: "user/message",
+        seq: 5,
+        time: 15,
+        data: {
+          role: "user",
+          content: [{ type: "text", text: injection("context-compacted", NOTICE) }],
+          source: { kind: "handoff" },
+        },
+      },
+      { type: "turn/end", seq: 6, time: 16, data: { turn: 1 } },
+    ];
+    const document = JSON.parse(
+      renderShowJson(node([], events), {
+        summary: false,
+        subagents: false,
+        unattributable: [],
+      }).content,
+    ) as { messages: Array<{ type: string; text: string }> };
+    const noticeEntry = document.messages.find((message) => message.text.includes(NOTICE));
+    assert.notEqual(noticeEntry, undefined);
+    assert.equal(noticeEntry?.type, "user/message");
+    assert.equal(noticeEntry?.text, NOTICE);
+    const instructionEntry = document.messages.find((message) =>
+      message.text.includes(INSTRUCTION),
+    );
+    assert.equal(instructionEntry?.type, "user/message");
+    // 新格式不抑制助手副本：交接正文保留在 assistant/message 里。
+    assert.equal(document.messages.filter((message) => message.text === BODY).length, 1);
+    assert.equal(
+      document.messages.some((message) => message.type === "developer/message"),
+      false,
+    );
+    // jsonl 是逐字原文入口：注入信封在原始事件行里原样保留。
+    const lines = renderShowJsonl(node([], events))
+      .content.split("\n")
+      .filter((line) => line.length > 0);
+    assert.equal(lines.filter((line) => line.includes("<dsh-injection")).length, 2);
+  });
+
   it("JSONL：首行逻辑 header，其后逐事件", () => {
     const rendered = renderShowJsonl(node());
     const lines = rendered.content.split("\n").filter((line) => line.length > 0);

@@ -1,22 +1,21 @@
 // 用途：交接（handoff）事件的判定、结构事实抽取与正文定位，供 show 的 Markdown 时间线产出
-// `**交接**` 条目，并为 `**上下文摘要**` 条目提供投递事件与应抑制的助手副本。
-// 主要入口：`analyzeHandoffEvents`（结构事实条目 + 投递映射 + 助手副本抑制集合）。
-// 关键依赖：decode.ts（事件读取基元）、deployment-text.ts（`<compacted-summary>` 信封解析）、
+// `**交接**` 条目，并为 `**上下文摘要**`、`**交接通知**` 与 `**交接指令**` 提供事件与正文。
+// 主要入口：`analyzeHandoffEvents`（结构事实条目、旧摘要投递、新交接通知、生成指令与抑制集合）。
+// 关键依赖：decode.ts（事件读取基元）、deployment-text.ts（部署信封与交接摘要解析）、
 // render-core.ts（空值显示文案）。
 // 设计约束：
-// 1. 判据只取日志字段，不做任何文本匹配：事件 `type` 为 `developer/message`、且
+// 1. 判据只取日志字段，不做正文文案匹配：事件 `type` 为 `developer/message`、且
 //    `data.message.source.kind` 为 `handoff`。
-// 2. **正文只呈现一次**。交接成功后，模型可见的正文由两条候选承载：`assistant/message`（模型产出的
-//    交接正文）与随后投递的 `user/message`（正文被 `<compacted-summary>` 包裹，来源仍是 `user`）。
-//    实测（handoff 插件的测试与事件写入路径）两者逐字相同。现在由投递消息承载正文并渲染为
-//    `**上下文摘要**`，助手副本从时间线、JSON messages 与检索的 `text`/`tools` 档中抑制；
-//    原始助手事件仍保留在日志与 `show --format jsonl` 中。若找不到投递消息，则维持旧行为：
-//    结构条目指向相邻的 `assistant/message` 正文。
-// 3. `<compacted-summary>` 是交付形态，不是任意文本锚点：只把「来源为 `user`、正文剥离部署信封后
-//    恰好是完整信封」的第一条用户消息认作投递；先遇到的其它用户消息（例如真实用户输入）会使本次
-//    交接判为「无投递」。
-// 4. 结构字段缺失不是载荷异常：按空值契约显示 `-`，不让整条 `show` 失败。
-// 5. 本模块是这类内容在全技能范围内的单一真值源；md 渲染只消费这里的产出，禁止另行解析载荷。
+// 2. 两代交接格式并存。旧格式在交接事件后投递一条正文为 `<compacted-summary>` 的用户消息，
+//    该正文与助手生成副本逐字相同，因此由投递消息渲染为 `**上下文摘要**` 并抑制助手副本。
+//    新格式不再投递摘要正文，改为投递一条 `context-compacted` 注入通知，正文只含投影层路径与
+//    读取要求；交接正文保留在 `assistant/message`，通知由 `**交接通知**` 单独承载，不抑制助手。
+// 3. 旧投递判据：只把「来源为 `user`、正文剥离部署信封后恰好是完整 `<compacted-summary>` 信封」的
+//    第一条用户消息认作投递；先遇到普通用户消息则判为「无投递」。
+// 4. 新通知判据：交接事件之后、下一条交接事件之前的 `user/message`，来源为 `handoff`，且
+//    注入起点行的 `kind` 为 `context-compacted`。先遇到真实用户消息即停止，禁止跨轮误认。
+// 5. 结构字段缺失不是载荷异常：按空值契约显示 `-`，不让整条 `show` 失败。
+// 6. 本模块是这类内容在全技能范围内的单一真值源；md 渲染只消费这里的产出，禁止另行解析载荷。
 
 import {
   asArray,
@@ -29,7 +28,11 @@ import {
   readString,
   textFromBlocks,
 } from "./decode.ts";
-import { compactedSummaryBody, stripNestedMessageEnvelope } from "./deployment-text.ts";
+import {
+  compactedSummaryBody,
+  leadingInjectionKind,
+  stripNestedMessageEnvelope,
+} from "./deployment-text.ts";
 import { EMPTY_VALUE } from "./render-core.ts";
 
 /** `**交接**` 标签取值（对外契约，不得改写；标签词表因此由 12 个扩为 13 个）。 */
@@ -80,12 +83,22 @@ export interface HandoffPrompt {
   readonly text: string;
 }
 
-/** 一次交接分析的全部产出：结构条目、投递映射、生成指令与应抑制的助手事件 seq。 */
+/** 新格式交接在历史替换后投递的 `context-compacted` 通知。 */
+export interface HandoffNotice {
+  /** 承载通知的 `user/message` 事件。 */
+  readonly event: EventRecord;
+  /** 通知正文（已剥离注入信封；未截断）。 */
+  readonly text: string;
+}
+
+/** 一次交接分析的全部产出：结构条目、旧投递、新通知、生成指令与应抑制的助手事件 seq。 */
 export interface HandoffAnalysis {
   /** 交接事件 → 结构事实条目。 */
   readonly entries: ReadonlyMap<EventRecord, HandoffEntry>;
-  /** 交接事件 → 投递消息。 */
+  /** 交接事件 → 旧格式投递消息。 */
   readonly deliveries: ReadonlyMap<EventRecord, HandoffDelivery>;
+  /** 交接事件 → 新格式的 `context-compacted` 通知。 */
+  readonly notices: ReadonlyMap<EventRecord, HandoffNotice>;
   /** 交接事件 → 生成交接摘要的提示词消息。 */
   readonly prompts: ReadonlyMap<EventRecord, HandoffPrompt>;
   /** 已由投递消息承载正文、不应再作为 `**助手**` 呈现的助手事件 seq。 */
@@ -238,8 +251,14 @@ function generationOf(
 /**
  * 生成交接摘要的提示词消息。
  *
- * 结构判据：生成正文的前一条事件是 `source.kind === "user"` 且不带 `rpcId` 的用户消息。
- * 带 `rpcId` 的是客户端提交的真实用户输入，不得改标；不带 `rpcId` 的才是交接插件写入的协议提示词。
+ * 两代格式的可判定位置不同，因此先按新格式的标记判定，再退回旧格式的结构位置：
+ * - 新格式：维护指令是来源 `handoff`、注入起点 `kind` 为 `handoff-instruction` 的注入消息。新格式的
+ *   生成是多步骤过程（模型在生成阶段要读取真值源、改真值源、运行生成器），最终回复与维护指令之间
+ *   隔着大量工具往返与后续步骤，**因此不能只看前一条事件**。判据改为从生成正文向前扫描到上一个
+ *   交接事件为止，取最近的一条维护指令注入；注入标记是该格式自带的结构锚点，不依赖正文文案。
+ * - 旧格式：维护指令没有注入标记，只能按结构位置认——生成正文的前一条事件是 `source.kind === "user"`
+ *   且不带 `rpcId` 的用户消息。带 `rpcId` 的是客户端提交的真实用户输入，不得改标。
+ *
  * 正文先剥离部署信封（注入信封与消息信封），再由渲染层按 `--truncate` 处理。
  */
 function promptOf(
@@ -247,15 +266,57 @@ function promptOf(
   generationIndex: number | undefined,
 ): HandoffPrompt | undefined {
   if (generationIndex === undefined || generationIndex <= 0) return undefined;
+  // 新格式：向回扫描到上一个交接事件为止，取最近的维护指令注入。
+  for (let index = generationIndex - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (isHandoffEvent(event)) return undefined;
+    if (eventType(event) !== "user/message") continue;
+    const data = asRecord(event.data) ?? {};
+    const source = asRecord(data.source);
+    if (source === undefined) continue;
+    if (readString(source, "kind") !== HANDOFF_SOURCE_KIND) continue;
+    if (readString(source, "rpcId") !== undefined) continue;
+    if (leadingInjectionKind(textFromBlocks(data.content)) !== "handoff-instruction") continue;
+    return { event, text: messageTextFromBlocks(data.content) };
+  }
+  // 旧格式：只认紧邻生成正文之前的那条无 rpcId 用户消息。
   const previous = events[generationIndex - 1];
   if (previous === undefined || eventType(previous) !== "user/message") return undefined;
-  const source = asRecord(asRecord(previous.data)?.source);
-  if (source === undefined || readString(source, "kind") !== "user") return undefined;
-  if (readString(source, "rpcId") !== undefined) return undefined;
-  return {
-    event: previous,
-    text: messageTextFromBlocks(asRecord(previous.data)?.content),
-  };
+  const previousData = asRecord(previous.data) ?? {};
+  const previousSource = asRecord(previousData.source);
+  if (previousSource === undefined) return undefined;
+  if (readString(previousSource, "rpcId") !== undefined) return undefined;
+  if (readString(previousSource, "kind") !== "user") return undefined;
+  return { event: previous, text: messageTextFromBlocks(previousData.content) };
+}
+
+/**
+ * 新格式交接替换历史后投递的 `context-compacted` 通知。
+ *
+ * 只扫到下一条交接事件为止；先遇到真实用户消息（来源 `user`）说明本轮没有通知，立即停止，
+ * 禁止跨轮把后续交接的通知误认成本轮。`context-compacted` 的 kind 取自注入起点行，
+ * 不按正文文案判定，也不把内部投射的正文当作普通用户输入。
+ *
+ * @param events 已解码逻辑事件。
+ * @param handoffIndex 交接事件在数组中的下标。
+ * @returns 通知事件与正文；没有通知时返回 null。
+ */
+function noticeOf(events: readonly EventRecord[], handoffIndex: number): HandoffNotice | null {
+  for (let index = handoffIndex + 1; index < events.length; index += 1) {
+    const event = events[index];
+    if (isHandoffEvent(event)) return null;
+    if (eventType(event) !== "user/message") continue;
+    const data = asRecord(event.data) ?? {};
+    const kind = readString(asRecord(data.source) ?? {}, "kind");
+    if (kind !== HANDOFF_SOURCE_KIND) {
+      // 真实用户输入先出现，说明本轮没有投递通知；其它注入继续跳过。
+      if (kind === "user") return null;
+      continue;
+    }
+    if (leadingInjectionKind(textFromBlocks(data.content)) !== "context-compacted") continue;
+    return { event, text: messageTextFromBlocks(data.content) };
+  }
+  return null;
 }
 
 /**
@@ -271,6 +332,7 @@ function promptOf(
 export function analyzeHandoffEvents(events: readonly EventRecord[]): HandoffAnalysis {
   const entries = new Map<EventRecord, HandoffEntry>();
   const deliveries = new Map<EventRecord, HandoffDelivery>();
+  const notices = new Map<EventRecord, HandoffNotice>();
   const prompts = new Map<EventRecord, HandoffPrompt>();
   const suppressedAssistantSeqs = new Set<number>();
   const eventsBySeq = new Map<number, EventRecord>();
@@ -292,6 +354,8 @@ export function analyzeHandoffEvents(events: readonly EventRecord[]): HandoffAna
       generation === undefined ? undefined : indexBySeq.get(generation.seq),
     );
     if (prompt !== undefined) prompts.set(event, prompt);
+    const notice = noticeOf(events, index);
+    if (notice !== null) notices.set(event, notice);
     const delivery = deliveryOf(events, index);
     let deliveryLine: string;
     if (delivery === null) {
@@ -326,5 +390,5 @@ export function analyzeHandoffEvents(events: readonly EventRecord[]): HandoffAna
       body: delivery === null ? textFromBlocks(message.content) : "",
     });
   }
-  return { entries, deliveries, prompts, suppressedAssistantSeqs };
+  return { entries, deliveries, notices, prompts, suppressedAssistantSeqs };
 }

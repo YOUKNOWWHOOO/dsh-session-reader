@@ -276,6 +276,87 @@ describe("runSearch 的合成上下文消息检索单元", () => {
             { type: "turn/end", seq: 3, time: 303, data: { turn: 1 } },
           ],
         },
+        {
+          // 新格式交接：维护指令与压缩通知都是来源 handoff 的注入消息，各自独立成检索单元；
+          // 交接正文保留在助手事件里（新格式不抑制副本）。
+          id: "session-ctx-notice-04",
+          projectDir: PROJECT,
+          createdAt: 1300,
+          events: [
+            { type: "turn/start", seq: 0, time: 400, data: { turn: 1 } },
+            {
+              type: "user/message",
+              seq: 1,
+              time: 401,
+              data: {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: `<dsh-injection kind="handoff-instruction" src="handoff" id="abcdef12" ts="2026-10-31T12:44:50+08:00">\n维护指令 NOTICEINSTR-MARK\n</dsh-injection>`,
+                  },
+                ],
+                source: { kind: "handoff" },
+              },
+            },
+            {
+              type: "assistant/message",
+              seq: 2,
+              time: 402,
+              data: {
+                turn: 1,
+                message: {
+                  role: "assistant",
+                  content: [{ type: "text", text: "新格式交接正文 NOTICEBODYONLY" }],
+                },
+              },
+            },
+            {
+              type: "developer/message",
+              seq: 3,
+              time: 403,
+              data: {
+                turn: 1,
+                step: 1,
+                message: { role: "developer", source: { kind: "handoff" }, content: [] },
+              },
+              surfaceOp: { op: "replace", startSeq: 1, endSeq: 2 },
+              sourceEventSeqs: [1, 2],
+            },
+            {
+              type: "agent/inbox/spliced",
+              seq: 4,
+              time: 404,
+              data: { target: "next-step", start: 0, inserted: [] },
+            },
+            {
+              type: "user/message",
+              seq: 5,
+              time: 405,
+              data: {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: `<dsh-injection kind="context-compacted" src="handoff" id="abcdef12" ts="2026-10-31T12:44:50+08:00">\n压缩通知 NOTICENOTICE-MARK\n</dsh-injection>`,
+                  },
+                ],
+                source: { kind: "handoff" },
+              },
+            },
+            {
+              type: "user/message",
+              seq: 6,
+              time: 406,
+              data: {
+                role: "user",
+                content: [{ type: "text", text: "继续 NOTICECONTINUE-MARK" }],
+                source: { kind: "user" },
+              },
+            },
+            { type: "turn/end", seq: 7, time: 407, data: { turn: 1 } },
+          ],
+        },
       ],
     });
   });
@@ -292,6 +373,25 @@ describe("runSearch 的合成上下文消息检索单元", () => {
     assert.deepEqual(
       search("CHECKPOINT-MARK", "text").hits.map((hit) => hit.label),
       ["上下文摘要"],
+    );
+  });
+
+  it("text 档：新格式的压缩通知单独成单元，维护指令与助手正文各自命中", () => {
+    assert.deepEqual(
+      search("NOTICENOTICE-MARK", "text").hits.map((hit) => hit.label),
+      ["交接通知"],
+    );
+    assert.deepEqual(
+      search("NOTICEINSTR-MARK", "text").hits.map((hit) => hit.label),
+      ["交接指令"],
+    );
+    assert.deepEqual(
+      search("NOTICEBODYONLY", "text").hits.map((hit) => hit.label),
+      ["assistant"],
+    );
+    assert.deepEqual(
+      search("NOTICECONTINUE-MARK", "text").hits.map((hit) => hit.label),
+      ["user"],
     );
   });
 

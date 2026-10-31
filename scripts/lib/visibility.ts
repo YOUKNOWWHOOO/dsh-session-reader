@@ -22,6 +22,9 @@ import { asRecord, type EventRecord, eventType, readString } from "./decode.ts";
  *   本名单只决定它不被判为注入；它由渲染层呈现为 `**上下文摘要**`（真值源见 context-checkpoint.ts），
  *   而不是 `**用户**`。本机真实库尚无成功的检查点样本，该形态依据官方源码与合成夹具，未经真实
  *   数据验证。
+ * - `handoff`：普通消息交接的协议消息。维护指令是 `handoff-instruction` 注入，历史替换后的
+ *   通知是 `context-compacted` 注入；两者分别由合成上下文条目呈现为 `**交接指令**` 与
+ *   `**交接通知**`，不是人类用户输入。保留它们只为让合成条目能在可见性过滤前被识别。
  * - `subagent-settled`：子代理结算回传，携带子代理的最终结论。
  * - `agent-message`：子代理或其它代理的中途发言。
  * - `user-question-reply`：用户对 `ask_user_question` 的**延迟回答**（提问仍在等待时用户之后作答），
@@ -50,6 +53,7 @@ import { asRecord, type EventRecord, eventType, readString } from "./decode.ts";
 export const KEPT_USER_MESSAGE_KINDS: readonly string[] = [
   "user",
   "compact-checkpoint",
+  "handoff",
   "subagent-settled",
   "agent-message",
   "user-question-reply",
