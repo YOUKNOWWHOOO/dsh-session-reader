@@ -7,348 +7,117 @@
 | 字段 | 当前值 |
 | --- | --- |
 | 当前阶段 | Active Development |
-| 当前版本 | 0.3.0 |
-| 适用平台 | Windows |
-| 运行依赖 | 桌面版 DeepSeek Harness（Electron-as-Node 执行载体）、本机 dsh 安装 |
-| 开发与验证基线 | dsh `0.2.1-rc.3`，会话日志格式 v4 |
+| 已发布版本 | 0.3.0 |
+| 当前主线 | 0.4.0-dev（未发布，变更见 `CHANGELOG.md` 的 `Unreleased` 段） |
+| 对外稳定性 | CLI 与输出契约仍可能调整 |
 
-## 背景与目的
+`package.json` 的 `version` 记录已发布版本 0.3.0。当前主线尚未发布，因此该字段不随 `Unreleased` 的累积内容改动。
 
-dsh 把每一次会话记录成一组日志文件，位置在 dsh 主目录的 `sessions/` 下。一个会话占一个目录，日志文件名形如 `session.v4.jsonl.zstd`，内容是 zstd 压缩的 JSONL，每一行是一个事件：用户消息、助手消息、模型的推理过程、工具调用及其参数、工具返回的结果、系统提示词，以及轮次开始与结束、模型请求与响应、上下文压缩、审批与运行时注入等生命周期事件。子代理会话单独存放，通过父会话标识与主会话关联。
+## 项目定位与范围
 
-这些日志是排查问题的第一手材料，也是复盘模型行为的唯一依据。但 dsh 自身不提供读取它们的命令：要查看一次会话，只能手工定位会话目录、解压 zstd 帧、再逐行解析 JSON 事件。
+dsh 把每一次会话记录成一组日志文件，位置在 dsh 主目录的 `sessions/` 下。一个会话占一个目录，日志是 zstd 压缩的 JSONL，每行一个事件：用户消息、助手消息、推理、工具调用与结果、系统提示词，以及轮次、模型请求、上下文压缩、审批与运行时注入等生命周期事件。子代理会话单独存放，通过父会话标识与主会话关联。
 
-这个技能把这段过程收敛成五个命令，将会话消息历史提取为 Markdown、JSON 与 JSONL 三种格式的文件，供人阅读，也供程序或 agent 继续处理。
+dsh 自身不提供读取这些日志的命令，要查看一次会话只能手工定位目录、解压 zstd 帧、再逐行解析 JSON。本技能把这段过程收敛成五个命令（`list`、`show`、`search`、`stats`、`check`），把会话历史导出为 Markdown、JSON 与 JSONL 三种文件，供人阅读，也供程序或 agent 继续处理。
 
-dsh 有两套代理预设：随附的 `standard` 与自定义的 `dsh-custom`（显示名“自定义模式”）。两者写出的日志格式相同，差别在内容层：自定义模式会给注入消息、用户与助手消息以及工具结果加部署包装，并用普通消息交接替换历史；标准模式由官方压缩替换历史。本技能用同一套判据读取两者，可读正文统一剥离完整部署包装；需要逐字原文时用 `show --format jsonl`，它不做任何剥离与可见性过滤。普通消息交接本身还有两代形态：旧格式在交接后投递一条 `<compacted-summary>` 摘要消息，新格式改为投递一条只含投影层路径与读取要求的压缩通知，交接正文留在助手消息里。技能同时识别两代，旧日志的读取路径不会被新格式取代。
+当前范围：
+
+- 只处理本机 dsh 主目录内的会话日志与投影缓存，不解析远端会话，不提供实时事件流。
+- 只读、离线的完整边界与唯一写入位置见 `SKILL.md` 的“适用范围”。
+
+不覆盖的用法与数据边界见 `SKILL.md` 的“支持的会话来源”与“使用要点”两节。
 
 ## 适用环境
 
-- **平台**：Windows。技能的路径处理、输出文件名校验与文件移动语义都按 Windows 实现（例如拒绝 `CON`、`PRN`、`AUX`、`NUL`、`COM1`-`COM9`、`LPT1`-`LPT9` 这 22 个保留设备名）。
-- **执行载体**：必须是桌面版 DeepSeek Harness 的 Electron-as-Node。脚本是 TypeScript（ESM），由该运行时原生类型剥离直接执行，没有构建步骤，也不需要 `tsconfig.json` 参与运行。PATH 中的系统 Node（v26 线）同样能原生执行 TypeScript，但解析不了桌面版安装归档 `app.asar` 内的虚拟路径（其 `existsSync` 对归档内路径恒为 false），默认锚点因此定位不到、无法加载官方格式库；本技能不承诺用系统 Node 直接运行，这种用法只适用于用 `--lib-root` 指向真实目录的开发场景。
+- **平台**：Windows。技能的路径处理、产物文件名校验与文件移动语义都按 Windows 实现。
+- **执行载体**：桌面版 DeepSeek Harness 的 Electron-as-Node。脚本是 TypeScript（ESM），由该运行时原生类型剥离直接执行，没有构建步骤，`tsconfig.json` 只服务开发期类型检查。
+- **dsh 安装**：本机需有一份可用的 dsh 安装，它提供两样东西，即会话数据本身，以及随桌面版发运的官方会话格式库。
+- **会话日志格式**：只支持当前格式。旧版本日志按不可读处理，具体行为见 `SKILL.md` 的“支持的会话来源”。
+- **主目录**：默认取环境变量 `DSH_HOME`，未设置时取 `~/.dsh`，可用 `--dsh-home` 覆盖。该选项只决定数据来源，不改变官方格式库的位置与版本。
 
-  用法固定为两行设置加 `& $desktopNode` 调用：
+### 官方格式库的位置
 
-  ```powershell
-  $env:DSH_DESKTOP_NODE_EXECUTABLE = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/DeepSeek Harness.exe'
-  $desktopNode = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/resources/runtime/bin/node.cmd'
-  & $desktopNode scripts/session-reader.ts list --output-dir .\tmp
-  ```
+官方格式库随桌面版 dsh 一同安装，位于安装归档内的虚拟路径：
 
-  该 shim 设置 `ELECTRON_RUN_AS_NODE=1` 并转发 `--expose-internals`，其第三行直接引用 `DSH_DESKTOP_NODE_EXECUTABLE`，缺这个变量时会以 `'""' is not recognized as an internal or external command`、退出码 1 失败。它是 `.cmd`，PowerShell 会等待并回传退出码，因此优先用它；改为直接调用桌面版可执行文件时必须自行设置 `ELECTRON_RUN_AS_NODE=1` 并按 shim 的做法附 `--expose-internals`，且不要用裸 `&` 调用（桌面版可执行文件是 GUI 子系统程序，裸 `&` 不等待进程，stdout 与 `$LASTEXITCODE` 都取不到，实测），需要退出码时用 `Start-Process -Wait -PassThru`。
-- **dsh**：本机需有一份可用的 dsh 安装。它需要提供两样东西，即会话数据本身，以及随发行版提供的官方会话格式库 `@deepseek-ai/dsh-session-format-catalog`。
-- **会话日志格式**：当前为 v4。技能通过官方格式库解码日志，不自行解析格式细节。
-- **主目录**：默认取环境变量 `DSH_HOME`，未设置时取 `~/.dsh`；可用 `--dsh-home` 覆盖。该目录不存在、或其下缺 `sessions/` 时，命令以退出码 1 结束。`--dsh-home` 只决定数据来源，不改变官方格式库的来源与版本——库恒取桌面版安装内那一份（或用 `--lib-root` 显式指定的那一份），因此指向另一份会话数据时，两边的版本各随其安装，错配只会以解码失败暴露。
+```text
+%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\app.asar\dsh\node_modules
+```
 
-## 能做什么
+该路径只有桌面版 Electron-as-Node 能读取。系统 Node 的 `existsSync` 对 `app.asar` 内路径恒为 false，因此用系统 Node 直接运行默认组合必然在加载格式库这一步失败；这种用法只适用于用 `--lib-root` 指向真实目录的开发场景。
 
-### 选取哪些内容
+技能默认以该锚点为唯一来源，不探测 npm 缓存、npx 安装树或 profile 依赖；定位失败时直接报错，不猜测也不回落。`--lib-root` 是唯一显式覆盖入口。锚点的判定要求见 `SKILL.md` 的“运行前提”。
 
-技能用参数组合控制提取范围。同一个命令换一组参数，既可以只查看某一个会话的一小段，也可以扫描全库：
-
-| 要控制的事情 | 用哪些参数 |
-| --- | --- |
-| 选哪些会话 | `--workspace`（工作区路径或标题精确匹配）、`--since`/`--until`（最近活动时间区间）、`--title`（标题子串，仅 `list`）、`--origin`（主会话／子代理／全部） |
-| 指定某一个会话 | 目标写法：完整会话 id、唯一前缀（最少 8 个字符）、`last`（最近活动的主会话）；`show`、`stats`、`check` 与 `search --session`/`--exclude-session` 都接受 |
-| 选哪些事件 | `show` 的 `--turn A-B`/`--seq A-B`（事件序列区间，含端点）；`search` 的 `--scope text\|tools\|all`（按内容类型分三档） |
-| 选哪些类型的消息 | `show` 的 `--role user\|assistant`（只看某一方的消息）、`--thinking`（模型推理）、`--tools`（工具调用与结果）、`--events`（生命周期事件与系统消息） |
-| 选多少 | `--limit N`（列出条数上限）、`--head N`/`--tail N`（首尾条目）、`--truncate N`（每条正文的截断长度）、`--context N`（检索命中两侧的窗口） |
-| 是否连带子代理会话 | `show --subagents`（按父子层级一并导出）、`--origin subagent`（只看子代理） |
-| 从检索中剔除或只保留一棵子树 | `search --session`、`search --exclude-session`，都按该会话及其子代理子树生效 |
-
-### 导出为哪些格式
-
-| 格式 | 支持的命令 | 形态与用途 |
-| --- | --- | --- |
-| `md`（默认） | 全部五个命令 | Markdown，面向人阅读；结构固定，标题、列表、表格与代码围栏齐备，可继续交给 Markdown 工具处理 |
-| `json` | 全部五个命令 | JSON，面向程序处理；含覆盖声明与逐条结构化数据，其中检索与统计另含扫描明细 |
-| `jsonl` | 仅 `show` | 每行一个 JSON；首行是会话头，其后每行一个已解码事件，行数等于事件数加一，是逐事件穷尽枚举的唯一入口 |
-
-三种格式都写入 `--output-dir` 指定的目录，终端只回两行摘要。
-
-## 功能
-
-五个命令的共同点是：只读，结果写入文件，成功时终端只回两行。
-
-### `list`：列出会话
-
-会话清单，默认是一张表格，每行一个会话。
-
-- 每行给出：会话 id、标题、工作区、最近活动时间、轮次、类型（主会话或子代理）、日志大小。
-- 过滤：`--workspace`、`--since`/`--until`、`--title`、`--origin`。
-- 排序：`--sort time|created|title|size|turns`，默认 `time`；`title` 升序，其余降序。
-- 条数：`--limit N`，默认 100，`0` 为不限。
-- `--full`：换成逐会话的完整块，额外给出 cwd、预设、模型、令牌用量（未缓存输入／输出／缓存读／缓存写）与元数据可用性。只改变 md 形态，与 `--format json` 同用时被接受但无效果。
-- 默认隐藏空会话，用 `--include-blank` 显示。
-- 结果末尾给出合计（匹配数、显示数、扫描数）与逐条元数据说明，并带覆盖声明。
-
-### `show`：读取一次会话
-
-一次会话的完整时间线，按事件顺序展开。
-
-- 呈现内容：用户与助手的正文、模型的推理过程、工具调用及其参数、工具返回的结果、系统消息、生命周期事件，工具向用户提问的问答条目（`**提问**` 与 `**回答**`），主代理发给子代理的任务与后续消息（`**子代理任务**` 与 `**发往子代理**`），上下文替换的摘要正文（`**上下文摘要**`），新格式交接的压缩通知（`**交接通知**`），交接的生成提示词（`**交接指令**`），以及上下文交接的结构事实（`**交接**`）。
-- 默认可见性：显示用户与助手消息、问答条目（`**提问**` 与 `**回答**`，来自 `ask_user_question` 工具）、子代理任务与发往子代理的正文（来自 `subagent` 与 `send_message` 工具；子代理会话自身的首条任务消息同样标为 `**子代理任务**`）、上下文摘要（`**上下文摘要**`）、压缩通知（`**交接通知**`）、交接指令（`**交接指令**`）与交接条目（`**交接**`，来自 `developer/message` 的 `handoff` 型事件）；这些条目都没有关闭开关，也不受 `--thinking`/`--tools`/`--events`/`--role` 控制；推理、其余工具调用与结果、生命周期事件默认隐藏，分别用 `--thinking`、`--tools`、`--events` 显示。
-- 交接条目只给结构事实，不重复正文。旧格式交接成功时，正文由随后的 `**上下文摘要**` 条目承载（投递消息的 `<compacted-summary>` 信封形态），条目给出轮次、被替换的历史区间与正文所在事件的位置，因此同一段文字不会出现两次；新格式不投递摘要，正文由紧邻其前的 `**助手**` 条目承载，压缩通知另由 `**交接通知**` 条目承载；没有投递消息时同样由紧邻其前的 `**助手**` 条目承载。
-- 可读正文剥离部署包装：注入消息的 `<dsh-injection …>…</dsh-injection>`（子代理初始任务的两个顺序信封一并剥离）、用户消息与助手消息的 `<dsh-message …>…</dsh-message>`、普通工具结果的 `<dsh-result …>…</dsh-result>`，以及交接摘要内层复制的助手消息标记。其余不完整或形态异常的包装原样显示，不做尽力截取。
-- 默认排除框架与插件自动注入的消息：运行时上下文快照、技能目录、后台任务完成通知、模型切换通知等状态提示，以及子代理调度回执（`started subagent …`）。判定按日志里的来源字段，与正文文案无关。结果末尾的摘要行写明隐藏与排除了多少条；被排除的内容可用 `--events`（注入消息）、`--tools`（调度回执与工具结果）或 `search --scope all` 取回。
-- `--role user|assistant`：只看某一方的消息，工具与事件不受影响。
-- `--summary`：不展开时间线，只给轮次大纲（不含提问与回答条目），每轮一问一答各截取一段，适合先看整体再决定读哪一段。
-- 范围选择：`--turn A-B`/`--seq A-B` 按事件序列筛选（作用于每个块），`--head N`/`--tail N` 按条目截取（只作用于主会话块）。
-- `--headers`：给每一行标注事件序号与本地时间。
-- `--truncate N`：按码点截断正文，`0` 为不截断（默认）。
-- `--subagents`：连带把子代理会话按父子层级一并导出，标题里的路径编号（如 `1.2`）表达嵌套关系。
-- `--probe`：只给会话头、预计正文字节数、消息条数与问答数，不含任何会话正文，用于先判断完整读取的开销。
-- 范围筛选生效时，结果里有一行筛选说明，列出该块真正生效的条件、条目数与事件数；没有任何筛选时不输出该行。
-- 格式：`md`、`json`、`jsonl`。
-
-### `search`：检索内容
-
-在全库会话里检索关键词，返回命中总数、逐条命中与每会话命中分布。
-
-- `--scope` 三档：`text`（用户与助手正文、问答条目的可读文本，以及 `上下文摘要`、`交接通知`、`交接指令`、`子代理任务` 四类条目的可读文本，默认；与 `show` 默认参数同一可见性，不含框架注入、调度回执与被 `**上下文摘要**` 取代的旧格式助手副本）、`tools`（另含工具调用参数与工具结果，含问答的原始载荷；同样排除框架注入与调度回执）、`all`（另含推理、系统消息、压缩摘要、命令、标题请求、web 检索请求、交付物、待办、代理信箱与每个事件的完整 JSON 载荷；它同时是取回被默认排除内容的入口）。默认两档会在结果里写明排除了多少条注入与调度回执。
-- 每条命中给出所属会话 id、事件序号、标签与命中处两侧的上下文片段。
-- `--context N`：命中处两侧各取 N 个码点，默认 60。
-- `--limit N`：限制列出的命中条数，默认 100，`0` 为不限，不改变命中总数。
-- `--case-sensitive`：区分大小写，默认不区分。
-- `--session`：只检索该会话及其子代理子树；`--exclude-session`：排除该子树。
-- 范围过滤：`--workspace`、`--since`/`--until`、`--origin`。
-- 结果另给检索范围说明（当前档位覆盖哪些内容）、扫描明细（解码日志份数、读到的事件总数、解码失败份数、帧解压失败帧数）、事件时间范围与每会话命中分布（含 0 命中的会话）。
-- 格式：`md`、`json`。
-
-### `stats`：统计用量
-
-- 给目标时统计单个会话：会话标识、标题、是否空会话、轮次、步数、工具调用数、令牌用量、创建时间、最近活动时间、预设、模型、日志路径与大小。
-- 不给目标时做全局聚合：会话数、空会话数、总轮次、总步数、工具调用总数、四类令牌合计、时间跨度、日志总大小。
-- 范围过滤 `--workspace`、`--since`/`--until`、`--origin` 只在全局聚合时可用；与单会话目标同用会被拒绝，不做静默忽略。
-- 部分字段来自 dsh 的投影缓存，不可用时逐条说明原因，并且不计入相关合计。
-- 格式：`md`、`json`。
-
-### `check`：校验日志完整性
-
-逐会话核查日志的物理结构与事件序列。
-
-- 核查项：日志格式版本、结构完整性（完整／结构损坏／尾部撕裂及其偏移）、zstd 帧数、行数、事件序号是否连续、坏行数、异常项与详情。
-- 不给目标时校验全库，且这种扫描不读会话头，因此连会话头都读不出来的目录也在诊断范围内。
-- 结论行给出"无异常"或异常项数。
-- 发现异常时，先把结果写入文件并打印两行 stdout，再以退出码 3 结束，stderr 为空。因此退出码 3 不代表没有输出文件。
-- 格式：`md`、`json`。
-
-## 使用方法
-
-### 前置条件
+## 安装与运行前提
 
 1. 本机已安装桌面版 DeepSeek Harness 并至少使用过一次，`~/.dsh/sessions/` 下有会话日志。
-1. 用桌面版 Electron-as-Node 运行脚本（见「适用环境」的执行载体）：默认锚点位于桌面版安装归档内，系统 Node 解析不了该虚拟路径。
-1. 把本仓库放在 dsh 的技能目录下，或在任意位置直接调用脚本（脚本按自身位置解析所需资源，不依赖当前工作目录）。
+1. 技能目录放在 `<dsh-home>/skills/session-reader/`，会话创建时它会被技能目录收录，模型可按名称加载。
+1. 在运行命令的 PowerShell 里先设置执行载体，后续用 `& $desktopNode` 调用：
 
-若作为 dsh 技能使用，目录应放在 `<dsh-home>/skills/session-reader/`，这样会话创建时它会被技能目录收录，模型可以按名称加载它。
+   ```powershell
+   $env:DSH_DESKTOP_NODE_EXECUTABLE = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/DeepSeek Harness.exe'
+   $desktopNode = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/resources/runtime/bin/node.cmd'
+   ```
 
-### 基本调用
+   shim 设置 `ELECTRON_RUN_AS_NODE=1` 并转发 `--expose-internals`，其第三行直接引用 `DSH_DESKTOP_NODE_EXECUTABLE`。它是 `.cmd`，PowerShell 会等待并回传退出码。缺少该变量时的失败形态见 `SKILL.md` 的“运行前提”。
+1. 全部命令必须显式指定 `--output-dir`，它没有默认值。惯例是指向项目临时目录。
 
-所有命令都必须显式给出 `--output-dir`，它没有默认值，缺省即退出码 2。惯例是指向项目临时目录。示例统一用 `& $desktopNode` 作为执行载体，变量在下列代码块开头设置一次即可。
+## 最小可运行示例
 
 ```powershell
-# 设置执行载体，每个新会话执行一次
-$env:DSH_DESKTOP_NODE_EXECUTABLE = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/DeepSeek Harness.exe'
-$desktopNode = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/resources/runtime/bin/node.cmd'
-
-# 列出最近活动的 20 个会话
-& $desktopNode scripts/session-reader.ts list --output-dir .\tmp --limit 20
-
-# 只看某个工作区的会话，按大小排序
-& $desktopNode scripts/session-reader.ts list --output-dir .\tmp --workspace "C:\Users\me\project" --sort size
-
-# 只看子代理会话
-& $desktopNode scripts/session-reader.ts list --output-dir .\tmp --origin subagent
-
-# 读取最近活动的主会话（默认只显示用户与助手消息）
-& $desktopNode scripts/session-reader.ts show last --output-dir .\tmp
-
-# 先量规模，再决定是否完整读取
-& $desktopNode scripts/session-reader.ts show last --output-dir .\tmp --probe
-
-# 完整读取，含推理、工具调用与参数、工具结果，并标注事件序号与时间
-& $desktopNode scripts/session-reader.ts show last --output-dir .\tmp --thinking --tools --headers
-
-# 只看第 3 到第 5 轮里用户发出的消息
-& $desktopNode scripts/session-reader.ts show last --output-dir .\tmp --turn 3-5 --role user
-
-# 先看轮次大纲
-& $desktopNode scripts/session-reader.ts show last --output-dir .\tmp --summary
-
-# 连带子代理会话一起导出，并用 JSON 交给程序处理
-& $desktopNode scripts/session-reader.ts show last --output-dir .\tmp --subagents --format json
-
-# 逐事件穷尽枚举，每行一个事件
-& $desktopNode scripts/session-reader.ts show last --output-dir .\tmp --format jsonl
-
-# 全库检索某个错误串，范围含所有事件载荷
-& $desktopNode scripts/session-reader.ts search "ECONNRESET" --output-dir .\tmp --scope all
-
-# 检索时排除自己这次会话及其子代理
-& $desktopNode scripts/session-reader.ts search "timeout" --output-dir .\tmp --scope all --exclude-session last
-
-# 全局用量统计
-& $desktopNode scripts/session-reader.ts stats --output-dir .\tmp
-
-# 校验全库日志完整性
-& $desktopNode scripts/session-reader.ts check --output-dir .\tmp
+& $desktopNode scripts/session-reader.ts list --output-dir .\tmp
 ```
 
-### 指定输出文件名
+命令把会话清单写入 `.\tmp`。命令、选项与输出契约的完整说明见 `SKILL.md`。
 
-不给 `--name` 时，文件名是 `session-reader-<命令>-<UTC 时间戳>-<随机 6 位>.<扩展名>`，且同名文件已存在就拒绝执行（退出码 2），因此不会覆盖既有文件。给 `--name` 时文件名固定为 `<output-dir>/<name>.<扩展名>`，同名文件被原子替换，会覆盖上一次的内容。
-
-`--name` 只接受单一路径段：ASCII 字母、数字、`_`、`-`，以及全部汉字（含扩展 B 及以后）。长度按 UTF-16 单元计，1 到 64。
-
-### 目标写法
-
-`show`、`stats`、`check` 以及 `search --session`/`--exclude-session` 都接受三种目标写法：
-
-- 完整会话 id，如 `session-3f2a1c4e-...`；
-- 唯一前缀（不区分大小写，最少 8 个字符，可省略 `session-`），如 `3f2a1c4e`；
-- `last`，表示最近活动的主会话（区分大小写）。
-
-前缀有歧义时以退出码 1 报错并给出候选数，改用更长前缀即可。
-
-### 使用要点
-
-- 时间参数：`--since` 与 `--until` 接受毫秒数或严格 ISO 时间（纯数字按毫秒解释，无时区后缀按 UTC，如 `2026-09-15` 或 `2026-09-15T21:30:00Z`）。过滤基准是会话的有效最近活动时间，双端含端点，不校验两者先后。
-- 过滤的失败语义不同：`--workspace` 是路径归一化全等匹配或工作区标题全等匹配，没有任何匹配时以退出码 1 报错；`--title` 是标题子串匹配且不区分大小写，没有匹配时正常返回空结果并以 0 结束。
-- 空会话的默认处理不同：`list` 默认隐藏空会话，用 `--include-blank` 显示；`search` 与 `stats` 恒包含空会话。因此用 `list` 定位会话、再用 `search` 核对内容时，两者的会话集合不完全相同。
-- `--limit`、`--head`、`--tail` 的 `0` 表示不限；`--truncate` 的 `0` 表示不截断；`--turn` 与 `--seq` 的区间含端点，其中 `--turn` 最小 1、`--seq` 最小 0。
-- 选项不可重复（重复即退出 2），开关不接受值（`--full=1` 退出 2），值选项支持 `--name <值>` 与 `--name=<值>` 两种写法。
-- 关键词以 `-` 开头时用 `--` 终止选项解析；必需选项要写在 `--` 之前：
-
-  ```powershell
-  & $desktopNode scripts/session-reader.ts search --output-dir .\tmp -- "- item"
-  ```
-
-- 目标的解析有三种结果：唯一匹配且可读时正常执行；匹配到多个会话时以退出码 1 报错并给出候选数；目标存在于磁盘但会话头不可读时以退出码 3 报 `数据不可读`，与"不存在"可以区分。其余无匹配以退出码 1 报 `目标不存在`。
-- `-h` 与 `--help` 写 stdout、以 0 结束，且不需要 `--output-dir`。
-
-## 输出格式
-
-### 终端只回两行
+## 模块结构
 
 ```text
-完整输出已保存到: <输出文件的绝对路径>
-<规模摘要>；输出文件共 N 行
+SKILL.md                    技能说明，也是面向调用方的唯一契约正文
+README.md                   本文件：项目定位、环境、安装运行与开发入口
+CHANGELOG.md                对外变更记录
+scripts/
+  session-reader.ts         CLI 入口：解析、校验、分发、写出产物
+  lib/
+    decode.ts               官方格式库加载、事件解码与正文抽取出口
+    frames.ts               物理层 zstd 帧扫描与逐帧解压
+    paths.ts                官方格式库默认锚点、保留设备名与路径工具
+    deployment-text.ts      部署包装的解析与剥离
+    context-checkpoint.ts   合成上下文消息的判定与正文抽取
+    ask-user.ts             问答的可读文本抽取
+    handoff.ts              交接的结构事实与投递判定
+    visibility.ts           默认参数下的可见性白名单
+    message-source.ts       来源归属与来源标注
+    store-*.ts              会话发现、投影缓存元数据、列表、检索、统计、校验
+    render-*.ts             md、json、jsonl 渲染与命令级摘要
+tests/                      单元测试、CLI 集成测试与全组合 lint 门禁
+doc/开发规范.md              开发、测试与维护的要求与验收标准
 ```
 
-摘要给出该命令的关键计数（会话数、命中数、事件数等），且同一调用不因 `--format` 而改变。失败时终端不输出任何内容，只在 stderr 打一行 `错误: <分类>`。
+## 开发与校验链
 
-### 选项组合限制
-
-以下组合会被拒绝，以退出码 2 结束：
-
-- `--thinking`、`--tools`、`--events`、`--role`、`--truncate`、`--turn`、`--seq`、`--head`、`--tail` 与 `--probe` 只对 Markdown 有效，与 `--format json` 或 `--format jsonl` 同用即被拒绝。
-- `--format jsonl` 另外还禁止 `--summary` 与 `--subagents`。
-- `--head` 与 `--tail` 互斥。
-- `--summary` 与 `--turn`、`--seq`、`--head`、`--tail` 互斥。
-- `--probe` 与 `--subagents` 互斥。
-- `stats` 给了目标（单会话统计）时，`--workspace`、`--since`、`--until`、`--origin` 不可用。
-
-组合冲突的错误说明会给出可执行的替代写法，例如 `去掉 --events，或把 --format 改为 md`。
-
-### 文件编码
-
-UTF-8 无 BOM、LF 换行、末尾恰一个换行。Markdown 输出满足一套可被 lint 校验的结构纪律（标题词表固定、多行文本只用围栏承载、单行文本只用行内代码承载、围栏长度按内容动态计算），因此调用方不需要把输出目录排除在 Markdown 静态检查之外。
-
-### 覆盖声明
-
-每份输出都写明"扫了什么、纳入了什么、排除了什么"（`--probe` 的规模探测输出除外）：
-
-```text
-扫描会话 12 个；纳入 11 个；排除 1 个
-排除会话：session-9f1c...（会话头不可读）
-```
-
-三个数字满足 `扫描 = 纳入 + 排除`，且实现就按这个等式构造。它不是独立的核对手段，要判断覆盖范围是否完整，看的是逐条列出的排除项与原因。单个会话损坏不会让整份统计失败：聚合命令跳过它并声明，只有以它为目标的单目标命令才会明确报错。
-
-## 退出码
-
-| 退出码 | 含义 |
-| --- | --- |
-| 0 | 成功，含 0 命中、空结果、`--help`、`check` 未发现异常 |
-| 1 | 目标不存在，含前缀歧义、`--workspace` 无匹配、`--dsh-home` 不存在、`sessions/` 缺失 |
-| 2 | 参数错误，含 `--name` 非法、选项组合违规、缺 `--output-dir`、关键词为空、前缀短于 8 字符、未给 `--name` 时输出文件已存在 |
-| 3 | 数据或 IO 错误，含 `check` 发现异常、输出目录创建失败、输出写入失败、文件移动失败、官方格式库加载失败、问答载荷结构不符合预期 |
-
-stderr 的格式固定为一行 `错误: <分类>`，分类是固定的 8 个取值（`参数无效`、`目标不存在`、`数据不可读`、`内部错误`、`输出目录创建失败`、`输出文件已存在`、`输出写入失败`、`输出移动失败`）。分类后可能附一段括号说明；调用方应只依赖分类与退出码分流，括号说明的内容可能扩展。错误行不含会话内容、会话标识、用户名与任何绝对路径（dsh 数据路径与安装路径都算），锚点位置只以 `%LOCALAPPDATA%` 占位形态出现，因此可以原样转贴。
-
-一个例外需要知道：`check` 发现异常时先把结果写入文件并打印两行 stdout，再以 3 结束，stderr 为空。因此退出码 3 不代表没有输出文件。
-
-## 已知边界与限制
-
-这些是实际存在的限制，使用前应当知道：
-
-- **与 dsh 的格式版本绑定**。会话日志的格式由 dsh 决定，技能通过官方格式库解码，格式版本以官方库的 `currentVersion` 为准（当前为 v4）。历史正文读取必须绑定直属子会话事实，技能会按物理 generation 使用历史 catalog 或当前 catalog，并为每个历史父会话建立独立 child-bound catalog。
-- **依赖官方格式库的位置**。库随桌面版 dsh 一起安装，位于安装归档内的 `%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\app.asar\dsh\node_modules`；该虚拟路径只有桌面版 Electron-as-Node 能读取。技能默认以该锚点为唯一来源（要求其中同时含 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-session-format-catalog`），不回落任何其它目录；也可以用 `--lib-root` 显式指定含 `@deepseek-ai` 的 `node_modules` 目录（例如桌面版布局不同，或开发期指向真实目录）。定位不到时不会猜测，而是直接以退出码 3 报错并说明该指定什么。
-- **平台限定 Windows**。在其它平台上，输出文件名的保留设备名校验、路径处理与原子替换语义都未经验证。
-- **检索的穷尽性有一处细节**。`--scope all` 档的"事件载荷"单元是事件的 JSON 序列化结果，其中的双引号、反斜杠与制表符会以转义形态出现。因此只存在于非文本字段里、且含这些字符的关键词可能命不中；需要逐字核对原文时用 `show --format jsonl` 导出原始事件行。另外命中总数是检索单元内的匹配次数，不是文本出现次数，同一段文本可能被计多次。
-- **元数据可能不可用**。列表与统计的部分字段来自 dsh 的投影缓存。缓存缺失、版本不符或与会话身份不一致时，相关字段标注为"元数据不可用"并在 json 中给出原因，不会静默填 0。版本校验是严格等值：投影缓存升版后（官方写入端接受若干兼容旧版本，本技能只接受当前版本）这些字段会整体退化为不可用，届时需要按当期版本更新技能。
-- **交接条目不含正文**。`**交接**` 只给出轮次、被替换的历史区间与正文位置（事件序号与字符数）；旧格式交接成功时正文由 `**上下文摘要**` 条目承载（原始形态是投递消息的 `<compacted-summary>` 信封内层），新格式与无投递时正文在紧邻其前的 `**助手**` 条目里，新格式的压缩通知另由 `**交接通知**` 条目承载。这是为了避免同一段交接正文在同一产物中出现两次。需要逐字原文时用 `show --format jsonl`。
-- **部署包装只剥离完整信封**。注入消息、用户与助手消息、工具结果外层的部署包装在完整时被剥离；起点行、正文与终点不齐备的包装原样显示，不做尽力截取——半截信封下截出的内容不再等于被记录的那份正文。唯一例外是交接摘要内层的助手消息标记，它是写入侧两种包裹叠加后的确定形态，按登记的判据只去掉起点行与转义终点行。原始逐字形态始终可由 `show --format jsonl` 取回。
-- **问答载荷的结构绑定**。`ask_user_question` 的提问参数与回答结果由工具实现决定；结构与技能登记的形态不符时不做任何降级：单目标 `show` 以退出码 3 报 `数据不可读` 且不产出文件，`search` 把该会话逐条列入覆盖声明的排除项。提问被中止或取消（结果为工具错误态）不属于结构不符：提问照常呈现，且不产出回答条目。`--format json` 与 `jsonl` 不做这类抽取，仍可读取原始载荷。
-- **输出文件含会话明文**。输出是会话内容的导出，应按临时文件管理，不要提交到公开仓库。
-
-## 开发
-
-### 目录结构
-
-```text
-SKILL.md          技能说明：触发条件、命令契约、输出格式、退出码（写给加载它的模型看）
-README.md         本文件：面向使用者的总览
-scripts/          实现
-  session-reader.ts   CLI 入口：解析、校验、分发、写入输出文件
-  lib/decode.ts       官方格式库加载、事件解码、各类文本抽取
-  lib/deployment-text.ts 部署包装（注入消息、对话消息与工具结果信封、交接摘要信封）的解析与剥离，以及注入起点类别读取
-  lib/context-checkpoint.ts 合成上下文消息（上下文摘要、交接通知、交接指令、子代理任务）的判定与正文抽取
-  lib/ask-user.ts     问答（ask_user_question）的可读文本抽取，md 渲染与检索共用
-  lib/handoff.ts      交接（developer/message 的 handoff 型）结构事实、旧摘要投递与新格式通知判定，不复制正文
-  lib/frames.ts       物理层：结构性 zstd 帧扫描与逐帧解压
-  lib/paths.ts        官方格式库默认锚点、保留设备名与路径工具
-  lib/visibility.ts   默认参数下的注入过滤白名单
-  lib/message-source.ts 来源归属与来源标注，md 与 json 共用
-  lib/store-*.ts      会话发现、投影缓存元数据、列表、检索、统计、校验
-  lib/render-*.ts     md/json/jsonl 渲染与命令级摘要
-tests/            单元测试、CLI 集成测试、md 渲染单元测试、全组合 lint 门禁
-doc/开发规范.md    开发与维护要求（契约、边界、测试与校验链）
-```
-
-### 校验链
-
-修改代码后依次运行（在技能目录下）：
+在技能目录下依次执行。前两步依赖 `npm ci` 安装的开发依赖，测试与门禁需要真实官方格式库与真实会话。
 
 ```powershell
 $env:DSH_DESKTOP_NODE_EXECUTABLE = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/DeepSeek Harness.exe'
 $desktopNode = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/resources/runtime/bin/node.cmd'
 npm ci
-npx --no-install biome ci .                    # 格式化与 lint
-npx --no-install tsc --noEmit                  # 类型检查
-& $desktopNode --test "tests/**/*.test.ts"     # 测试
-# 帮助文本：总帮助与五个子命令各跑一次，均须退出 0
+npx --no-install biome ci .
+npx --no-install tsc --noEmit
+& $desktopNode --test "tests/**/*.test.ts"
 & $desktopNode scripts/session-reader.ts --help
 foreach ($command in 'list', 'show', 'search', 'stats', 'check') { & $desktopNode scripts/session-reader.ts $command --help }
-& $desktopNode tests/lint-matrix.ts --workdir tests/.tmp/matrix --real-home $env:USERPROFILE\.dsh   # 全组合 lint 门禁
+& $desktopNode tests/lint-matrix.ts --workdir tests/.tmp/matrix --real-home $env:USERPROFILE\.dsh
 npx --no-install markdownlint-cli --config .markdownlint.jsonc .
-& $desktopNode --test --experimental-test-coverage --test-coverage-lines=80 --test-coverage-branches=85 "tests/**/*.test.ts"
 ```
 
-`node --test tests`（目录形式）在桌面版运行时的 Node 线（24.x）上不可用，故测试入口统一写 `"tests/**/*.test.ts"`；`npx` 在两种宿主下都可用（普通 Node 会忽略 `ELECTRON_RUN_AS_NODE`）。
+覆盖率门禁按 `doc/开发规范.md` 的“测试要求”执行，它与上面最后一条命令共用 `tests/**/*.test.ts` 入口。
 
-门禁的输出路径由 `--workdir` 决定，必须指向临时位置，否则会把逐组合结果与合成夹具写进技能目录。
-
-### 测试无法脱离 dsh 数据
-
-`tests/` 里的 CLI 集成测试与全组合门禁需要**真实的官方格式库**（以及门禁的真实会话抽查）。库定位不到时这些测试不会静默跳过，而是直接失败并说明原因，因为跳过会让"没有通过"伪装成"通过"。
+门禁的 `--workdir` 必须指向临时位置，否则逐组合结果与合成夹具会写进技能目录。测试或门禁取不到官方格式库、真实会话时直接失败，不跳过。
 
 ## 文档入口
 
-- [`CHANGELOG.md`](CHANGELOG.md)：版本变更记录
-- [`SKILL.md`](SKILL.md)：触发条件、命令与输出契约的完整说明，也是模型加载技能时读到的正文
-- [`doc/开发规范.md`](doc/开发规范.md)：开发、测试与维护的强制要求，其中标题为"兼容性要求"的一节规定与 dsh 版本演进相关的约束
+- [`SKILL.md`](SKILL.md)：用途、运行前提、命令与选项语义、输出契约、退出码与错误、使用要点的唯一正文；模型加载技能时读到的也是它。
+- [`CHANGELOG.md`](CHANGELOG.md)：对外变更记录与版本段。
+- [`doc/开发规范.md`](doc/开发规范.md)：开发、测试、维护、发布的要求与验收标准。
 
 ## 许可证
 
