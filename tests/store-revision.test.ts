@@ -19,7 +19,7 @@ import { loadProjCache, loadWorkspaceIndex } from "../scripts/lib/store-metadata
 import { runSearch } from "../scripts/lib/store-search.ts";
 import { runStats } from "../scripts/lib/store-stats.ts";
 import { resolveSessionTarget } from "../scripts/lib/store-target.ts";
-import type { StoreContext } from "../scripts/lib/store-types.ts";
+import type { CheckContext } from "../scripts/lib/store-types.ts";
 import {
   CURRENT_LOG_VERSION,
   createFakeCatalog,
@@ -46,13 +46,8 @@ before(() => {
 });
 
 describe("审查修订补充：不可用口径 / 码点切片 / 边界分支", () => {
-  function contextWith(home: string, catalog: SessionFormatCatalog): StoreContext {
-    return {
-      dshHome: home,
-      catalog,
-      catalogsBySessionId: new Map(),
-      historicalChildFailuresBySessionId: new Map(),
-    };
+  function contextWith(home: string, catalog: SessionFormatCatalog): CheckContext {
+    return { dshHome: home, catalog };
   }
 
   function plainHeader(id: string): string {

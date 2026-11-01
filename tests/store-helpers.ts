@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { discoverReadableSessions } from "../scripts/lib/store-discovery.ts";
 import type { ListFilters, SessionEntry, StoreContext } from "../scripts/lib/store-types.ts";
 import type { FixtureEvent, FixtureHomeSpec, FixtureSessionSpec } from "./fixtures.ts";
 import {
@@ -111,16 +112,11 @@ export function mainEvents(): FixtureEvent[] {
         turn: 1,
         step: 1,
         message: {
-          role: "user",
+          role: "tool",
           source: { kind: "tool", callId: "call_1" },
-          content: [
-            {
-              type: "tool-result",
-              toolCallId: "call_1",
-              content: [{ type: "text", text: "Result Needle content" }],
-              isError: false,
-            },
-          ],
+          toolCallId: "call_1",
+          isError: false,
+          content: [{ type: "text", text: "Result Needle content" }],
         },
       },
       { surfaceOp: "append", sourceEventSeqs: [3] },
@@ -405,13 +401,18 @@ function brokenSpec(): FixtureHomeSpec {
 
 export const fakeCatalog = createFakeCatalog();
 
+/**
+ * 测试用数据层上下文：按给定主目录现场发现一次（与命令入口同口径），发现失败即抛错。
+ *
+ * 发现结果必须由上下文携带（`StoreContext.discovery` 是必填字段）：四条数据命令都只消费这一份快照，
+ * 测试因此与生产走同一个入口形态。
+ */
 export function contextOf(home: string): StoreContext {
-  return {
-    dshHome: home,
-    catalog: fakeCatalog,
-    catalogsBySessionId: new Map(),
-    historicalChildFailuresBySessionId: new Map(),
-  };
+  const discovery = discoverReadableSessions(home, fakeCatalog);
+  if (!discovery.success) {
+    throw new Error(`夹具会话发现失败: ${discovery.error.category}`);
+  }
+  return { dshHome: home, catalog: fakeCatalog, discovery: discovery.data };
 }
 
 export function defaultFilters(overrides: Partial<ListFilters> = {}): ListFilters {

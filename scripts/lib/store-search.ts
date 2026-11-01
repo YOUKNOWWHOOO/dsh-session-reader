@@ -41,7 +41,6 @@ import type { Result } from "./paths.ts";
 import {
   accumulateScanSummary,
   coverageOf,
-  discoverReadableSessions,
   emptyScanSummary,
   entryIsSubagent,
   readSessionFile,
@@ -57,7 +56,6 @@ import type {
   StoreContext,
   StoreError,
 } from "./store-types.ts";
-import { catalogForEntry } from "./store-types.ts";
 import {
   collectSubagentReplyCallIds,
   countExcludedInjections,
@@ -280,16 +278,16 @@ export function runSearch(
   sessionTarget?: string,
   excludeSessionTarget?: string,
 ): Result<SearchOutcome, StoreError> {
-  const discovery = discoverReadableSessions(ctx.dshHome, ctx.catalog);
-  if (!discovery.success) return discovery;
-  const discoveryCoverage = coverageOf(discovery.data);
+  // 发现结果取自命令入口做的那一次（`ctx.discovery`）：范围过滤、子树展开与命中归属必须基于同一份
+  // 会话快照，否则覆盖声明描述的集合与实际检索的集合可能不同。
+  const discovery = ctx.discovery;
+  const discoveryCoverage = coverageOf(discovery);
 
-  // `--session`/`--exclude-session` 的子树展开与目标解析共用同一次发现结果，
-  // 避免重复扫描造成两次读取之间的一致性漂移。
+  // `--session`/`--exclude-session` 的子树展开与目标解析共用同一份发现结果（同上）。
   const subtreeIds = (target: string): Result<Set<string>, StoreError> => {
-    const resolved = resolveTargetWithin(discovery.data, target, ctx.dshHome);
+    const resolved = resolveTargetWithin(discovery, target, ctx.dshHome);
     if (!resolved.success) return resolved;
-    const subtree = collectSubtreeEntries(resolved.data, discovery.data.entries);
+    const subtree = collectSubtreeEntries(resolved.data, discovery.entries);
     return { success: true, data: new Set(subtree.map((entry) => entry.id)) };
   };
   let sessionIds: Set<string> | null = null;
@@ -330,9 +328,7 @@ export function runSearch(
   const distribution: SessionHitCount[] = [];
   let scan = emptyScanSummary();
   for (const view of views) {
-    const file = readSessionFile(view.entry, catalogForEntry(ctx, view.entry), {
-      historicalChildFailures: ctx.historicalChildFailuresBySessionId.get(view.entry.id),
-    });
+    const file = readSessionFile(view.entry, ctx.catalog);
     if (!file.success) {
       excludedSessions.push({ id: view.entry.id, reason: "解码失败" });
       scan = accumulateScanSummary(scan, {

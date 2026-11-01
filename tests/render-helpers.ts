@@ -150,8 +150,8 @@ export const RENDER_EVENTS: Record<string, unknown>[] = [
     time: 14,
     data: {
       message: {
-        role: "user",
-        content: [{ type: "tool-result", content: [{ type: "text", text: "结果 RESULT-TEXT" }] }],
+        role: "tool",
+        content: [{ type: "text", text: "结果 RESULT-TEXT" }],
       },
     },
     surfaceOp: "append",

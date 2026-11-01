@@ -9,13 +9,7 @@
 
 import { readNumber, readString } from "./decode.ts";
 import { normalizePathForCompare, type Result } from "./paths.ts";
-import {
-  coverageOf,
-  discoverReadableSessions,
-  entryCwdNormalized,
-  entryIsSubagent,
-  storeFail,
-} from "./store-discovery.ts";
+import { coverageOf, entryCwdNormalized, entryIsSubagent, storeFail } from "./store-discovery.ts";
 import {
   buildMetadata,
   lastActivityAtOf,
@@ -36,18 +30,20 @@ import type {
 /**
  * 收集会话视图并应用范围过滤（workspace/since/until/title/origin/空会话）。
  *
- * 容错语义：单个会话 header 不可读时不再让整个聚合命令失败——那会让一份损坏的
- * 日志永久阻断对其余会话的浏览与检索。改为跳过该会话并把"跳过了谁、为什么"写入 coverage，
- * 由渲染层逐条列出。范围过滤后的结果集是"显式的子集"，不是"静默的漏读"。
+ * 发现结果取自 `ctx.discovery`（命令入口只做一次），本函数不再自行扫描：同一次命令里出现两份
+ * 会话快照会让覆盖声明与实际处理的集合不一致。
+ *
+ * 容错语义：单个会话 header 不可读时不再让整个聚合命令失败，否则一份损坏的日志会永久阻断对其余会话
+ * 的浏览与检索。改为跳过该会话并把"跳过了谁、为什么"写入 coverage，由渲染层逐条列出。范围过滤后的
+ * 结果集是"显式的子集"，不是"静默的漏读"。
  */
 export function collectSessionViews(
   ctx: StoreContext,
   filters: ListFilters,
 ): Result<ScopeSelection, StoreError> {
-  const discovery = discoverReadableSessions(ctx.dshHome, ctx.catalog);
-  if (!discovery.success) return discovery;
-  const entries = discovery.data.entries;
-  const coverage = coverageOf(discovery.data);
+  const discovery = ctx.discovery;
+  const entries = discovery.entries;
+  const coverage = coverageOf(discovery);
   const workspaces = loadWorkspaceIndex(ctx.dshHome);
   const workspaceFilter = filters.workspace;
   let matchedWorkspaces: WorkspaceEntry[] = [];

@@ -28,7 +28,7 @@ export interface StoreError {
   readonly frameFailures?: number;
 }
 
-/** 已发现的会话条目（header 已通过官方库分类为 current/migration-required）。 */
+/** 已发现的会话条目（header 已通过官方库分类为 current）。 */
 export interface SessionEntry {
   readonly id: string;
   readonly projectDirName: string;
@@ -40,16 +40,28 @@ export interface SessionEntry {
   readonly header: Record<string, unknown>;
 }
 
-/** 数据层上下文。 */
+/**
+ * 数据层上下文（list/show/search/stats 共用）。
+ *
+ * `discovery` 是命令入口做的唯一一次发现：四条命令在同一份快照上过滤、解析目标与展开子树，
+ * 因此覆盖声明描述的会话集合与命令实际处理的会话集合必然是同一份。该字段必填而不是可选，
+ * 缺少快照属于编程错误，不允许用空值兜底掩盖。
+ */
 export interface StoreContext {
   readonly dshHome: string;
   readonly catalog: SessionFormatCatalog;
-  readonly catalogsBySessionId: ReadonlyMap<string, SessionFormatCatalog>;
-  readonly historicalChildFailuresBySessionId: ReadonlyMap<string, readonly string[]>;
+  readonly discovery: TolerantDiscovery;
 }
 
-export function catalogForEntry(ctx: StoreContext, entry: SessionEntry): SessionFormatCatalog {
-  return ctx.catalogsBySessionId.get(entry.id) ?? ctx.catalog;
+/**
+ * check 的上下文：只带数据根与格式库。
+ *
+ * check 走 `enumerateSessionFiles` 的诊断路径（必须能看到 header 不可读的会话），因此它不消费
+ * 命令入口那次发现；需要解析目标时由 `runCheck` 自己发现一次。
+ */
+export interface CheckContext {
+  readonly dshHome: string;
+  readonly catalog: SessionFormatCatalog;
 }
 
 /** projcache 加载结果。 */

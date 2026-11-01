@@ -10,19 +10,24 @@ import { readFileSync } from "node:fs";
 import {
   asRecord,
   classifyHeader,
+  headerIsReadable,
   readNumber,
   readString,
   type SessionFormatCatalog,
 } from "./decode.ts";
 import { extractLogText, splitLines } from "./frames.ts";
 import type { Result } from "./paths.ts";
-import { enumerateSessionFiles, errorMessage } from "./store-discovery.ts";
-import { resolveSessionTarget } from "./store-target.ts";
+import {
+  discoverReadableSessions,
+  enumerateSessionFiles,
+  errorMessage,
+} from "./store-discovery.ts";
+import { resolveTargetWithin } from "./store-target.ts";
 import type {
+  CheckContext,
   CheckOutcome,
   CheckSessionResult,
   SessionFileRef,
-  StoreContext,
   StoreError,
 } from "./store-types.ts";
 
@@ -67,7 +72,9 @@ function checkOneSession(ref: SessionFileRef, catalog: SessionFormatCatalog): Ch
         classification = result.status;
         const headerId = readString(result.header ?? {}, "id");
         if (headerId !== undefined && headerId.length > 0) id = headerId;
-        if (result.status === "malformed" || result.status === "unsupported") {
+        // 判据与解码路径同源：只要不是当前格式就记一条异常（旧版本、更新版本、结构不合法都算），
+        // check 因此不会把"读不了的格式"当成健康会话放过。
+        if (!headerIsReadable(result)) {
           anomalies.push(`header 分类: ${result.status}`);
         }
       } catch {
@@ -122,14 +129,19 @@ function checkOneSession(ref: SessionFileRef, catalog: SessionFormatCatalog): Ch
 /**
  * check 命令数据：逐会话结构扫描 + 行/seq/坏行检查；anomalyCount>0 时退出码 3。
  * 无目标时使用不读 header 的枚举（结构损坏/header 不可读的会话也必须能被诊断并如实报告）。
+ *
+ * 有目标时目标解析需要完整发现结果（三态判定依赖 header 不可读的跳过项），因此该分支自行发现一次；
+ * 无目标分支不消费任何发现结果。两条分支各自只做一次读取，不存在两份快照并存。
  */
 export function runCheck(
-  ctx: StoreContext,
+  ctx: CheckContext,
   target: string | undefined,
 ): Result<CheckOutcome, StoreError> {
   let refs: SessionFileRef[];
   if (target !== undefined) {
-    const resolved = resolveSessionTarget(ctx, target);
+    const discovery = discoverReadableSessions(ctx.dshHome, ctx.catalog);
+    if (!discovery.success) return discovery;
+    const resolved = resolveTargetWithin(discovery.data, target, ctx.dshHome);
     if (!resolved.success) return resolved;
     const entry = resolved.data;
     refs = [

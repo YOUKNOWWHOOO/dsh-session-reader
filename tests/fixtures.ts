@@ -128,9 +128,8 @@ function eventLine(event: FixtureEvent): string {
 function headerLine(spec: FixtureSessionSpec): string {
   const header: Record<string, unknown> = {
     type: "session",
-    // 夹具一律写当前版本。写旧版本会让解码器走迁移分支，而迁移要求传入「显式历史子事实」
-    // （含无子会话时的空数组），夹具没有这些事实，迁移必定失败，表现为整批用例以
-    // 「数据不可读」失败。旧版本日志的读取由专门用例覆盖。
+    // 夹具一律写当前版本。技能只接受官方库分类为 current 的日志，写旧版本会走进"显式失败"的分支，
+    // 整批用例随之以“数据不可读”失败。旧版本日志的失败形态由专门的用例覆盖。
     version: CURRENT_LOG_VERSION,
     id: spec.id,
     createdAt: spec.createdAt,

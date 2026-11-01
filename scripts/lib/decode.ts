@@ -2,7 +2,9 @@
 // 兼容性设计：官方库 API 收敛在本文件单点适配；不静态 import 外部包（tsc 解析不到），
 // 一律经 createRequire 锚点解析后动态 import（asar 虚拟路径只有桌面运行时能解析，静态导入会连编译都过不去）。
 // 解码策略：生产读取固定为 { recovery: 'recoverable', validation: 'transformed' }。
-// 物理 JSON 行与迁移后的逻辑事件是不同计量，不能用它们的数量相等作为完整性判据。
+// 格式约束：只接受官方库分类为 current 的日志。历史格式（v1-v3）的迁移与子会话 catalog 适配已整体删除，
+// 旧版本 header 一律显式失败，不做迁移、不猜结构。
+// 物理 JSON 行数与解码得到的逻辑事件数是不同计量，不能用它们的数量相等作为完整性判据。
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -46,25 +48,16 @@ export interface RestoreOptions {
   readonly validation: "transformed" | "current";
 }
 
-/** 官方 catalog 对象的最小本地镜像（仅使用本技能需要的成员）。 */
-export interface HistoricalChildCatalogSource {
-  readonly childId: string;
-  readonly childCreatedAt: number;
-  readonly descriptorCount: number;
-  readonly descriptor: Record<string, unknown> | null;
-  readonly sourcePath?: string;
-}
-
+/**
+ * 官方 catalog 对象的最小本地镜像（仅使用本技能需要的成员）。
+ *
+ * 历史格式支持所需的三项（历史 catalog、带子会话事实的 catalog 工厂、历史子会话事实抽取）已删除：
+ * 真实库全部是当前格式，旧格式读取路径没有任何命中，保留只会形成一条永不执行却必须维护的死路径。
+ */
 export interface SessionFormatCatalog {
   readonly currentVersion: number;
   readHeader(headerValue: unknown): HeaderClassification;
   createRestore(headerValue: unknown, options: RestoreOptions): CatalogRestore;
-  createSessionFormatCatalogWithChildren?: (
-    children: readonly HistoricalChildCatalogSource[],
-  ) => SessionFormatCatalog;
-  historicalSessionFormatCatalog?: SessionFormatCatalog;
-  historicalBound?: boolean;
-  historicalChildCatalogSource?: (artifact: RestoreArtifact) => HistoricalChildCatalogSource;
 }
 
 /**
@@ -83,9 +76,22 @@ export function classifyHeader(
   return catalog.readHeader(headerValue);
 }
 
+/**
+ * header 是否属于可读的格式：只有 `current` 可读。
+ *
+ * 判据只有这一处：`decodeSessionLog`、会话发现与 `check` 的诊断都调用它。`migration-required`
+ * （旧版本）与 `unsupported`（更新版本）、`malformed`（结构不合法）一律不可读，不得迁移或猜结构。
+ *
+ * @param classification 官方库的 header 分类结果。
+ * @returns 可读返回 true。
+ */
+export function headerIsReadable(classification: HeaderClassification): boolean {
+  return classification.status === "current";
+}
+
 /** 解码异常（可继续的物理/行级问题；输出必须显式标注）。 */
 export interface DecodeAnomaly {
-  readonly kind: "torn-tail" | "bad-line" | "historical-child-unreadable";
+  readonly kind: "torn-tail" | "bad-line";
   readonly detail: string;
 }
 
@@ -108,6 +114,9 @@ function errorMessage(error: unknown): string {
  * 从 `--lib-root`（默认取桌面版安装内 `app.asar\dsh\node_modules`，见 `paths.ts` 的 `defaultLibRoot`）
  * 解析并加载官方格式库。解析锚点为 asar 虚拟路径时，只有桌面 Electron-as-Node 能读取它。
  * 失败返回 Result 错误（调用方映射为退出码 3）。
+ *
+ * 只校验本技能真正消费的导出：`sessionFormatCatalog` 及其 `readHeader` 与 `createRestore`。
+ * 历史格式支持所需的第三个包（`dsh-session-format-v3-to-v4`）不再解析，也不再断言其导出。
  */
 export async function loadCatalog(libRoot: string): Promise<Result<SessionFormatCatalog, string>> {
   try {
@@ -116,36 +125,17 @@ export async function loadCatalog(libRoot: string): Promise<Result<SessionFormat
     const entry = require.resolve("@deepseek-ai/dsh-session-format-catalog");
     const module = (await import(pathToFileURL(entry).href)) as {
       sessionFormatCatalog?: SessionFormatCatalog;
-      createSessionFormatCatalogWithChildren?: (
-        children: readonly HistoricalChildCatalogSource[],
-      ) => SessionFormatCatalog;
-      historicalSessionFormatCatalog?: SessionFormatCatalog;
     };
     const catalog = module.sessionFormatCatalog;
     if (catalog === undefined)
       return { success: false, error: "官方格式库未导出 sessionFormatCatalog" };
-    const historicalSessionFormatCatalog = module.historicalSessionFormatCatalog;
-    const createWithChildren = module.createSessionFormatCatalogWithChildren;
-    if (createWithChildren === undefined || historicalSessionFormatCatalog === undefined) {
-      return { success: false, error: "官方格式库缺少历史 catalog 或直属子会话 catalog 工厂" };
+    if (typeof catalog.readHeader !== "function" || typeof catalog.createRestore !== "function") {
+      return {
+        success: false,
+        error: "官方格式库的 sessionFormatCatalog 缺少 readHeader 或 createRestore",
+      };
     }
-    const historicalEntry = require.resolve("@deepseek-ai/dsh-session-format-v3-to-v4");
-    const historicalModule = (await import(pathToFileURL(historicalEntry).href)) as {
-      historicalChildCatalogSource?: (artifact: RestoreArtifact) => HistoricalChildCatalogSource;
-    };
-    const historicalChildCatalogSource = historicalModule.historicalChildCatalogSource;
-    if (historicalChildCatalogSource === undefined) {
-      return { success: false, error: "官方格式库缺少 historicalChildCatalogSource" };
-    }
-    return {
-      success: true,
-      data: {
-        ...catalog,
-        ...(historicalSessionFormatCatalog === undefined ? {} : { historicalSessionFormatCatalog }),
-        createSessionFormatCatalogWithChildren: createWithChildren,
-        historicalChildCatalogSource,
-      },
-    };
+    return { success: true, data: catalog };
   } catch (error) {
     return { success: false, error: `官方格式库加载失败: ${errorMessage(error)}` };
   }
@@ -155,18 +145,16 @@ export async function loadCatalog(libRoot: string): Promise<Result<SessionFormat
  * 解码完整日志文本：首行 header 分类 → 逐行解码事件 → finish。
  * 失败条件（均返回 Result 错误，调用方按退出码 3 处理）：
  * - header 行不是合法 JSON；
- * - header 分类为 malformed/unsupported；
+ * - header 分类不是 current（malformed、unsupported 与 migration-required 一律失败，不做历史迁移）；
  * - 任一行 decodeRow 抛错（结构违规）；
  * - finish 抛错；
  * - 官方 catalog 拒绝创建或收尾；
  * - 物理行 JSON 解析失败（记入 anomalies，不中断其余行）。
- * 迁移后逻辑事件数可以与物理事件行数不同，因为官方迁移会重映射、插入或追加逻辑事件；
- * `parsedEventCount` 只表示成功喂入 decoder 的物理行数，不再把合法迁移误判为数据损坏。
+ * 恢复器在 recoverable 策略下可以丢弃行，因此逻辑事件数可以与物理事件行数不同；
+ * `parsedEventCount` 只表示成功喂入 decoder 的物理行数。
  */
 export interface SessionDecodeOptions {
   readonly tornTail: boolean;
-  readonly historicalChildren?: readonly HistoricalChildCatalogSource[];
-  readonly historicalChildFailures?: readonly string[];
 }
 
 export function decodeSessionLog(
@@ -184,30 +172,21 @@ export function decodeSessionLog(
     return { success: false, error: "header 行不是合法 JSON" };
   }
   const classification = classifyHeader(catalog, headerValue);
-  if (classification.status === "malformed" || classification.status === "unsupported") {
+  // 只接受当前格式。迁移请求在这里被显式拒绝而不是交给 catalog 现场迁移：本技能支持的历史形态为零，
+  // 放行只会让一条没有任何真实样本的代码路径继续承担"读出来的是不是同一份数据"的判断责任。
+  if (!headerIsReadable(classification)) {
+    const reason = classification.reason;
     return {
       success: false,
-      error: `header 分类为 ${classification.status}: ${classification.reason ?? ""}`,
+      error:
+        reason === undefined
+          ? `header 分类为 ${classification.status}（本技能只支持 v${catalog.currentVersion}）`
+          : `header 分类为 ${classification.status}（本技能只支持 v${catalog.currentVersion}）: ${reason}`,
     };
   }
-  const storedVersion = classification.storedVersion;
-  const isHistorical =
-    catalog.currentVersion >= 4 &&
-    storedVersion !== undefined &&
-    storedVersion < catalog.currentVersion;
   let restore: CatalogRestore;
   try {
-    const activeCatalog = isHistorical
-      ? catalog.historicalBound
-        ? catalog
-        : options.historicalChildren === undefined
-          ? undefined
-          : catalog.createSessionFormatCatalogWithChildren?.(options.historicalChildren)
-      : catalog;
-    if (activeCatalog === undefined) {
-      return { success: false, error: "历史日志需要官方子会话证据 catalog" };
-    }
-    restore = activeCatalog.createRestore(headerValue, {
+    restore = catalog.createRestore(headerValue, {
       recovery: "recoverable",
       validation: "transformed",
     });
@@ -217,9 +196,6 @@ export function decodeSessionLog(
   const anomalies: DecodeAnomaly[] = [];
   if (options.tornTail) {
     anomalies.push({ kind: "torn-tail", detail: "尾部未完整帧已丢弃（v1 不做前缀抢救）" });
-  }
-  for (const detail of options.historicalChildFailures ?? []) {
-    anomalies.push({ kind: "historical-child-unreadable", detail });
   }
   let parsedEventCount = 0;
   for (let index = 1; index < lines.length; index += 1) {
@@ -417,17 +393,16 @@ export function toolCallsFromBlocks(blocks: unknown): ToolCallBlock[] {
 /**
  * 从 tool/result 事件 data.message.content 中抽取工具结果文本。
  *
- * 必须兼容两种内容形态，否则对某一代的日志会**静默抽不到任何文本**（实测踩过：只认
- * `tool-result` 嵌套块时，对当前 v4 日志的工具结果事件全部返回空串，表现为
- * `show --tools` 不显示工具输出、`search --scope tools` 检索不到工具结果）：
- * - 当前 v4：内容块是普通的 `{type:"text", text}`，与消息正文同形；
- * - 旧版本日志：内容是 `{type:"tool-result", content:[…]}` 的嵌套块。
- * 两种都取，互不影响（同一事件不会同时出现两种形态）。
+ * 内容块只认当前格式的平铺形态 `{type:"text", text}`，与消息正文同形。旧版本日志的
+ * `{type:"tool-result", content:[…]}` 嵌套块形态已整体删除：技能只支持当前格式，历史形态的读取路径
+ * 不再存在，因此这里抽不到就是空串，不会换一种解释去猜。旧分支曾让抽取在换代后**静默返回空串**
+ * （实测：只认嵌套块时当前日志的全部工具结果都抽不到文本，表现为 `show --tools` 不显示工具输出、
+ * `search --scope tools` 检索不到工具结果），这也是"不猜"必须写清的原因。
  *
  * 自定义模式还会在结果正文外补一层 `<dsh-result …>…</dsh-result>` 信封；本函数剥离一个完整信封，
  * 使两种预设下的同一逻辑结果给出同一可读正文。信封不完整时原样返回（展示面不依赖信封结构），
  * 原始事件仍由 `show --format jsonl` 提供。问答载荷解析使用 deployment-text.ts 的严格版，
- * 因为 JSON 解析必须区分「裸正文」与「半截信封」。
+ * 因为 JSON 解析必须区分“裸正文”与“半截信封”。
  */
 export function toolResultText(event: EventRecord): string {
   const data = eventData(event);
@@ -439,14 +414,8 @@ export function toolResultText(event: EventRecord): string {
   for (const block of content) {
     const record = asRecord(block);
     if (record === undefined) continue;
-    const own = readNonEmptyString(record, "text");
-    if (own !== undefined) {
-      parts.push(own);
-      continue;
-    }
-    if (readString(record, "type") !== "tool-result") continue;
-    const nested = textFromBlocks(record.content);
-    if (nested.length > 0) parts.push(nested);
+    const text = readNonEmptyString(record, "text");
+    if (text !== undefined) parts.push(text);
   }
   return stripResultEnvelopeLenient(parts.join("\n"));
 }

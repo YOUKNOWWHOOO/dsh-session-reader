@@ -2,7 +2,7 @@
 // 断言 stdout 两行契约、输出文件行数一致、退出码、错误分类与输出策略。
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -1115,6 +1115,59 @@ describe("CLI show 对异常数据", () => {
     // 容错语义：单个 header 不可读的会话不再阻断对其余会话的浏览，但必须显式声明排除了谁、为什么。
     assert.match(content, /扫描会话 3 个；纳入 2 个；排除 1 个/u);
     assert.match(content, /排除会话：`session-broken-corrupt-08`（`帧魔数无效（偏移 0）`）/u);
+  });
+
+  it("旧版本 header：show 退出 3 且分类为数据不可读，check 记为异常而不崩溃", () => {
+    // 技能只支持当前格式：v3 及更早的日志由官方库分类为 migration-required，必须显式失败，
+    // 不得走迁移分支，也不得被当成"不存在"。
+    const oldHome = join(TEMP_ROOT, "old-version-dsh");
+    resetTempDir(oldHome);
+    const oldId = "session-old-version-01";
+    const dir = join(oldHome, "sessions", PROJECT_OTHER, oldId);
+    mkdirSync(dir, { recursive: true });
+    const header = JSON.stringify({
+      type: "session",
+      version: CURRENT_LOG_VERSION - 1,
+      id: oldId,
+      createdAt: 1000,
+      isSeeded: false,
+      delegationDepth: 0,
+    });
+    writeFileSync(
+      join(dir, `session.v${CURRENT_LOG_VERSION - 1}.jsonl`),
+      `${header}\n${JSON.stringify({ type: "turn/start", seq: 0, time: 10, data: { turn: 1 } })}\n`,
+      "utf8",
+    );
+
+    const shown = runCli(["show", oldId, ...baseArgs(oldHome)]);
+    assert.equal(shown.status, 3, `stderr=${shown.stderr}`);
+    assert.equal(shown.stderr, "错误: 数据不可读\n");
+    assert.equal(shown.stdout, "");
+    // 目标存在但读不到，必须与"确实不存在"区分开。
+    assert.equal(runCli(["show", "session-absent-99", ...baseArgs(oldHome)]).status, 1);
+
+    const checked = runCli(["check", ...baseArgs(oldHome), "--format", "json"]);
+    assert.equal(checked.status, 3, `stderr=${checked.stderr}`);
+    const document = JSON.parse(readFileSync(readContract(checked.stdout).path, "utf8")) as {
+      sessions: Array<Record<string, unknown>>;
+    };
+    const entry = document.sessions.find((session) => session.id === oldId);
+    assert.equal(entry?.formatVersion, CURRENT_LOG_VERSION - 1);
+    assert.equal(entry?.classification, "migration-required");
+    const anomalies = (entry?.anomalies ?? []) as string[];
+    assert.equal(
+      anomalies.some((value) => value.includes("header 分类: migration-required")),
+      true,
+    );
+
+    const listed = runCli(["list", ...baseArgs(oldHome)]);
+    assert.equal(listed.status, 0, `stderr=${listed.stderr}`);
+    const listedContent = readFileSync(readContract(listed.stdout).path, "utf8");
+    assert.match(listedContent, /扫描会话 1 个；纳入 0 个；排除 1 个/u);
+    assert.match(
+      listedContent,
+      /排除会话：`session-old-version-01`（`header 分类 migration-required`）/u,
+    );
   });
 
   it("header 不可读但目录存在：按前缀取目标报数据不可读（退出 3），与真不存在可区分", () => {

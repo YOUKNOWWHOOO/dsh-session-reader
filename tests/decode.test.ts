@@ -106,7 +106,7 @@ describe("decodeSessionLog", () => {
     }
   });
 
-  it("header 分类 migration-required 允许继续", () => {
+  it("旧版本 header（分类 migration-required）必须显式失败：只支持当前格式", () => {
     const result = decodeSessionLog(
       createFakeCatalog({ status: "migration-required" }),
       logText([HEADER_LINE, '{"seq":0}']),
@@ -114,7 +114,10 @@ describe("decodeSessionLog", () => {
         tornTail: false,
       },
     );
-    assert.equal(result.success, true);
+    assert.equal(result.success, false);
+    if (result.success) return;
+    assert.match(result.error, /migration-required/u);
+    assert.match(result.error, /只支持 v\d+/u);
   });
 
   it("坏行记入 anomalies（含行号）且不中断其它行", () => {
@@ -238,7 +241,7 @@ describe("事件模型工具", () => {
       time: 123,
       data: {
         message: {
-          content: [{ type: "tool-result", content: [{ type: "text", text: "结果文本" }] }],
+          content: [{ type: "text", text: "结果文本" }],
         },
       },
     };
@@ -380,6 +383,31 @@ describe("审查修订补充：加载/分类/抛出物边界", () => {
     if (!result.success) assert.match(result.error, /未导出/u);
   });
 
+  it("loadCatalog：导出的 catalog 缺少 readHeader 或 createRestore → 显式失败", async () => {
+    const libRoot = join(TEMP_ROOT, "fake-lib-partial", "node_modules");
+    resetTempDir(libRoot);
+    const packageDir = join(libRoot, "@deepseek-ai", "dsh-session-format-catalog");
+    mkdirSync(packageDir, { recursive: true });
+    writeFileSync(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "@deepseek-ai/dsh-session-format-catalog",
+        version: "0.0.0",
+        type: "module",
+        main: "index.js",
+      }),
+      "utf8",
+    );
+    writeFileSync(
+      join(packageDir, "index.js"),
+      "export const sessionFormatCatalog = { currentVersion: 4 };\n",
+      "utf8",
+    );
+    const result = await loadCatalog(libRoot);
+    assert.equal(result.success, false);
+    if (!result.success) assert.match(result.error, /readHeader 或 createRestore/u);
+  });
+
   it("decodeSessionLog：分类无 reason 与非 Error 抛出物", () => {
     const noReasonCatalog: SessionFormatCatalog = {
       currentVersion: 3,
@@ -392,7 +420,8 @@ describe("审查修订补充：加载/分类/抛出物边界", () => {
       tornTail: false,
     });
     assert.equal(noReason.success, false);
-    if (!noReason.success) assert.equal(noReason.error, "header 分类为 malformed: ");
+    if (!noReason.success)
+      assert.equal(noReason.error, "header 分类为 malformed（本技能只支持 v3）");
 
     const literalThrowCatalog: SessionFormatCatalog = {
       currentVersion: 3,
@@ -449,19 +478,25 @@ describe("审查修订补充：加载/分类/抛出物边界", () => {
             content: [
               null,
               { type: "text" },
-              { type: "tool-result", content: [] },
-              {
-                type: "tool-result",
-                content: [
-                  { type: "text", text: "a" },
-                  { type: "text", text: "b" },
-                ],
-              },
+              { type: "text", text: "" },
+              { type: "text", text: "a" },
+              { type: "text", text: "b" },
             ],
           },
         },
       }),
       "a\nb",
+    );
+    // 旧格式的嵌套 tool-result 块已整体删除：只认平铺文本块，抽不到就是空串，不会换一种解释去猜。
+    assert.equal(
+      toolResultText({
+        data: {
+          message: {
+            content: [{ type: "tool-result", content: [{ type: "text", text: "旧形态" }] }],
+          },
+        },
+      }),
+      "",
     );
   });
 });

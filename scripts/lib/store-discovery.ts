@@ -2,11 +2,11 @@
 // 分类（明文整文件取首行 / 压缩文件按块增长只解第一个完整帧）、容错跳过（header 不可读者记入 skipped
 // 而不中断）、单会话完整解码读取，以及读取度量与扫描摘要累加。
 // 主要入口：enumerateSessionFiles（不读 header，check 诊断路径）、discoverReadableSessions（可读会话 +
-// 跳过清单）、readSessionFile（单会话解码 + DecodeMetrics）、coverageOf（发现结果 → 覆盖声明）、
-// emptyScanSummary / accumulateScanSummary（扫描摘要）。
+// 跳过清单，四条数据命令共用的一次发现）、readSessionFile（单会话解码 + DecodeMetrics）、coverageOf
+// （发现结果 → 覆盖声明）、emptyScanSummary / accumulateScanSummary（扫描摘要）。
 // 关键依赖：node:fs/node:path、frames.ts（zstd 帧扫描与解压）、decode.ts（官方格式库与事件取值）、
 // store-types.ts（全部跨模块数据类型）。
-// 设计约束：日志只读；单个会话不可读不得让整条命令失败——跳过必须逐条记入 TolerantDiscovery.skipped
+// 设计约束：日志只读；单个会话不可读不得让整条命令失败，跳过必须逐条记入 TolerantDiscovery.skipped
 // 并由 coverageOf 显式列出，禁止静默漏读；失败一律经 storeFail 构造 Result 错误，本模块同时承载全层
 // 共用的 storeFail 与 errorMessage（避免为约二十行辅助代码单列文件）。数据契约见 store-types.ts 文件头。
 
@@ -25,8 +25,7 @@ import {
   classifyHeader,
   decodeSessionLog,
   eventTime,
-  type HistoricalChildCatalogSource,
-  readNumber,
+  headerIsReadable,
   readString,
   type SessionFormatCatalog,
 } from "./decode.ts";
@@ -263,7 +262,9 @@ export function discoverReadableSessions(
       continue;
     }
     const classification = classifyHeader(catalog, headerValue);
-    if (classification.status === "malformed" || classification.status === "unsupported") {
+    // 只接受当前格式：迁移与不支持一律按不可读跳过（原因逐条进入覆盖声明的排除项），
+    // 不做历史迁移，也不把旧格式尽力读成新格式。
+    if (!headerIsReadable(classification)) {
       skipped.push({ idFromDir: ref.idFromDir, error: `header 分类 ${classification.status}` });
       continue;
     }
@@ -306,88 +307,15 @@ export function coverageOf(discovery: TolerantDiscovery): SessionCoverage {
 /**
  * 读取单个会话的完整解码日志。
  *
+ * 只用调用方给出的 catalog（`StoreContext.catalog`）解码。历史格式的子会话事实适配已删除，
+ * 因此没有按会话替换 catalog 的参数：旧版本日志在 `decodeSessionLog` 里就会被显式拒绝。
+ *
  * @param entry 会话条目。
  * @param catalog 官方格式库。
  */
-export function prepareCatalogs(
-  dshHome: string,
-  catalog: SessionFormatCatalog,
-): Result<
-  {
-    readonly entries: SessionEntry[];
-    readonly skipped: { readonly idFromDir: string; readonly error: string }[];
-    readonly catalogsBySessionId: ReadonlyMap<string, SessionFormatCatalog>;
-    readonly historicalChildFailuresBySessionId: ReadonlyMap<string, readonly string[]>;
-  },
-  StoreError
-> {
-  const discovery = discoverReadableSessions(dshHome, catalog);
-  if (!discovery.success) return discovery;
-  const historical = catalog.historicalSessionFormatCatalog;
-  const createWithChildren = catalog.createSessionFormatCatalogWithChildren;
-  const childSource = catalog.historicalChildCatalogSource;
-  if (historical === undefined || createWithChildren === undefined || childSource === undefined) {
-    return storeFail("internal", "官方格式库缺少历史会话 catalog 适配能力");
-  }
-  const catalogs = new Map<string, SessionFormatCatalog>();
-  const failures = new Map<string, readonly string[]>();
-  for (const parent of discovery.data.entries) {
-    if (parent.logVersion >= catalog.currentVersion) continue;
-    const children = discovery.data.entries.filter(
-      (candidate) => readString(candidate.header, "parentSession") === parent.id,
-    );
-    const facts: HistoricalChildCatalogSource[] = [];
-    const childFailures: string[] = [];
-    for (const child of children) {
-      const childCatalog = child.logVersion <= 3 ? historical : catalog;
-      const childFile = readSessionFile(child, childCatalog);
-      if (!childFile.success) {
-        facts.push({
-          childId: child.id,
-          childCreatedAt: readNumber(child.header, "createdAt") ?? 0,
-          descriptorCount: 0,
-          descriptor: null,
-          sourcePath: child.logPath,
-        });
-        childFailures.push(`${child.id}: ${childFile.error.detail ?? "解码失败"}`);
-        continue;
-      }
-      try {
-        facts.push({ ...childSource(childFile.data.decoded), sourcePath: child.logPath });
-      } catch (error) {
-        facts.push({
-          childId: child.id,
-          childCreatedAt: readNumber(child.header, "createdAt") ?? 0,
-          descriptorCount: 0,
-          descriptor: null,
-          sourcePath: child.logPath,
-        });
-        childFailures.push(`${child.id}: ${errorMessage(error)}`);
-      }
-    }
-    catalogs.set(parent.id, {
-      ...createWithChildren(facts),
-      historicalBound: true,
-    });
-    if (childFailures.length > 0) failures.set(parent.id, childFailures);
-  }
-  return {
-    success: true,
-    data: {
-      ...discovery.data,
-      catalogsBySessionId: catalogs,
-      historicalChildFailuresBySessionId: failures,
-    },
-  };
-}
-
 export function readSessionFile(
   entry: SessionEntry,
   catalog: SessionFormatCatalog,
-  options: {
-    readonly historicalChildren?: readonly HistoricalChildCatalogSource[];
-    readonly historicalChildFailures?: readonly string[];
-  } = {},
 ): Result<DecodedSessionFile, StoreError> {
   try {
     let text: string;
@@ -413,11 +341,7 @@ export function readSessionFile(
       frames = 1;
       tornStart = undefined;
     }
-    const decoded = decodeSessionLog(catalog, text, {
-      tornTail: tornStart !== undefined,
-      historicalChildren: options.historicalChildren,
-      historicalChildFailures: options.historicalChildFailures,
-    });
+    const decoded = decodeSessionLog(catalog, text, { tornTail: tornStart !== undefined });
     if (!decoded.success) {
       return storeFail("data-unreadable", decoded.error, { frameFailures });
     }

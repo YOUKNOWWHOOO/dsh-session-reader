@@ -42,12 +42,18 @@ import {
 import { renderCheckMd, renderListMd, renderSearchMd, renderStatsMd } from "./lib/render-md.ts";
 import { renderShowMd } from "./lib/render-show-md.ts";
 import { runCheck } from "./lib/store-check.ts";
-import { discoverReadableSessions, prepareCatalogs } from "./lib/store-discovery.ts";
+import { discoverReadableSessions } from "./lib/store-discovery.ts";
 import { buildList } from "./lib/store-list.ts";
 import { runSearch } from "./lib/store-search.ts";
 import { runStats } from "./lib/store-stats.ts";
 import { buildSessionNode, resolveSessionTarget } from "./lib/store-target.ts";
-import type { ListFilters, ScopeFilters, StoreContext, StoreError } from "./lib/store-types.ts";
+import type {
+  CheckContext,
+  ListFilters,
+  ScopeFilters,
+  StoreContext,
+  StoreError,
+} from "./lib/store-types.ts";
 
 interface OptionSpec {
   readonly name: string;
@@ -802,27 +808,20 @@ function renderShow(
   const resolved = resolveSessionTarget(ctx, target);
   if (!resolved.success) return { kind: "failure", failure: mapStoreError(resolved.error) };
   const includeSubagents = optionSwitch(parsed, "--subagents");
-  let allEntries: Awaited<ReturnType<typeof discoverReadableSessions>> | null = null;
-  if (includeSubagents) {
-    allEntries = discoverReadableSessions(ctx.dshHome, ctx.catalog);
-    if (!allEntries.success) return { kind: "failure", failure: mapStoreError(allEntries.error) };
-  }
+  // 子树范围与归属未知项都取自命令入口那次发现（`ctx.discovery`），不再重新扫描：同一次命令里
+  // 出现两份会话快照会让覆盖声明与实际处理的会话集合不一致。
   const node = buildSessionNode(
     ctx,
     resolved.data,
-    allEntries === null ? [] : allEntries.data.entries,
+    includeSubagents ? ctx.discovery.entries : [],
     new Set(),
   );
   if (!node.success) return { kind: "failure", failure: mapStoreError(node.error) };
   // header 不可读的会话既取不到逻辑 id，也无从取得 parentSession，因此无法判定它是否属于本目标子树：
-  // 它不能进 `coverage.excluded`（那会污染 N/M/K 恒等式的含义），只能作为「归属未知」显式声明。
-  const unattributable =
-    allEntries === null
-      ? []
-      : allEntries.data.skipped.map((skipped) => ({
-          id: skipped.idFromDir,
-          reason: skipped.error,
-        }));
+  // 它不能进 `coverage.excluded`（那会污染 N/M/K 恒等式的含义），只能作为"归属未知"显式声明。
+  const unattributable = includeSubagents
+    ? ctx.discovery.skipped.map((skipped) => ({ id: skipped.idFromDir, reason: skipped.error }))
+    : [];
   const summaryFlag = optionSwitch(parsed, "--summary");
   if (format === "jsonl") {
     const rendered = renderShowJsonl(node.data);
@@ -903,7 +902,7 @@ function renderStats(parsed: ParsedCommand, ctx: StoreContext, format: "md" | "j
   return { kind: "rendered", content: rendered.content, summary: rendered.summary, exitCode: 0 };
 }
 
-function renderCheck(parsed: ParsedCommand, ctx: StoreContext, format: "md" | "json"): RunOutcome {
+function renderCheck(parsed: ParsedCommand, ctx: CheckContext, format: "md" | "json"): RunOutcome {
   const outcome = runCheck(ctx, parsed.positional[0]);
   if (!outcome.success) return { kind: "failure", failure: mapStoreError(outcome.error) };
   const rendered = format === "json" ? renderCheckJson(outcome.data) : renderCheckMd(outcome.data);
@@ -915,6 +914,25 @@ function renderCheck(parsed: ParsedCommand, ctx: StoreContext, format: "md" | "j
   };
 }
 
+/**
+ * 四条数据命令（list/show/search/stats）的入口。
+ *
+ * 会话发现只在这里做一次，结果随上下文下传：四条命令在同一份快照上过滤、解析目标、展开子树，
+ * 因此覆盖声明描述的会话集合与命令实际处理的会话集合必然是同一份。`check` 不经过本函数，
+ * 它走不读 header 的枚举路径。
+ */
+function runDataCommand(
+  parsed: ParsedCommand,
+  dshHome: string,
+  catalog: SessionFormatCatalog,
+  format: "md" | "json" | "jsonl",
+): RunOutcome {
+  const discovery = discoverReadableSessions(dshHome, catalog);
+  if (!discovery.success) return { kind: "failure", failure: mapStoreError(discovery.error) };
+  return dispatchCommand(parsed, { dshHome, catalog, discovery: discovery.data }, format);
+}
+
+/** 分派四条数据命令；调用方已把 `check` 单独分流，因此走到最后一行只可能是 `stats`。 */
 function dispatchCommand(
   parsed: ParsedCommand,
   ctx: StoreContext,
@@ -924,9 +942,7 @@ function dispatchCommand(
   if (parsed.command === "show") return renderShow(parsed, ctx, format);
   if (parsed.command === "search")
     return renderSearch(parsed, ctx, format === "json" ? "json" : "md");
-  if (parsed.command === "stats")
-    return renderStats(parsed, ctx, format === "json" ? "json" : "md");
-  return renderCheck(parsed, ctx, format === "json" ? "json" : "md");
+  return renderStats(parsed, ctx, format === "json" ? "json" : "md");
 }
 
 // ------------------------- 输出落盘 -------------------------
@@ -1073,26 +1089,12 @@ async function runParsedCommand(parsed: ParsedCommand): Promise<RunOutcome> {
       "官方格式库加载失败；确认桌面版安装完整，或用 --lib-root <目录> 指定含 @deepseek-ai 的 node_modules 目录",
     );
   const catalog: SessionFormatCatalog = catalogResult.data;
-  const prepared =
-    parsed.command === "list" || parsed.command === "check"
-      ? {
-          success: true as const,
-          data: {
-            catalogsBySessionId: new Map<string, SessionFormatCatalog>(),
-            historicalChildFailuresBySessionId: new Map<string, readonly string[]>(),
-          },
-        }
-      : prepareCatalogs(dshHome, catalog);
-  if (!prepared.success) return { kind: "failure", failure: mapStoreError(prepared.error) };
-  const ctx: StoreContext = {
-    dshHome,
-    catalog,
-    catalogsBySessionId: prepared.data.catalogsBySessionId,
-    historicalChildFailuresBySessionId: prepared.data.historicalChildFailuresBySessionId,
-  };
   const formatRaw = optionValue(parsed, "--format") ?? "md";
   const format = formatRaw === "json" ? "json" : formatRaw === "jsonl" ? "jsonl" : "md";
-  const outcome = dispatchCommand(parsed, ctx, format);
+  const outcome =
+    parsed.command === "check"
+      ? renderCheck(parsed, { dshHome, catalog }, format === "json" ? "json" : "md")
+      : runDataCommand(parsed, dshHome, catalog, format);
   if (outcome.kind === "failure") return outcome;
   const outputName = optionValue(parsed, "--name");
   const fileName = resolveOutputFileName(

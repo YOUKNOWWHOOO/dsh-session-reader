@@ -10,12 +10,7 @@
 
 import { readNumber, readString } from "./decode.ts";
 import type { Result } from "./paths.ts";
-import {
-  discoverReadableSessions,
-  entryIsSubagent,
-  readSessionFile,
-  storeFail,
-} from "./store-discovery.ts";
+import { entryIsSubagent, readSessionFile, storeFail } from "./store-discovery.ts";
 import { buildMetadata, lastActivityAtOf, loadProjCache } from "./store-metadata.ts";
 import type {
   SessionEntry,
@@ -24,7 +19,6 @@ import type {
   StoreError,
   TolerantDiscovery,
 } from "./store-types.ts";
-import { catalogForEntry } from "./store-types.ts";
 
 const MIN_PREFIX_LENGTH = 8;
 
@@ -108,10 +102,12 @@ export function resolveTargetWithin(
 /**
  * 解析会话标识：last（主会话最近活动者）／完整 id／唯一前缀（≥8 字符，大小写不敏感）。
  *
- * 三态判定的根因——"目标不存在"必须与"目标存在但不可读"可区分：
- * 解析在发现阶段（`discoverReadableSessions`）之上进行，而发现阶段会跳过 header 不可读的会话目录
- * （日志正在被写入导致撕裂、格式分类为 malformed/unsupported、header 缺 id 等）。这些会话确实存在于
- * 磁盘上，只是此刻读不到。因此：
+ * 在调用方持有的 `ctx.discovery` 上解析，不再自行发现：同一次命令的"目标是谁"与"作用域里有哪些
+ * 会话"必须基于同一份快照。
+ *
+ * 三态判定的根因是"目标不存在"必须与"目标存在但不可读"可区分：解析在发现结果之上进行，而发现阶段
+ * 会跳过 header 不可读的会话目录（日志正在被写入导致撕裂、格式分类不是 current、header 缺 id 等）。
+ * 这些会话确实存在于磁盘上，只是此刻读不到。因此：
  * - 有多个匹配 → `ambiguous`（CLI 渲染为"目标不存在（候选 N 个）"，退出 1）；
  * - 无匹配、但被跳过的目录名与给定值前缀匹配 → `data-unreadable`（退出 3），调用方据此区分
  *   "确实不存在"与"存在但读不到"，而不是把两者都当成不存在；
@@ -123,9 +119,7 @@ export function resolveSessionTarget(
   ctx: StoreContext,
   value: string,
 ): Result<SessionEntry, StoreError> {
-  const discovery = discoverReadableSessions(ctx.dshHome, ctx.catalog);
-  if (!discovery.success) return discovery;
-  return resolveTargetWithin(discovery.data, value, ctx.dshHome);
+  return resolveTargetWithin(ctx.discovery, value, ctx.dshHome);
 }
 
 /**
@@ -166,9 +160,7 @@ export function buildSessionNode(
   allEntries: SessionEntry[],
   visited: Set<string>,
 ): Result<SessionNode, StoreError> {
-  const file = readSessionFile(entry, catalogForEntry(ctx, entry), {
-    historicalChildFailures: ctx.historicalChildFailuresBySessionId.get(entry.id),
-  });
+  const file = readSessionFile(entry, ctx.catalog);
   if (!file.success) return file;
   visited.add(entry.id);
   const children: SessionNode[] = [];

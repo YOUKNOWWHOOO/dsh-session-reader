@@ -6,13 +6,22 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { before, describe, it } from "node:test";
 import { discoverReadableSessions, enumerateSessionFiles } from "../scripts/lib/store-discovery.ts";
+import { buildList } from "../scripts/lib/store-list.ts";
 import { buildMetadata, loadProjCache, loadWorkspaceIndex } from "../scripts/lib/store-metadata.ts";
+import { runSearch } from "../scripts/lib/store-search.ts";
+import { runStats } from "../scripts/lib/store-stats.ts";
+import { resolveSessionTarget } from "../scripts/lib/store-target.ts";
+import { CURRENT_LOG_VERSION, resetTempDir, writeFixtureHome } from "./fixtures.ts";
 import {
-  CURRENT_LOG_VERSION,
+  contextOf,
+  defaultFilters,
+  event,
   fakeCatalog,
   findEntry,
   initStoreFixtures,
   MAIN_CWD,
+  OTHER_CWD,
+  PROJECT_OTHER,
   storeFixtures,
 } from "./store-helpers.ts";
 
@@ -123,6 +132,90 @@ describe("loadProjCache / buildMetadata", () => {
       metadata.reasons.some((reason) => /sessionStats/u.test(reason)),
       true,
     );
+  });
+});
+
+describe("数据命令只消费 ctx.discovery（发现只做一次）", () => {
+  it("快照之后再写入会话：list/search/stats/目标解析都看不到它", () => {
+    const home = join(TEMP_ROOT, "snapshot-dsh");
+    resetTempDir(home);
+    writeFixtureHome(home, {
+      sessions: [
+        {
+          id: "session-snapshot-01",
+          projectDir: PROJECT_OTHER,
+          cwd: OTHER_CWD,
+          createdAt: 1000,
+          events: [
+            event("turn/start", 0, 10, { turn: 1 }),
+            event(
+              "user/message",
+              1,
+              11,
+              { role: "user", content: [{ type: "text", text: "快照检索词" }] },
+              { surfaceOp: "append" },
+            ),
+          ],
+          title: "快照会话",
+          turns: 1,
+          steps: 0,
+          lastPromptAt: 2000,
+        },
+      ],
+    });
+    const ctx = contextOf(home);
+    // 快照生成之后再写入第二个会话：任何"再发现一次"的实现都会看到两个会话，
+    // 因此下面四条断言同时证明了发现只做一次。
+    writeFixtureHome(home, {
+      sessions: [
+        {
+          id: "session-snapshot-02",
+          projectDir: PROJECT_OTHER,
+          cwd: OTHER_CWD,
+          createdAt: 3000,
+          events: [event("turn/start", 0, 10, { turn: 1 })],
+          title: "后写入会话",
+          turns: 0,
+          steps: 0,
+          lastPromptAt: 4000,
+        },
+      ],
+    });
+
+    const listed = buildList(ctx, defaultFilters());
+    assert.equal(listed.success, true, listed.success ? "" : `list 失败: ${listed.error.category}`);
+    if (!listed.success) return;
+    assert.equal(listed.data.matchedCount, 1);
+    assert.equal(listed.data.entries[0].id, "session-snapshot-01");
+
+    const searched = runSearch(
+      ctx,
+      "快照检索词",
+      { origin: "all" },
+      {
+        scope: "text",
+        caseSensitive: false,
+        context: 10,
+        limit: 0,
+      },
+    );
+    assert.equal(
+      searched.success,
+      true,
+      searched.success ? "" : `search 失败: ${searched.error.category}`,
+    );
+    if (!searched.success) return;
+    assert.equal(searched.data.distribution.length, 1);
+    assert.equal(searched.data.distribution[0].sessionId, "session-snapshot-01");
+
+    const stats = runStats(ctx, undefined, { origin: "all" });
+    assert.equal(stats.success, true, stats.success ? "" : `stats 失败: ${stats.error.category}`);
+    if (!stats.success) return;
+    assert.equal(stats.data.sessionCount, 1);
+
+    const absent = resolveSessionTarget(ctx, "session-snapshot-02");
+    assert.equal(absent.success, false);
+    if (!absent.success) assert.equal(absent.error.category, "target-missing");
   });
 });
 

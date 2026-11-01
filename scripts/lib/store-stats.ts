@@ -22,7 +22,6 @@ import type {
   StoreError,
   TokenTotals,
 } from "./store-types.ts";
-import { catalogForEntry } from "./store-types.ts";
 
 function sumTokens(views: SessionView[]): TokenTotals {
   let uncachedInputTokens = 0;
@@ -57,9 +56,7 @@ export function runStats(
     const entry = resolved.data;
     const cache = loadProjCache(ctx.dshHome, entry.id, entry.header);
     const metadata = buildMetadata(cache);
-    const file = readSessionFile(entry, catalogForEntry(ctx, entry), {
-      historicalChildFailures: ctx.historicalChildFailuresBySessionId.get(entry.id),
-    });
+    const file = readSessionFile(entry, ctx.catalog);
     if (!file.success) return file;
     const single: SingleSessionStats = {
       id: entry.id,
@@ -123,9 +120,7 @@ export function runStats(
   const decodeFailures: { id: string; reason: string }[] = [];
   let scan = emptyScanSummary();
   for (const view of selection.data.views) {
-    const file = readSessionFile(view.entry, catalogForEntry(ctx, view.entry), {
-      historicalChildFailures: ctx.historicalChildFailuresBySessionId.get(view.entry.id),
-    });
+    const file = readSessionFile(view.entry, ctx.catalog);
     if (!file.success) {
       decodeFailures.push({ id: view.entry.id, reason: "解码失败" });
       scan = accumulateScanSummary(scan, {
