@@ -106,7 +106,7 @@ function eventLine(event: FixtureEvent): string {
     if (typeof compact.id !== "string" || compact.id.length === 0) {
       compact.id = messageIdFor(event.seq, compact.role === "tool" ? "result" : "message");
     }
-    // tool/result 的消息在 v4 里是「工具」角色的一级消息：toolCallId 与 isError 是消息字段，
+    // tool/result 的消息在 v4 里是“工具”角色的一级消息：toolCallId 与 isError 是消息字段，
     // 而 v3 把它们放在 content 内的 tool-result 块里。两者在同一事件里给出，v4 才接受。
     if (typeof compact.role !== "string" || compact.role.length === 0) compact.role = "tool";
     if (compact.toolCallId === undefined && Array.isArray(compact.content)) {
@@ -333,7 +333,7 @@ type FixtureEventExtra = Partial<Pick<FixtureEvent, "surfaceOp" | "sourceEventSe
  * 交叉而不是直接用 `FixtureEvent` 的理由：TypeScript 只给对象字面量类型隐式索引签名，`interface`
  * 没有，因此 `FixtureEvent` 无法直接传给按事件记录（`Record<string, unknown>`）消费的入口
  * （抽取、渲染层）。交叉后既保留"必须是合法夹具事件"的编译期约束，又能直接交给这些入口，
- * 不必在每个测试里逐字段转写——转写本身就是一处会漂移的复制。
+ * 不必在每个测试里逐字段转写，转写本身就是一处会漂移的复制。
  */
 export type AskFixtureEvent = FixtureEvent & Record<string, unknown>;
 
@@ -404,7 +404,7 @@ function askAnswerEventOf(
       message: {
         role: "tool",
         // 工具结果的来源是"工具"这个生产者，其 callId 必须与 toolCallId 一致：v4 解码器会校验
-        // 二者匹配。缺 source 时整行被拒绝（报错为「requires toolCallId matching its tool source」），
+        // 二者匹配。缺 source 时整行被拒绝（报错为“requires toolCallId matching its tool source”），
         // 而 `show` 只会把它呈现为 `数据不可读`，错误位置离夹具很远。
         source: { kind: "tool", callId },
         toolCallId: callId,
@@ -435,7 +435,7 @@ export function askAnswerEvent(
  * `<dsh-result tool="…" call="…">`，正文紧跟一个换行，终点 `</dsh-result>` 单独成行。当期部署
  * 给每个未自带信封的工具结果都加这一层，`ask_user_question` 的回答因此不再以裸 JSON 落账。
  *
- * 夹具只复刻这一种形态：正文里出现终点字面量时写入侧会转义，本构造函数不含该分支——需要在
+ * 夹具只复刻这一种形态：正文里出现终点字面量时写入侧会转义，本构造函数不含该分支，需要在
  * 测试里表达转义形态时用记录级合成事件，那属于"写入侧之外的数据"。
  */
 export function askAnswerEnvelopedEvent(
@@ -455,7 +455,7 @@ export function askAnswerEnvelopedEvent(
  * 为 true）。本夹具表达**两者都写**的形态：`ask_user_question` 被中止或取消时，日志同时给出
  * `data.error`（`{ name, code }`）与 `message.isError: true`。
  *
- * 真实日志里还有另一种形态——只写 `message.isError`、没有 `data.error`（普通工具失败即如此），
+ * 真实日志里还有另一种形态，只写 `message.isError`、没有 `data.error`（普通工具失败即如此），
  * 由下面的 `toolResultIsErrorOnlyEvent` 单独表达。两种形态必须都被判为错误态，因此不能用同一份
  * 夹具冒充两种数据。
  *

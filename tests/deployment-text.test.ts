@@ -24,7 +24,7 @@ const ASSISTANT_OPEN = `<dsh-message role="assistant" id="abcdef12" ts="${MESSAG
  * 消息终点的转义形态。
  *
  * 外层包裹对内层终点统一转义（`preset-lib/injection-boundary.mjs` 的 `wrapSegments`），转义后的
- * 字面量在文本里是「反斜杠 + 斜杠 + 标签名」，因此源码里必须写两个反斜杠才表示一个反斜杠。
+ * 字面量在文本里是“反斜杠 + 斜杠 + 标签名”，因此源码里必须写两个反斜杠才表示一个反斜杠。
  */
 const ESCAPED_CLOSE = "<\\/dsh-message>";
 

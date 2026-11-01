@@ -1,4 +1,4 @@
-// 用途：show 的 Markdown 渲染——头部 KV 块、时间线（推理/工具/生命周期可见性、问答条目、交接条目、
+// 用途：show 的 Markdown 渲染，头部 KV 块、时间线（推理/工具/生命周期可见性、问答条目、交接条目、
 // turn/seq 范围筛选、head/tail 首尾截取、按码点截断、隐藏计数摘要）、轮次大纲，以及以 H2 序列 + 路径编号
 // 表达父子关系的子代理块；`--probe` 只落头部 KV 与三项规模数字。
 // 主要入口：renderShowMd（返回 Result：问答载荷结构不符时以错误上抛，由 CLI 映射为 `数据不可读`）；
@@ -127,7 +127,7 @@ function nodeKvBlock(node: SessionNode, probe: ProbeReadout | null): string {
     `- 标题：${title === null ? EMPTY_VALUE : inlineValue(title)}`,
     `- 工作区：${optionalInline(readString(header, "cwd"))}`,
     // 缺 `createdAt` 时显示 `-`，禁止兜底到 0：兜底会把"字段缺失"伪装成一个有效时间（1970），
-    // 与「空值显示 -」的契约冲突，也与同段 `- 深度：` 的口径不一致。
+    // 与“空值显示 -”的契约冲突，也与同段 `- 深度：` 的口径不一致。
     `- 创建：${createdAt === undefined ? EMPTY_VALUE : formatLocalIso(createdAt)}`,
   ];
   if (origin === "subagent") {
@@ -181,7 +181,7 @@ function labelLine(
 }
 
 /**
- * 事件的来源标注：只有 `user/message` 事件需要它——它被渲染成 `**用户**`，会把子代理中继、
+ * 事件的来源标注：只有 `user/message` 事件需要它，它被渲染成 `**用户**`，会把子代理中继、
  * 插件注入等显示成用户消息；`**工具结果**`、`**系统消息**`、`**事件**`、`**提问**`、`**回答**`
  * 各有独立标签，不存在该歧义（问答条目的标签已表达"这是提问工具说的"）。
  */
@@ -224,7 +224,7 @@ function isTurnStart(event: EventRecord): boolean {
 /**
  * 依 `--turn`／`--seq` 筛选事件序列（交集语义，区间含端点）。
  *
- * 语义分层的理由：范围选择只改变"呈现哪些事件"，不改变会话统计——KV 块与轮次大纲仍描述整会话，
+ * 语义分层的理由：范围选择只改变"呈现哪些事件"，不改变会话统计，KV 块与轮次大纲仍描述整会话，
  * 并由 `filterSummaryMd` 显式给出"显示 M 条事件（共 N 个事件）"，避免调用方把局部读成整体。
  */
 export function selectEvents(
@@ -274,7 +274,7 @@ function filterSummaryMd(
   }
   if (options.seqRange !== null) parts.push(`seq ${options.seqRange.from}-${options.seqRange.to}`);
   // `--head`/`--tail` 只裁剪根块（见 renderTimelineMd 的 limitItems）：子代理块必须省略这两段，
-  // 否则会出现「首 3 条；显示 50 条时间线条目」这种同一行内自相矛盾的外观。
+  // 否则会出现“首 3 条；显示 50 条时间线条目”这种同一行内自相矛盾的外观。
   if (isRoot && options.head > 0) parts.push(`首 ${options.head} 条`);
   if (isRoot && options.tail > 0) parts.push(`末 ${options.tail} 条`);
   if (parts.length === 0) return null;
@@ -343,7 +343,7 @@ function handoffPayload(entry: HandoffEntry, options: ShowMdOptions): string {
 /**
  * 渲染一条时间线条目（标签行 ＋ 正文载体），或计入隐藏计数，或返回 null（该事件不产出条目）。
  *
- * 拆分动机：`--head`/`--tail` 按"呈现条目数"截取，而不是按"事件数"截取——`turn/start`、
+ * 拆分动机：`--head`/`--tail` 按"呈现条目数"截取，而不是按"事件数"截取，`turn/start`、
  * `turn/end`、`session/title` 等事件不产生条目，若先按事件截取会出现"要 5 条却一条都没显示"。
  *
  * 交接条目（`handoff` 非 null）在类型分支之前短路：它是一类独立条目，不受 `--thinking`/`--tools`/
@@ -353,7 +353,7 @@ function handoffPayload(entry: HandoffEntry, options: ShowMdOptions): string {
  *
  * 问答条目（`ask` 非 null）与原始工具条目是同一事件的两种形态：`--tools` 打开时先出原始条目、
  * 再出问答条目；关闭时该事件仍然产出问答条目。因此问答事件在 `--tools` 关闭时**不得**计入
- * `已隐藏 N 条工具调用/结果`——那会让调用方以为问答条目也被藏起来了，而它其实就在下一行。
+ * `已隐藏 N 条工具调用/结果`，那会让调用方以为问答条目也被藏起来了，而它其实就在下一行。
  * `--role` 只过滤对话消息，工具、事件与交接条目（含问答）不受影响。
  *
  * 默认排除的注入消息与调度回执由调用方计数并跳过（见 renderTimelineMd）：它们在此返回 null，
@@ -471,7 +471,7 @@ function timelineItem(
     }
   } else if (type === "tool/result") {
     // 回执的默认排除由 renderTimelineMd 统一判定与计数（那里同时决定它是否被跳过），
-    // 这里只负责在它进入渲染时按普通工具结果处理——`--tools` 打开时它作为调度往返的记录出现。
+    // 这里只负责在它进入渲染时按普通工具结果处理，`--tools` 打开时它作为调度往返的记录出现。
     if (options.tools) {
       // 错误态判据只有一处实现：`data.error` 与 `message.isError` 任一成立即为错误态，
       // 只认前者会把只带 `message.isError` 的真实结果渲染成普通结果。
@@ -607,7 +607,7 @@ function hiddenSummaryMd(hidden: HiddenCounts, options: ShowMdOptions): string {
  * 轮次大纲条目：`- T<turn>（seq <seq>）：<prompt> → <response>`。
  *
  * 截断口径与其它文本载体完全一致（`--truncate`，按码点，0 即不截断）：开发规范 R5 禁止为任何
- * 载体另设固定上限——"0 即不截断"若在某载体上被固定上限覆盖，调用方据 `--truncate 0` 推断全文
+ * 载体另设固定上限，"0 即不截断"若在某载体上被固定上限覆盖，调用方据 `--truncate 0` 推断全文
  * 就会读错。换行折叠为空格是单行载体的要求（每轮一条）。
  */
 function outlineSections(
@@ -635,14 +635,14 @@ function outlineSections(
  * 主节点区块为 H2，子节点内容为各自 H2 下的 H3（MD024 同级唯一由路径编号保证）。
  *
  * 范围语义：`--turn`/`--seq` 作用于每个节点（含子代理，各自以自身事件流计轮次）；
- * `--head`/`--tail` 只作用于根节点——子代理被 `--subagents` 显式要求导出，静默截掉它们会让
+ * `--head`/`--tail` 只作用于根节点，子代理被 `--subagents` 显式要求导出，静默截掉它们会让
  * "导出了全部子代理"这一预期落空，且产物中无从察觉。该不对称由 SKILL.md 显式声明。
  *
  * `--probe` 只作用于根节点：探测规模是一次"读之前"的动作，对子代理再各给一份正文就失去了意义。
  *
  * 返回 Result 而不是 `string[]` 的理由：问答载荷结构不符必须让整条命令失败（契约要求不产出任何
  * 降级内容），而失败可能来自任意一个子代理块，因此必须沿递归原路上抛，不能就地吞掉或跳过
- * ——那正是"静默丢弃"。
+ * ，那正是"静默丢弃"。
  */
 function renderNodeSections(
   node: SessionNode,
@@ -747,9 +747,9 @@ export function renderShowMd(
   if (!nodeSections.success) return nodeSections;
   const sections = ["# 会话记录", ...nodeSections.data];
   if (!options.probe) {
-    // 覆盖声明属于"边界可自证"契约，show 同样必须给出（开发规范「覆盖声明契约」）。作用域是本目标
+    // 覆盖声明属于"边界可自证"契约，show 同样必须给出（开发规范“覆盖声明契约”）。作用域是本目标
     // 及其子树，纳入数即渲染出的节点数；子代理解码失败会让整条命令显式失败（退出 3），因此可归属的
-    // 排除项恒为空，header 不可读的子代理只能以「归属未知」声明。`--probe` 产物按规模探测条款
+    // 排除项恒为空，header 不可读的子代理只能以“归属未知”声明。`--probe` 产物按规模探测条款
     // 只含头部 KV 与三项，故不追加。
     const nodes = countNodes(node);
     sections.push(
@@ -786,7 +786,7 @@ export function renderShowMd(
  * 实现取"以同一组选项渲染一份不探测的副本"的字节长度，而不是估算公式：
  * 估算要重复渲染规则（含围栏动态长度、截断、归一化），必然与真实产出漂移，
  * 而"预计 N 字节"一旦漂移就会让调用方的容量判断失效。代价是探测时多做一次渲染（CPU 换确定性）。
- * 副本渲染同样是单目标渲染，因此问答载荷结构不符时它也失败——"预计字节数"不能建立在一份
+ * 副本渲染同样是单目标渲染，因此问答载荷结构不符时它也失败，"预计字节数"不能建立在一份
  * 本来就不该产出的正文之上。
  */
 function probeSizeOf(node: SessionNode, options: ShowMdOptions): Result<number, string> {

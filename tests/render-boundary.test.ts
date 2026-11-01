@@ -438,7 +438,7 @@ describe("render 边界与分支", () => {
     const parent = node([child]);
     const filtered = showMd(parent, showOptions({ head: 1, subagents: true }));
     // `--head` 只裁剪根块：子代理块既没有被裁剪，就不得在同一行里声称"首 1 条"，
-    // 否则会出现「首 1 条；显示 N 条时间线条目」这种自相矛盾的外观。
+    // 否则会出现“首 1 条；显示 N 条时间线条目”这种自相矛盾的外观。
     const filterLines = filtered.content.split("\n").filter((line) => line.startsWith("筛选："));
     assert.equal(filterLines.length, 1);
     assert.equal(filterLines[0].startsWith("筛选：首 1 条；显示 1 条时间线条目"), true);

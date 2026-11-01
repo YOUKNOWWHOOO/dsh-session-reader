@@ -1,4 +1,4 @@
-// 用途：渲染基础设施——文本载体（多行动态围栏、单行行内代码跨度、表格单元格）、三条极小归一化
+// 用途：渲染基础设施，文本载体（多行动态围栏、单行行内代码跨度、表格单元格）、三条极小归一化
 // （CR/CRLF → LF 与制表符 → 4 空格 MD010、行内值首尾空白去除 MD038、全 `$` 载荷末尾补一行空格 MD014）、
 // 按码点截断、字节大小格式化、文档装配、空值与"元数据不可用"常量、字段值格式化，以及 md/json 两组
 // 渲染器共用的会话派生事实（会话标题、令牌用量、轮次、事件统计、节点计数）。
@@ -10,10 +10,10 @@
 // 设计约束：本模块不读命令语义、不产出任何命令级文案；载体与归一化是"实现与测试的单一真值源"，
 // 任何新载体都必须复用同一套动态反引号长度规则，禁止各渲染器自造转义或第二份归一化。
 //
-// 层规则（要求与验收标准见 doc\开发规范.md 的「md 输出格式契约」R1–R5；载体与归一化的实现只在本模块）：
+// 层规则（要求与验收标准见 doc\开发规范.md 的“md 输出格式契约”R1–R5；载体与归一化的实现只在本模块）：
 // 渲染层：Markdown（lint-safe）/JSON/JSONL 输出、可见性控制（推理/工具/事件）、范围筛选、截断、覆盖声明、摘要文案。
 // 输出格式为"实现与测试的单一真值源"：
-// - md：GFM 子集、结构骨架只用固定词表与工具生成值；任意文本只经两种载体承载——
+// - md：GFM 子集、结构骨架只用固定词表与工具生成值；任意文本只经两种载体承载，
 //   多行文本 → 动态长度围栏（反引号 + `text` 语言）；单行文本 → 行内代码跨度（动态反引号）；
 //   三条极小归一化：CR/CRLF → LF 与制表符 → 4 空格（MD010）、行内值首尾空白去除（MD038）、全 `$` 载荷
 //   末尾追加一行单个空格（MD014）；正文以外的结构纪律见 assembleDocument 与各渲染函数注释。
@@ -122,14 +122,14 @@ function maxBacktickRun(text: string): number {
  *
  * 同一步骤内把 CRLF 与孤立 CR 一律折叠为 LF：输出契约要求产物为"UTF-8 无 BOM、LF"，
  * 而会话正文本身可能含 CR 字节，一旦漏过就会让产物混入 CR。内嵌 CR 不会被 markdownlint
- * 判为违规，因此它是**契约层面的静默破坏**而非 lint 问题——必须在载体归一化阶段消除，
+ * 判为违规，因此它是**契约层面的静默破坏**而非 lint 问题，必须在载体归一化阶段消除，
  * 否则"LF"这一契约无法成立。（此处不写命中的产物个数：该计数随门禁规模变化，写死必然过时。）
  */
 export function normalizeTabs(text: string): string {
   return text.replace(/\r\n|\r/gu, "\n").replace(/\t/gu, " ".repeat(TAB_WIDTH));
 }
 
-/** MD014 触发判定：所有非空行均以「可选空白 + $ + 空白」开头（R3）。 */
+/** MD014 触发判定：所有非空行均以“可选空白 + $ + 空白”开头（R3）。 */
 export function wouldTriggerMd014(payload: string): boolean {
   const lines = payload
     .replace(/\r\n|\r/gu, "\n")
@@ -138,7 +138,7 @@ export function wouldTriggerMd014(payload: string): boolean {
   return lines.length > 0 && lines.every((line) => /^\s*\$\s+/u.test(line));
 }
 
-/** 归一化 2：MD014 中和——在载荷末尾追加一行单个空格（原文各行逐字保留；R3）。 */
+/** 归一化 2：MD014 中和，在载荷末尾追加一行单个空格（原文各行逐字保留；R3）。 */
 export function neutralizeMd014(payload: string): string {
   return wouldTriggerMd014(payload) ? `${payload}\n ` : payload;
 }

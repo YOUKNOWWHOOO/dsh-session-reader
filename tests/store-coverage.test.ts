@@ -1,4 +1,4 @@
-// 覆盖声明的纳入口径测试：search/stats 对「header 可读但解码失败」的会话只计 excluded，
+// 覆盖声明的纳入口径测试：search/stats 对“header 可读但解码失败”的会话只计 excluded，
 // list 对发现阶段跳过者同样计入排除；纳入数与排除数互斥且不双计。
 
 import assert from "node:assert/strict";

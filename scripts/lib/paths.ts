@@ -58,7 +58,7 @@ function desktopInstallNodeModules(localAppData: string): string {
  * 为什么不再探测 npm 缓存的 npx 安装树或 `<dsh-home>\profiles\node_modules`：默认库来源是随桌面版
  * 发行的那一份，桌面安装归档是该来源的**唯一权威位置**；另两处只取决于某次安装或运行的历史痕迹，
  * 是否恰好存在与版本都随本机状态漂移，因此既不能保证与桌面版同版，也不能作为锚点判据。默认形态
- * 是**唯一锚点**——找不到就是找不到，不回落任何其它目录。
+ * 是**唯一锚点**，找不到就是找不到，不回落任何其它目录。
  *
  * 锚点判定与旧探测同源：该 `node_modules` 必须同时含 `@deepseek-ai/dsh` 与
  * `@deepseek-ai/dsh-session-format-catalog` 的 `package.json`，否则返回 undefined，由调用方给出
@@ -197,7 +197,7 @@ export function outputFileName(
  * 汉字用 Unicode 属性 `Script=Han` 表达，而不是手写 `\uXXXX` 区间：手写区间只能覆盖基本平面
  * （基本区、扩展 A、兼容区），会把扩展 B 及以后的正常汉字（如 `𠮷` U+20BB7）误判为非法，
  * 而报错文案与 `SKILL.md` 承诺的正是"中文"。属性转义随 Unicode 数据更新，是"中文可用"
- * 这一要求的直接表达；本白名单仍是白名单——`.`、路径分隔符、`:`、空白与控制字符一律不在内。
+ * 这一要求的直接表达；本白名单仍是白名单，`.`、路径分隔符、`:`、空白与控制字符一律不在内。
  */
 const OUTPUT_NAME_PATTERN = /^[A-Za-z0-9_\-\p{Script=Han}]+$/u;
 
@@ -232,7 +232,7 @@ const OUTPUT_NAME_MAX_LENGTH = 64;
 /**
  * 校验 `--name`（产物 basename，不含扩展名）。
  *
- * 设计约束：产物路径必须恒为 `--output-dir` 的直接子文件。因此字符集是白名单而非黑名单——
+ * 设计约束：产物路径必须恒为 `--output-dir` 的直接子文件。因此字符集是白名单而非黑名单，
  * `.` 被排除（否则 `a.md` 与 `--format` 派生的扩展名形成双重歧义，且 `..` 可越出输出目录），
  * 路径分隔符与 `:` 被排除（否则可写到输出目录之外或落到 NTFS 备用数据流）。
  * 保留设备名单独拒绝：它们不含非法字符，但会被 Windows 重定向到设备而静默丢失产物。

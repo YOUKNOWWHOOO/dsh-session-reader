@@ -1,4 +1,4 @@
-// 用途：命令级摘要文案（stdout 第二行的唯一真值源）——list/show/show --format jsonl/search/stats/check
+// 用途：命令级摘要文案（stdout 第二行的唯一真值源），list/show/show --format jsonl/search/stats/check
 // 各一句话摘要；md 与 json 两组渲染器都从本模块取摘要，CLI 层不得自行拼接任何摘要文本。
 // 主要入口：listSummary / showSummary / showProbeSummary / showJsonlSummary / searchSummary / formatStatsSummary / checkSummary。
 // 关键依赖：render-core.ts（空值与"元数据不可用"文案、会话派生统计类型、countNodes）、store-types.ts（各命令 outcome 类型）。

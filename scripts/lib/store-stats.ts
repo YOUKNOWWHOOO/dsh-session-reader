@@ -2,7 +2,7 @@
 // 主要入口：runStats（stats 命令数据）。
 // 关键依赖：store-list.ts（会话视图收集）、store-metadata.ts（元数据与最近活动时间）、store-discovery.ts
 // （读取与扫描摘要）、store-target.ts（单会话目标解析）、store-types.ts。
-// 设计约束：元数据不可用的会话不得静默计 0——逐会话列入 unavailable，并以 excludedMetricSessions 显式
+// 设计约束：元数据不可用的会话不得静默计 0，逐会话列入 unavailable，并以 excludedMetricSessions 显式
 // 给出未计入轮次/步数的会话数（供摘要行附注）；解码失败计入 coverage.excluded，而非让整条命令失败。
 // 数据契约见 store-types.ts 文件头。
 

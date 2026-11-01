@@ -173,7 +173,7 @@ export function mainEvents(): FixtureEvent[] {
         turn: 1,
         step: 1,
         message: {
-          // 当前格式的工具结果是「工具」角色的一级消息：toolCallId 与 isError 是消息字段。
+          // 当前格式的工具结果是“工具”角色的一级消息：toolCallId 与 isError 是消息字段。
           role: "tool",
           id: "fixture-tool-result-1",
           toolCallId: "call_1",

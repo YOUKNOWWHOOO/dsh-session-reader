@@ -1,4 +1,4 @@
-// 用途：部署侧边界标记的解析与剥离——`<dsh-injection …>…</dsh-injection>`（用户角色注入消息）、
+// 用途：部署侧边界标记的解析与剥离，`<dsh-injection …>…</dsh-injection>`（用户角色注入消息）、
 // `<dsh-message role="…" …>…</dsh-message>`（真实用户消息与带文本块的 assistant 消息，即消息时间
 // 标记）、`<dsh-result …>…</dsh-result>`（普通工具结果），以及普通消息交接的 `<compacted-summary>` 信封。
 // 主要入口：stripInjectionEnvelopes（宽松：完整才剥离，不完整原样返回）、stripMessageEnvelope（宽松：
@@ -10,19 +10,19 @@
 // 设计约束：
 // 1. 标记形态、转义规则与幂等判据的唯一实现处是 `$DSH_HOME/preset-lib/injection-boundary.mjs`；
 //    本文件只解析它产出的形态，不生成标记，也不维护第二份形态定义。写入侧把正文里的终点字面量
-//    转义为 `<\/…>`，因此「第一个未转义的终点」就是真实终点。
+//    转义为 `<\/…>`，因此“第一个未转义的终点”就是真实终点。
 // 2. 完整信封的判据只有三条且缺一不可：以起点前缀加一个空格开头、起点行在首个换行处结束、
 //    终点前有一个换行且其后紧接文本结尾或另一个换行（允许两个注入信封顺序排列）。三种信封共用
 //    这一组判据，只有起点前缀与终点字面量不同。剥离只认完整信封；不完整或形态异常时**原样返回**，
-//    不尽力截取——半截信封下截出的任何内容都不再等于被记录的那份正文。
+//    不尽力截取，半截信封下截出的任何内容都不再等于被记录的那份正文。
 // 3. 严格版 stripResultEnvelope 保留旧行为：不以起点开头按原正文返回，以起点开头但不完整返回 null。
 //    问答载荷是内容载体，解析不出来必须整体失败；普通工具结果的展示没有这个依赖，因此用宽松版。
 // 4. 消息信封没有严格版：它不承载需要解析的结构化载荷，展示面与检索面一律用宽松版。消息信封最多
 //    一个且是真实用户消息或 assistant 消息的最外层，因此不做顺序排列的循环；终点之后还有内容时
 //    不是完整信封，原样返回。
-// 5. 嵌套残形是唯一允许剥「非完整」形态的地方：它只作用于 `<compacted-summary>` 内层，判据三条
+// 5. 嵌套残形是唯一允许剥“非完整”形态的地方：它只作用于 `<compacted-summary>` 内层，判据三条
 //    缺一不可（消息起点前缀、起点行以 `>` 收尾、末尾是换行加转义终点），剥离只去掉起点行与转义
-//    终点行，不反转义也不改动正文。它不是「尽力截取」，而是写入侧两种包裹叠加后的确定结果。
+//    终点行，不反转义也不改动正文。它不是“尽力截取”，而是写入侧两种包裹叠加后的确定结果。
 // 6. 本模块不判断"该不该显示某条消息"（那是 visibility.ts 的职责），只负责把部署包装从可读正文中剥离。
 //    是否剥离由调用方按展示面决定：md/json/search 剥离，`--format jsonl` 保留原始事件。
 
@@ -94,7 +94,7 @@ interface EnvelopeSpan {
  */
 function leadingEnvelope(text: string, openPrefix: string, close: string): EnvelopeSpan | null {
   if (!text.startsWith(openPrefix)) return null;
-  // 起点行必须在首个换行处结束，且该行必须以 `>` 收尾：标记形态是「属性 + >」，起点行内不应有正文。
+  // 起点行必须在首个换行处结束，且该行必须以 `>` 收尾：标记形态是“属性 + >”，起点行内不应有正文。
   // 少了这条检查时，`<dsh-injection …>正文\n</dsh-injection>` 会被当成空正文信封，正文被静默丢弃。
   const openEnd = text.indexOf("\n");
   if (openEnd < 0 || text[openEnd - 1] !== ">") return null;
@@ -156,7 +156,7 @@ export function stripResultEnvelope(text: string): string | null {
 /**
  * 宽松剥离工具结果外层的边界信封，供展示面使用。
  *
- * 完整信封被剥离；不是信封或信封不完整时原样返回——展示面不依赖信封结构，原样显示比丢弃或
+ * 完整信封被剥离；不是信封或信封不完整时原样返回，展示面不依赖信封结构，原样显示比丢弃或
  * 猜测更诚实。原始正文始终可由 `show --format jsonl` 取回。
  *
  * @param text 工具结果全部文本块拼接后的正文。
@@ -176,7 +176,7 @@ export function stripResultEnvelopeLenient(text: string): string {
  * 起点行承载 `role`/`id`/`ts` 三个属性，终点行单独成形（纯工具调用的 assistant 消息不包裹）。
  * 它是传输层标记而不是消息内容；md、json 与检索面统一用本函数取正文，`--format jsonl` 仍保留原始事件。
  *
- * 与工具结果的宽松版同形：完整即剥离，否则原样返回。消息信封没有严格版——它不承载需要解析的
+ * 与工具结果的宽松版同形：完整即剥离，否则原样返回。消息信封没有严格版，它不承载需要解析的
  * 结构化载荷，展示与检索不依赖信封结构，原样显示比丢弃或猜测更诚实。消息信封最多一个且位于
  * 最外层，因此不做顺序排列的循环；终点之后还有内容时不是完整信封，原样返回。
  *
@@ -193,7 +193,7 @@ export function stripMessageEnvelope(text: string): string {
 /**
  * 取 `<compacted-summary>` 信封的内层正文。
  *
- * 只认「整段恰好是一个完整信封」：起点在开头且单独成行、终点在末尾且单独成行。官方压缩检查点的
+ * 只认“整段恰好是一个完整信封”：起点在开头且单独成行、终点在末尾且单独成行。官方压缩检查点的
  * 正文前面还有一段英文检查点前言，因此不满足本判据；本函数只用于识别普通消息交接投递的那条
  * 用户消息（其正文由交接插件写成严格的 `<compacted-summary>\n…\n</compacted-summary>`）。
  *
@@ -210,7 +210,7 @@ export function compactedSummaryBody(text: string): string | null {
  * 消息终点的转义形态。
  *
  * 外层包裹对内层终点统一转义（`preset-lib/injection-boundary.mjs` 的 `wrapSegments`），转义后的
- * 字面量是「反斜杠 + 斜杠 + 标签名」。本常量只用于识别嵌套残形的终点，不做任何反转义——反转义会
+ * 字面量是“反斜杠 + 斜杠 + 标签名”。本常量只用于识别嵌套残形的终点，不做任何反转义，反转义会
  * 改坏正文本身含反斜杠的正规载荷。
  */
 const ESCAPED_MESSAGE_CLOSE = "<\\/dsh-message>";
@@ -240,7 +240,7 @@ export function stripNestedMessageEnvelope(text: string): string {
 /**
  * 清理交接摘要条目正文里内层的嵌套残形。
  *
- * 只对「整段恰好是一个 `<compacted-summary>` 信封」生效，判据与 `compactedSummaryBody` 相同；
+ * 只对“整段恰好是一个 `<compacted-summary>` 信封”生效，判据与 `compactedSummaryBody` 相同；
  * 官方压缩检查点的正文前面还有检查点前言，因此原样返回，不会被二次切分。清理后保留标签本身，
  * 使调用方仍能从正文读出这是摘要而不是用户输入。
  *

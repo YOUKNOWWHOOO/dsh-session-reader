@@ -104,7 +104,7 @@ export const CHILD_ID = "session-adv-child-07";
  * 问答夹具会话 id：成对问答、未配对提问、错误态结果、结构不符的载荷。
  *
  * 四者必须是不同会话：前三个都必须能在默认参数下完整导出（其中错误态样本只呈现提问、
- * 不产出回答条目），第四个必须让单目标导出整体失败——把任何两者放进同一会话，
+ * 不产出回答条目），第四个必须让单目标导出整体失败，把任何两者放进同一会话，
  * 就会让"可导出"与"必须失败"这两种行为互相覆盖而失去覆盖力。
  */
 export const ASK_PAIRED_ID = "session-adv-ask-paired-17";
@@ -114,7 +114,7 @@ export const ASK_MALFORMED_ID = "session-adv-ask-malformed-20";
 /**
  * 交接夹具会话 id：一次完整交接（助手正文 → handoff 型 `developer/message` → 投递）加一个
  * 非 handoff 型（`tool-registry`）`developer/message`。两者必须在同一会话里，门禁才能同时断言
- * 「进 `**交接**` 条目」与「仍由 `--events` 按通用事件呈现」两条路径。
+ * “进 `**交接**` 条目”与“仍由 `--events` 按通用事件呈现”两条路径。
  */
 export const HANDOFF_ID = "session-adv-handoff-21";
 /**
@@ -150,7 +150,7 @@ const MESSAGE_TS = "2026-10-29T22:59:57+08:00";
  * 给对话消息正文套上部署侧的消息信封。
  *
  * 门禁夹具必须复现当期部署形态：真实用户消息与带文本块的 assistant 消息在会话 `append` 包装层
- * 各被加一对 `<dsh-message>`（纯工具调用的 assistant 消息不包裹）。夹具只在交接样本上使用它——
+ * 各被加一对 `<dsh-message>`（纯工具调用的 assistant 消息不包裹）。夹具只在交接样本上使用它，
  * 其余样本的价值在于敌意内容本身，加信封只会让命中片段与快照更难对照。
  *
  * @param role 消息角色，取 `user` 或 `assistant`。
@@ -191,9 +191,9 @@ function mainEvents(): FixtureEvent[] {
           id: "sys-1",
           role: "system",
           // 该夹具刻意携带插件名（含会破坏骨架的反引号与换行由 CONTENTS 注入）：来源标注必须把
-          // 插件名放进行内载体。**kind 不能写 plugin**——v4 要求 source.kind 由具体生产者声明，
-          // 不存在万能类，写 plugin 会让整条日志解码失败（实测报错「requires a producer-owned
-          // source kind」），门禁因此会把夹具问题当成产品缺陷。
+          // 插件名放进行内载体。**kind 不能写 plugin**，v4 要求 source.kind 由具体生产者声明，
+          // 不存在万能类，写 plugin 会让整条日志解码失败（实测报错“requires a producer-owned
+          // source kind”），门禁因此会把夹具问题当成产品缺陷。
           source: { kind: "time-context", plugin: "@deepseek-ai/dsh-system-prompt" },
           content: [{ type: "text", text: CONTENTS[22] }],
         },
@@ -249,7 +249,7 @@ function mainEvents(): FixtureEvent[] {
         turn: 1,
         step: 1,
         message: {
-          // v4 的工具结果是「工具」角色的一级消息：toolCallId 与 isError 是消息字段。
+          // v4 的工具结果是“工具”角色的一级消息：toolCallId 与 isError 是消息字段。
           role: "tool",
           id: "fixture-tool-result-1",
           toolCallId: "call_1",
@@ -362,7 +362,7 @@ function specialEvents(texts: readonly string[], title: string): FixtureEvent[] 
  * 生成指令渲染为 `**交接指令**`（它的结构位置就是"生成正文的前一条、来源为 user、不带 rpcId"）。
  * `developer/message` 的正文保持空数组（与当期插件写入形态一致），`**交接**` 条目只呈现结构事实
  * 并用 seq 指向投递消息。非 handoff 型样本与它同处一个会话是有意的：门禁据此覆盖
- * 「进条目」与「仍由 `--events` 呈现」两条路径。
+ * “进条目”与“仍由 `--events` 呈现”两条路径。
  */
 function handoffSampleEvents(): FixtureEvent[] {
   return [

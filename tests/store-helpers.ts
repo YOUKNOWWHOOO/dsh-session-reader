@@ -130,7 +130,7 @@ export function mainEvents(): FixtureEvent[] {
         step: 1,
         message: {
           role: "system",
-          // kind 用具体生产者取值：v4 不存在 `plugin` 这一万能类，写它会让真实库解码失败——
+          // kind 用具体生产者取值：v4 不存在 `plugin` 这一万能类，写它会让真实库解码失败，
           // 本文件用假 catalog 跑，因此这类错误不会被本文件的用例发现，但换成真实库就会立刻暴露。
           source: { kind: "time-context", plugin: "fixture-plugin" },
           content: [{ type: "text", text: "System Needle prompt" }],

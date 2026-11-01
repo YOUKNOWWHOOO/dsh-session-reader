@@ -397,7 +397,7 @@ const USAGE_ENTRY = "<desktop_node> scripts/session-reader.ts";
  * 的虚拟路径内，只有桌面版 Electron-as-Node 能解析，PATH 中的系统 Node 解析不了它，
  * 写成 `node session-reader.ts` 会被读成用系统 Node 直接运行。
  *
- * 两种等价载体必须与「运行前提」登记一致，因此这里同时写明 shim 的 `DSH_DESKTOP_NODE_EXECUTABLE`
+ * 两种等价载体必须与“运行前提”登记一致，因此这里同时写明 shim 的 `DSH_DESKTOP_NODE_EXECUTABLE`
  * 前提与它转发的 `--expose-internals`；只写载体名会让只读帮助的调用方漏参数。该开关按 shim 的做法
  * 保留（实测桌面版可执行文件在默认锚点下加与不加都能完成一次 `list`，故它不被表述为硬性前提）。
  */
@@ -441,7 +441,7 @@ export function buildGeneralHelp(): string {
   }
   lines.push("");
   lines.push("所有命令都必须显式指定 --output-dir（工具不提供默认输出位置）。");
-  lines.push("默认参数组合：仅需『命令 + 目标（如有） + --output-dir』；其余选项均有默认值。");
+  lines.push("默认参数组合：仅需“命令 + 目标（如有） + --output-dir”；其余选项均有默认值。");
   lines.push("选项终止符：`--` 之后的所有 token 一律作为位置参数（用于以 `-` 开头的关键词等）。");
   lines.push("用 `<命令> --help` 查看某命令的全部选项。");
   lines.push("");
@@ -976,7 +976,7 @@ export function outputFailure(stage: "write" | "move", tempRemoved: boolean): Ru
 /**
  * 写满全部字节：`writeSync` 的返回值是本次实际写入的字节数，可能小于请求长度（部分写入在磁盘配额、
  * 信号中断、网络/虚拟文件系统等情形下都会出现），单次调用后直接 `closeSync` 会留下一个长度不足的
- * 临时文件，随后被 `renameSync` 提交成"看起来成功、内容被截断"的产物——这比显式失败危险得多。
+ * 临时文件，随后被 `renameSync` 提交成"看起来成功、内容被截断"的产物，这比显式失败危险得多。
  *
  * 因此按返回值推进偏移量直到写完；某次返回非正数表示写入无法继续推进（磁盘满、管道关闭等），
  * 立即抛错，由调用方映射为"输出写入失败"（退出 3）并删除临时文件。

@@ -1,6 +1,6 @@
-// 测试：user/message 的来源标注——md 标签行（含 `--headers` 顺序）、检索命中行、json 归属对象，
+// 测试：user/message 的来源标注，md 标签行（含 `--headers` 顺序）、检索命中行、json 归属对象，
 // 以及"非用户来源必须可辨、用户本人不标注、不适用的事件类型不标注"这三条边界。
-// 依据：SKILL.md「输出格式（md）」的标签行契约与「JSON 与 JSONL 结构」的 messages/matches 条目；
+// 依据：SKILL.md“输出格式（md）”的标签行契约与“JSON 与 JSONL 结构”的 messages/matches 条目；
 // 实现：scripts\lib\message-source.ts（唯一真值源）。
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -264,7 +264,7 @@ describe("json 归属对象", () => {
     });
     // seq 4（plugin 注入）与 seq 6（缺 source）不在 `messages` 里：默认可见性排除了它们，
     // 与 md 时间线、`search` 的 `text` 档同口径（判定见 visibility.ts）。这两类来源的归属对象
-    // 形态由下一个用例直接对 `attributeSource` 断言——归属对象的构造不依赖是否被默认排除。
+    // 形态由下一个用例直接对 `attributeSource` 断言，归属对象的构造不依赖是否被默认排除。
   });
 
   it("归属对象对不分来源种类都给出四个字段（含被默认排除的种类）", () => {

@@ -62,7 +62,7 @@ function enveloped(role: "user" | "assistant", text: string): string {
 /**
  * 投递消息的内层：助手落账文本被原样复制进摘要，外层包裹再把它的终点转义。
  *
- * 真实数据里投递消息的内层不是纯正文，而是「助手消息落账后的文本」：带着一对 `<dsh-message>`
+ * 真实数据里投递消息的内层不是纯正文，而是“助手消息落账后的文本”：带着一对 `<dsh-message>`
  * 与 `role`/`id`/`ts` 起点行；随后 `<dsh-message role="user">` 的外层包裹把它的终点转义为
  * `<\/dsh-message>`（`preset-lib/injection-boundary.mjs` 的 `wrapSegments` 对三种终点统一转义）。
  * 夹具必须复现这一形态，否则摘要正文的标记清理与助手副本抑制会在"内层是纯正文"的假形态下假通过。

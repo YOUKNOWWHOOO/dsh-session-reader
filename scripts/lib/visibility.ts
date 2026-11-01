@@ -1,4 +1,4 @@
-// 用途：默认参数下的"哪些事件进入产物"判定的唯一真值源——框架与插件自动注入的消息、框架事件、
+// 用途：默认参数下的"哪些事件进入产物"判定的唯一真值源，框架与插件自动注入的消息、框架事件、
 // 工具调度回执一律不进默认产物；只有携带真实交流内容的消息才进。
 // 主要入口：isInjectedUserMessage（注入消息判定）、isVisibleEvent（默认可见性判定）、
 // collectSubagentReplyCallIds（子代理调用回执的识别集合）、injectedEventCount（排除计数）。
@@ -9,7 +9,7 @@
 //    出现在用户本人输入里。凭标签或文案判定必然误判。
 // 2. 保留名单是"白名单"：名单外的 `source.kind` 一律排除。框架与插件的来源种类是合并可扩展的
 //    联合，黑名单必然漏掉未来新增的注入；白名单的失效方向是"新种类默认不显示"，属于安全方向。
-// 3. 本模块只判定"默认是否可见"，不决定用户显式要求查看时（`--events`）是否出现——那是渲染层
+// 3. 本模块只判定"默认是否可见"，不决定用户显式要求查看时（`--events`）是否出现，那是渲染层
 //    与检索层的开关语义，两者都必须以本模块的判定为唯一依据，禁止各自另行判别。
 import { asRecord, type EventRecord, eventType, readString } from "./decode.ts";
 
@@ -32,7 +32,7 @@ import { asRecord, type EventRecord, eventType, readString } from "./decode.ts";
  *   官方契约里这个消息的内容与当场答复的工具结果同格式（`{ answers: [{ id, selected, custom }] }`，
  *   见 dsh-user-questions 的 `answerBatchSchema`），而提问在等待中被中止、取消或超时时不会产生
  *   配对的 `tool/result`，此时本技能不产出 `**回答**` 条目，答案只在这条消息里。代价是当配对结果
- *   确实存在时，同一答案会在产物中出现两次（回答条目一次、本条消息一次）——重复是可接受的代价，
+ *   确实存在时，同一答案会在产物中出现两次（回答条目一次、本条消息一次），重复是可接受的代价，
  *   丢失不可接受。
  *
  * 其余来源一律排除，包括下列已知取值（按包列举；本列表不构成完整声明，白名单之外的取值
@@ -77,7 +77,7 @@ function userMessageSourceKind(event: EventRecord): string | null {
  *
  * @param event 已解码的逻辑事件。
  * @returns 事件不是 `user/message` 时返回 false（判定只对这类事件有意义）；
- *          来源种类不在保留名单内时返回 true，包括来源缺失与空串——缺失来源的消息无法证明
+ *          来源种类不在保留名单内时返回 true，包括来源缺失与空串，缺失来源的消息无法证明
  *          它来自用户或子代理，默认显示会把来源不明的注入呈现成用户消息。
  */
 export function isInjectedUserMessage(event: EventRecord): boolean {
@@ -125,7 +125,7 @@ export interface InjectionsExcluded {
  *
  * 默认可见性只决定"不给任何显式开关时"的呈现；框架事件（`system/message`、`permission/preset`、
  * `subagent/catalog`、`step/start` 等）的隐藏仍由既有的 `--events` 分支负责，本函数不对它们
- * 重复判定——两处都判定会让同一事件出现"两个真值源"，一旦不一致就无从解释。
+ * 重复判定，两处都判定会让同一事件出现"两个真值源"，一旦不一致就无从解释。
  *
  * @param event 已解码的逻辑事件。
  * @param replyCallIds 由 `collectSubagentReplyCallIds` 得到的回执识别集合。

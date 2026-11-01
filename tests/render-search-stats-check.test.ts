@@ -56,7 +56,7 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
     assert.equal(document.scope, "all");
     assert.equal(document.totalIsExact, true);
     assert.deepEqual(document.coverage, { scannedCount: 2, includedCount: 2, excluded: [] });
-    // 摘要与 md 同源：同一 outcome 的 md 摘要为「命中 4 处，显示 1 处」。
+    // 摘要与 md 同源：同一 outcome 的 md 摘要为“命中 4 处，显示 1 处”。
     assert.equal(rendered.summary, md.summary);
   });
 

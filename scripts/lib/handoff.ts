@@ -10,8 +10,8 @@
 //    该正文与助手生成副本逐字相同，因此由投递消息渲染为 `**上下文摘要**` 并抑制助手副本。
 //    新格式不再投递摘要正文，改为投递一条 `context-compacted` 注入通知，正文只含投影层路径与
 //    读取要求；交接正文保留在 `assistant/message`，通知由 `**交接通知**` 单独承载，不抑制助手。
-// 3. 旧投递判据：只把「来源为 `user`、正文剥离部署信封后恰好是完整 `<compacted-summary>` 信封」的
-//    第一条用户消息认作投递；先遇到普通用户消息则判为「无投递」。
+// 3. 旧投递判据：只把“来源为 `user`、正文剥离部署信封后恰好是完整 `<compacted-summary>` 信封”的
+//    第一条用户消息认作投递；先遇到普通用户消息则判为“无投递”。
 // 4. 新通知判据：交接事件之后、下一条交接事件之前的 `user/message`，来源为 `handoff`，且
 //    注入起点行的 `kind` 为 `context-compacted`。先遇到真实用户消息即停止，禁止跨轮误认。
 // 5. 结构字段缺失不是载荷异常：按空值契约显示 `-`，不让整条 `show` 失败。
@@ -134,7 +134,7 @@ function numberText(value: number | undefined): string {
  * 历史替换区间文本。
  *
  * `surfaceOp` 只登记 `replace` 一种形态（实测全部如此）；若换作其它操作或字段缺失，
- * 按空值契约显示 `-`，而不是把未知操作音译成"替换"——那会让产物把未登记的形态说成已登记的行为。
+ * 按空值契约显示 `-`，而不是把未知操作音译成"替换"，那会让产物把未登记的形态说成已登记的行为。
  */
 function replacementText(event: EventRecord): string {
   const surfaceOp = asRecord(event.surfaceOp);
@@ -160,7 +160,7 @@ function deliveryTargetOf(event: EventRecord | undefined): string {
  * 判据只取字段与登记的信封形态：从交接事件之后按事件顺序寻找第一条 `source.kind === "user"`
  * 的用户消息；把它的正文剥离部署信封（消息信封与注入信封）后是完整的 `<compacted-summary>` 信封，
  * 即为本次交接的投递消息。先遇到的其它来源（运行时上下文、技能目录、时间上下文等）跳过；先遇到
- * 一条普通用户消息（正文剥信封后不是该信封）则判为「无投递」，避免把用户自己粘贴的交接指令误认成
+ * 一条普通用户消息（正文剥信封后不是该信封）则判为“无投递”，避免把用户自己粘贴的交接指令误认成
  * 插件投递。
  *
  * @param events 会话的已解码逻辑事件。
@@ -183,7 +183,7 @@ function deliveryOf(events: readonly EventRecord[], handoffIndex: number): Hando
     // 注入类消息可能排在同一步的队列里；它们不是投递，继续向前找。
     if (kind !== "user") continue;
     // 部署侧给真实用户消息套了 `<dsh-message>`，投递消息的正文因此不再以 `<compacted-summary>` 开头。
-    // 必须先剥掉这一层再判摘要信封，否则交接成功会被误判成「无投递」。
+    // 必须先剥掉这一层再判摘要信封，否则交接成功会被误判成“无投递”。
     const text = messageTextFromBlocks(data.content);
     const inner = compactedSummaryBody(text);
     if (inner === null) return null;
@@ -256,7 +256,7 @@ function generationOf(
  *   生成是多步骤过程（模型在生成阶段要读取真值源、改真值源、运行生成器），最终回复与维护指令之间
  *   隔着大量工具往返与后续步骤，**因此不能只看前一条事件**。判据改为从生成正文向前扫描到上一个
  *   交接事件为止，取最近的一条维护指令注入；注入标记是该格式自带的结构锚点，不依赖正文文案。
- * - 旧格式：维护指令没有注入标记，只能按结构位置认——生成正文的前一条事件是 `source.kind === "user"`
+ * - 旧格式：维护指令没有注入标记，只能按结构位置认，生成正文的前一条事件是 `source.kind === "user"`
  *   且不带 `rpcId` 的用户消息。带 `rpcId` 的是客户端提交的真实用户输入，不得改标。
  *
  * 正文先剥离部署信封（注入信封与消息信封），再由渲染层按 `--truncate` 处理。
@@ -323,7 +323,7 @@ function noticeOf(events: readonly EventRecord[], handoffIndex: number): Handoff
  * 从一批事件抽出交接条目、投递映射、生成指令与应抑制的助手副本。
  *
  * 单次遍历即可：投递判定需要向前扫描，但每个交接事件只扫描到下一交接或第一条普通用户消息，
- * 交接本身是低频事件，扫描成本可忽略。抑制集合只在「助手正文与投递摘要逐字相同」时加入，
+ * 交接本身是低频事件，扫描成本可忽略。抑制集合只在“助手正文与投递摘要逐字相同”时加入，
  * 正文不一致时保留助手副本，避免隐藏真实内容。
  *
  * @param events 一个会话（或块）的全部已解码逻辑事件。

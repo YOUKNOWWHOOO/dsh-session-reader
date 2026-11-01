@@ -1,4 +1,4 @@
-// 用途：`user/message` 事件的"来源归属"——md 标注文字与 json 归属对象的唯一真值源。
+// 用途：`user/message` 事件的"来源归属"，md 标注文字与 json 归属对象的唯一真值源。
 // 主要入口：attributeSource（原始 source 值 → 归属对象）、describeSource（归属对象 → md 标注片段）。
 // 关键依赖：render-core.ts 的 inlineValue（行内载体）。
 // 设计约束：
@@ -6,14 +6,14 @@
 //    禁止任何渲染器自行判别来源。理由：同一条消息在时间线、检索命中行与 json 中必须给出同一答案。
 // 2. `kind` 由官方 MessageSourceMap 定义，且该联合是"合并可扩展"的（`@deepseek-ai/dsh-llm` 的 message.d.ts：
 //    "Merge-extensible sum type — plugins add their own kinds"）。因此未知 kind 必须原样呈现，禁止丢弃，
-//    也禁止归入最接近的已知类别——那会把"未知"伪装成"已知"。
+//    也禁止归入最接近的已知类别，那会把"未知"伪装成"已知"。
 // 3. 骨架里只有固定词"来源"与词表内的 kind 裸写；词表外的 kind 与一切取自日志的取值（plugin 名、
 //    会话 id 等）一律经行内载体承载（inlineValue）。原因：日志的字段值可能含反引号或换行，
 //    裸写会把标签行拆成两行并让裸文本进入骨架（违反 md 输出契约 R2 载体隔离），也会被
 //    tests\matrix-assert.ts 的"数据标记必须处于代码载体"断言拦下。产品里其它会话 id（`- ID：`、
 //    `- 父会话：`、列表行、命中行）本来就经载体承载，这里的处理与之同惯例。
 // 4. 不在此处登记数据统计：`user/message` 的 `source` 可能缺失、可能不是对象，`kind` 也可能为空串、
-//    词表内的取值或词表外的取值（来源种类由官方包与部署插件共同扩展）。三种情况都有确定处理——
+//    词表内的取值或词表外的取值（来源种类由官方包与部署插件共同扩展）。三种情况都有确定处理，
 //    缺失记 null、空串按"无该字段"处理、词表外取值入行内载体原样呈现，因此不需要、也不允许用
 //    一份"真实数据里出现过哪些取值"的清单来代替判据。
 //    `来源 未标注` 分支是为违反 schema 的日志保留的显式标注，不是为不可能发生的场景加兜底逻辑。
@@ -41,7 +41,7 @@ export interface SourceAttribution {
  * `skill-catalog`、`agent-instructions`、`webhook` 由对应插件包增补。`coordinator`、`subagent-report`
  * 不出现在任何合并声明中，只出现在官方迁移适配器与持久化 worker 的取值白名单里
  * （`dsh-session-format-v0-to-v1`、`dsh-session-format-v2-to-v3`、`dsh-session-persistence-jsonl`），
- * 但它们是官方承认的合法取值，故一并视为已知。该词表**不是**对官方词表的完整声明——联合是合并
+ * 但它们是官方承认的合法取值，故一并视为已知。该词表**不是**对官方词表的完整声明，联合是合并
  * 可扩展的，任何未列入的取值都会走载体分支原样呈现，这正是设计意图。
  */
 const KNOWN_KINDS: readonly string[] = [

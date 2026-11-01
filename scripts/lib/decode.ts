@@ -257,9 +257,9 @@ export function readString(record: Record<string, unknown>, key: string): string
 /**
  * 读取非空字符串字段；缺失、类型不符或空串一律返回 undefined。
  *
- * 存在的理由是消除「取值可能 undefined 却直接当字符串用」这一类静默缺陷：本技能的工具结果
+ * 存在的理由是消除“取值可能 undefined 却直接当字符串用”这一类静默缺陷：本技能的工具结果
  * 抽取曾因对 `readString(...)` 的结果直接取 `.length` 而在缺字段的输入上抛 TypeError。
- * 调用方用「返回值是否为 undefined」判分支，就同时表达了「字段存在」与「字段非空」。
+ * 调用方用“返回值是否为 undefined”判分支，就同时表达了“字段存在”与“字段非空”。
  */
 function readNonEmptyString(record: Record<string, unknown>, key: string): string | undefined {
   const value = readString(record, key);
@@ -429,7 +429,7 @@ export function toolResultText(event: EventRecord): string {
  * 两个字段都要看，这不是"双保险"而是两种实际落账形态：本机真实日志里既有只带 `data.error` 的结果，
  * 也有只带 `message.isError: true` 的结果（编辑工具因 `old_string` 与 `new_string` 相同而失败、
  * 运行时拒绝某次调用等，都只有后者）。只认 `data.error` 会把后者渲染成普通结果、在 json 里写成
- * `isError: false`，而它的正文往往正是 `Error: …`——调用方据产物判断"这次调用是否成功"时会读反。
+ * `isError: false`，而它的正文往往正是 `Error: …`，调用方据产物判断"这次调用是否成功"时会读反。
  *
  * 判据只此一处：md 标签（`**工具结果**（错误）`）、json 的 `isError` 字段与问答的错误态处理
  * （错误态结果不产出 `**回答**` 条目）都调用本函数。三处各写一份必然漂移，而"呈现"与"检索"

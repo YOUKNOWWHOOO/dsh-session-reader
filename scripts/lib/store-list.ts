@@ -3,7 +3,7 @@
 // 主要入口：collectSessionViews（list/search/stats 共用的视图收集与过滤核心）、buildList（list 命令数据）。
 // 关键依赖：store-discovery.ts（发现、覆盖声明、header 字段判定）、store-metadata.ts（元数据与最近活动
 // 时间）、store-types.ts。
-// 设计约束：单个会话 header 不可读时不得让整个聚合命令失败——那会让一份损坏的日志永久阻断对其余会话
+// 设计约束：单个会话 header 不可读时不得让整个聚合命令失败，那会让一份损坏的日志永久阻断对其余会话
 // 的浏览与检索；跳过者写入 coverage 由渲染层逐条列出，范围过滤后的结果集是“显式的子集”，不是“静默的
 // 漏读”；覆盖声明描述“本次检查了哪些会话”，与 --limit 无关。数据契约见 store-types.ts 文件头。
 
@@ -154,7 +154,7 @@ export function buildList(
       // 覆盖声明描述"本次检查了哪些会话"，与 `--limit` 无关（`--limit` 只影响产物列出多少条，
       // 由 `matchedCount` 与产物行数表达）。把 includedCount 绑到"列出条数"会让三个数不再自洽。
       // 注意：`scanned = included + excluded` 由本函数所在层构造（见 store-discovery.ts 的
-      // coverageOf），恒成立但不具备核对能力——核对覆盖范围只能依据逐条列出的排除项。
+      // coverageOf），恒成立但不具备核对能力，核对覆盖范围只能依据逐条列出的排除项。
       coverage: selection.data.coverage,
     },
   };

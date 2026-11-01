@@ -120,7 +120,7 @@ function collectSearchUnits(
   const seq = eventSeq(event);
   // 可见性与 show 默认参数同源：注入消息与调度回执在 `text`/`tools` 两档都不进检索单元，
   // 否则"默认检索不到"会与"默认提取里有"互相矛盾，调用方会把被排除读成不存在。
-  // `all` 是穷尽档，不做过滤——它同时是取回被排除内容的唯一检索入口。
+  // `all` 是穷尽档，不做过滤，它同时是取回被排除内容的唯一检索入口。
   if (scope !== "all" && !isVisibleEvent(event, replyCallIds)) return [];
   // 已由 `上下文摘要` 承载正文的助手副本：`text`/`tools` 档不建字段单元（与 show 默认视图同口径），
   // `all` 档仍保留整条事件载荷单元，因此逐字原文始终可检索。
@@ -231,7 +231,7 @@ function collectSearchUnits(
       if (text.length > 0) units.push({ label: "agent/inbox", text });
     }
     // 穷尽兜底：把整条事件记录的完整 JSON 载荷作为检索单元。
-    // 这是"检索 0 命中 ⇒ 不存在"能够成立的前提——上面按类型枚举的字段必然有遗漏
+    // 这是"检索 0 命中 ⇒ 不存在"能够成立的前提，上面按类型枚举的字段必然有遗漏
     // （实测遗漏的类型包括 assistant/attempt 与 llm/retry，其 data.failure 里内嵌了上游错误体），
     // 只有覆盖整条记录才能保证任意事件的任意字符串都可被检索到。label 取事件类型本身，便于定位。
     const raw = eventPayloadJson(event);
@@ -247,7 +247,7 @@ function collectSearchUnits(
  * 事件记录的完整 JSON 序列化载荷。
  *
  * 序列化失败不做兜底、直接抛出：`scope=all` 的穷尽性（"0 命中 ⇒ 不存在"）正是建立在"每个事件的
- * 完整记录都成为一个检索单元"之上，静默返回空串会让该承诺在没有任何信号的情况下失效——调用方
+ * 完整记录都成为一个检索单元"之上，静默返回空串会让该承诺在没有任何信号的情况下失效，调用方
  * 会把"检索不到"读成"不存在"。这与 `render-show-md.ts` 的 `eventDataJson` 是同一选择（异常显性
  * 暴露，由 CLI 顶层映射为 `内部错误`）；官方库解码出的事件都是纯 JSON 值，异常在当前数据下不可达。
  */
@@ -300,7 +300,7 @@ function foldForSearch(text: string): FoldedSearchText {
  *    因此"命中总数"不是显示条数的副产品（`totalIsExact` 恒为 true，证据见该字段注释）。
  * 2. 单个会话解码失败不会让整次检索失败，而是记入 `coverage.excluded`（原因="解码失败"）并继续。
  *    问答载荷结构不符的会话同样逐条列入排除项（原因=固定文本 `问答载荷结构不符合预期`）。两种情况
- *    都继续而不是整体失败，这是"未被列出者即为已覆盖"这一推断成立的前提——静默跳过或整体失败
+ *    都继续而不是整体失败，这是"未被列出者即为已覆盖"这一推断成立的前提，静默跳过或整体失败
  *    都会让调用方无法判断"0 命中"到底是"不存在"还是"没读到"。
  * 3. `distribution` 逐会话给出命中数（含 0 命中的纳入会话），使调用方能把自己会话与子代理会话的
  *    命中从结论中剔除；`excludeSessionTarget` 提供同一件事的自动化形式。
@@ -377,7 +377,7 @@ export function runSearch(
     }
     scan = accumulateScanSummary(scan, file.data.metrics);
     // 问答载荷结构不符：该会话不能进入本次结论（它的可读文本没被算出来，检索覆盖面因此不完整），
-    // 但**不中断整条检索**——一份有问题的载荷不该让调用方无法检索其余会话。它与解码失败一样逐条
+    // 但**不中断整条检索**，一份有问题的载荷不该让调用方无法检索其余会话。它与解码失败一样逐条
     // 列入 `coverage.excluded` 并排除出 `M`；日志本身解码成功，因此扫描摘要仍照常计入它。
     const askAnalysis = analyzeAskUserEvents(file.data.decoded.events);
     if (!askAnalysis.success) {

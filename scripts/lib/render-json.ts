@@ -1,4 +1,4 @@
-// 用途：JSON/JSONL 渲染——list/show/search/stats/check 的 json 形态与 show 的 jsonl 形态，
+// 用途：JSON/JSONL 渲染，list/show/search/stats/check 的 json 形态与 show 的 jsonl 形态，
 // 含子代理的父子嵌套递归（nodeToJson）与逐事件穷尽导出的逻辑 header。
 // 主要入口：renderListJson / renderShowJson / renderShowJsonl / renderSearchJson / renderStatsJson /
 // renderCheckJson。
@@ -99,7 +99,7 @@ export function renderListJson(outcome: ListOutcome): RenderedOutput {
  * 框架与插件注入的消息、子代理调度回执。排除而非降级呈现：调用方要完整消息历史时用
  * `--format jsonl`（逐事件穷尽），它是唯一不被可见性过滤的导出形态。
  *
- * 注意 `meta` 的统计口径不受影响——`userMessages` 等计数描述整会话，不是本数组的条数。
+ * 注意 `meta` 的统计口径不受影响，`userMessages` 等计数描述整会话，不是本数组的条数。
  */
 function buildMessageEntries(
   file: DecodedSessionFile,

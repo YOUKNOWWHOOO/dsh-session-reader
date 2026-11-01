@@ -3,17 +3,17 @@
 // 主要入口：analyzeAskUserEvents（md 时间线条目、默认档检索单元与 `--probe` 计数共用的唯一产出）。
 // 关键依赖：decode.ts（事件读取基元 asRecord/readString/textFromBlocks/eventType/eventSeq）、
 // render-core.ts（空值显示文案）、paths.ts（Result）。
-// 设计约束：本模块是这类内容在全技能范围内的单一真值源——md 渲染与检索单元都消费同一份产出，
+// 设计约束：本模块是这类内容在全技能范围内的单一真值源，md 渲染与检索单元都消费同一份产出，
 // 禁止任一方另写一份抽取（两处各写一份必然漂移，"呈现"与"检索"就会给出不同的答案）。
 // 载荷结构与登记不符时返回 Result 错误，由调用方按契约显式失败：`show` 整体失败（退出 3、
 // stderr `错误: 数据不可读`、不产出文件），`search` 把该会话逐条列入覆盖声明的排除项并继续。
-// 禁止任何降级形态：不做原样兜底、不做猜测补齐、不静默丢弃——把不可解析的载荷塞进载体或悄悄少算
+// 禁止任何降级形态：不做原样兜底、不做猜测补齐、不静默丢弃，把不可解析的载荷塞进载体或悄悄少算
 // 一条，都会让产物看起来正常却与日志事实不符。
 // 错误态结果（`isError`/`data.error`，即提问被中止或取消）不在此列：它是正常产品形态，
 // 按"没有回答"处理而不是载荷异常，判据见 decode.ts 的 `toolResultIsError`。
 // 回答结果的正文可能被部署侧的边界插件包上 `<dsh-result …>…</dsh-result>` 信封，解析前必须先剥离
 // 一个完整信封（见 deployment-text.ts 的严格版）：信封是传输层标记，不是载荷的一部分。
-// 结构与文案逐字依据 doc\开发规范.md 的「提问与回答契约」一节。
+// 结构与文案逐字依据 doc\开发规范.md 的“提问与回答契约”一节。
 
 import {
   asRecord,
@@ -129,7 +129,7 @@ function isQuestionEvent(event: EventRecord): boolean {
  * 提问事件的配对标识（`data.callId`）。
  *
  * 缺失、非字符串或空串时返回 null：此时只是"配对不上"（提问照常呈现，回答数为 0），
- * 不是结构不符——契约把结构不符限定在载荷内容上，没有把配对标识登记为结构的一部分。
+ * 不是结构不符，契约把结构不符限定在载荷内容上，没有把配对标识登记为结构的一部分。
  */
 function questionCallIdOf(event: EventRecord): string | null {
   const value = readString(asRecord(event.data) ?? {}, "callId");
@@ -244,7 +244,7 @@ function answerTextOf(event: EventRecord): Result<string, string> {
   const message = asRecord(asRecord(event.data)?.message);
   if (message === undefined) return mismatch(where, "message 不是对象");
   // 结果文本的抽取复用工具结果的统一入口（兼容平铺与嵌套两种内容形态）：
-  // 只认一种形态会让抽取静默返回空串，而空串在这里会被判成"结构不符"——错误位置离根因很远。
+  // 只认一种形态会让抽取静默返回空串，而空串在这里会被判成"结构不符"，错误位置离根因很远。
   const contentText = textFromBlocks(message.content);
   if (contentText.length === 0) return mismatch(where, "content 中没有非空文本块");
   // 边界信封与正文一起落账：先剥一层再解析，否则起点行让 JSON 解析必然失败。

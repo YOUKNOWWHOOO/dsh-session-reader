@@ -131,7 +131,7 @@ describe("defaultLibRoot 的桌面版安装锚点定位", () => {
   it("唯一锚点不读 npm 缓存的 npx 安装树：该树再完整也返回 undefined", () => {
     const sandbox = mkdtempSync(join(tmpdir(), "session-reader-paths-"));
     try {
-      // 造出一棵「旧探测会命中」的 npx 安装树，并给出会命中它的 npm 缓存环境变量。
+      // 造出一棵“旧探测会命中”的 npx 安装树，并给出会命中它的 npm 缓存环境变量。
       // 新锚点是唯一锚点：只认桌面版安装，这棵树再完整也不参与。
       const npxScope = join(sandbox, "cache", "_npx", "aaaa1111", "node_modules", "@deepseek-ai");
       for (const pkg of ["dsh", "dsh-session-format-catalog"]) {

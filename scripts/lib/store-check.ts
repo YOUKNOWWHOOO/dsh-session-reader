@@ -162,7 +162,7 @@ export function runCheck(
   }
   const sessions = refs.map((ref) => checkOneSession(ref, ctx.catalog));
   const anomalyCount = sessions.reduce((sum, session) => sum + session.anomalies.length, 0);
-  // check 走不读 header 的枚举，因此没有"因 header 不可读而被排除的会话"——它们恰恰是本命令的
+  // check 走不读 header 的枚举，因此没有"因 header 不可读而被排除的会话"，它们恰恰是本命令的
   // 诊断对象，全部纳入。覆盖声明据此恒为"扫描数 = 纳入数、无排除"。
   return {
     success: true,

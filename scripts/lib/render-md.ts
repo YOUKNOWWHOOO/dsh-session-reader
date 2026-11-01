@@ -1,4 +1,4 @@
-// 用途：聚合命令的 Markdown 渲染——list 的精简表格/`--full` 记录块、search 的命中列表与口径说明、
+// 用途：聚合命令的 Markdown 渲染，list 的精简表格/`--full` 记录块、search 的命中列表与口径说明、
 // stats 的全局/单会话 KV、check 的逐会话诊断，以及各命令共用的 md 片段（覆盖声明、扫描摘要、
 // 每会话命中分布）。show 的 md 单独在 render-show-md.ts（它有独立的可见性/范围/截断管线），但复用
 // 这里的覆盖声明片段。
@@ -49,7 +49,7 @@ const DISTRIBUTION_TITLE_LIMIT = 40;
  * 契约：`扫描会话 N 个；纳入 M 个；排除 K 个`，随后逐条 `排除会话：<完整 id>（<原因>）`，
  * 再逐条 `归属未知：<id>（<原因>）`（仅 `show` 可能有内容）。
  * `N` 在实现里就是由 `M + K` 构造的（见 store-discovery.ts 的 coverageOf 及各命令的覆盖计算），
- * 因此恒等式必然成立，**它不是独立的核对手段**——核对覆盖范围只能依据逐条列出的排除项；
+ * 因此恒等式必然成立，**它不是独立的核对手段**，核对覆盖范围只能依据逐条列出的排除项；
  * 禁止把 `N = M + K` 表述为"据此发现漏读"（见 doc\开发规范.md 的覆盖声明契约）。排除项因此
  * 必须逐条列出，禁止合并成计数。归属未知项不计入 `N`/`M`/`K`：连"是否属于本次作用域"都无法
  * 判定，把它算进任何一项都会让这三个数失去含义。
@@ -181,10 +181,10 @@ export function renderListMd(
   }
   for (const entry of outcome.entries) {
     if (entry.metadata.reasons.length > 0) {
-      // 文案用「不完整」而不是「不可用」：触发条件是 `reasons.length > 0`，它既覆盖"整体不可用"，
+      // 文案用“不完整”而不是“不可用”：触发条件是 `reasons.length > 0`，它既覆盖"整体不可用"，
       // 也覆盖"可读但缺字段"（`--full` 的 `**元数据**` 字段把这两种状态分别写作 `不可用` 与
-      // `部分缺失`）。若这里写「不可用」，同一会话会在同一产物里被同时描述为「部分缺失」与
-      // 「不可用」，调用方无法据以判断可用程度。「不完整」对两种状态都成立。
+      // `部分缺失`）。若这里写“不可用”，同一会话会在同一产物里被同时描述为“部分缺失”与
+      // “不可用”，调用方无法据以判断可用程度。“不完整”对两种状态都成立。
       sections.push(
         `元数据不完整：${inlineValue(entry.id)}（${entry.metadata.reasons
           .map((reason) => inlineValue(reason))
@@ -205,7 +205,7 @@ export function renderListMd(
 const SCOPE_COVERAGE_TEXT: Record<SearchOutcome["scope"], string> = {
   // 三档都必须把"已排除什么"写进描述：`text` 与 `show` 默认参数同口径（框架注入与调度回执已排除），
   // `tools` 另排除调度回执，只有 `all` 是穷尽档。描述与检索单元必须一致，否则调用方会按错误的
-  // 覆盖面读 0 命中——把"被默认排除"读成"不存在"。
+  // 覆盖面读 0 命中，把"被默认排除"读成"不存在"。
   //
   // `text` 档的覆盖面必须逐项列出四类合成条目的单元名：它们与用户/助手正文、提问/回答一样建检索
   // 单元，只写"用户/助手正文与提问/回答"会让调用方以为摘要、交接通知、交接指令与子代理任务
@@ -315,7 +315,7 @@ export function renderStatsMd(outcome: StatsOutcome): RenderedOutput {
     ].join("\n"),
   );
   for (const unavailable of outcome.unavailable) {
-    // 该列表的判据是 `reasons.length > 0`（含"可读但缺字段"），因此文案与 list 页脚同用「不完整」。
+    // 该列表的判据是 `reasons.length > 0`（含"可读但缺字段"），因此文案与 list 页脚同用“不完整”。
     sections.push(
       `元数据不完整：${inlineValue(unavailable.id)}（${unavailable.reasons
         .map((reason) => inlineValue(reason))

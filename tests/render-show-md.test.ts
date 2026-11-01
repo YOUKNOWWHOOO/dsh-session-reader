@@ -333,7 +333,7 @@ describe("renderShowMd 的工具结果错误态", () => {
   it("只写 message.isError 的结果必须标为（错误）", () => {
     // 真实日志里普通工具失败只写 `message.isError: true`、没有 `data.error`（见 fixtures.ts 的
     // `toolResultIsErrorOnlyEvent`）。只认 `data.error` 的实现会把这类结果渲染成普通工具结果，
-    // 而它的正文正是 `Error: …`——调用方据标签判断"这次调用是否成功"时会读反。
+    // 而它的正文正是 `Error: …`，调用方据标签判断"这次调用是否成功"时会读反。
     const events: Record<string, unknown>[] = [
       { type: "turn/start", seq: 0, time: 10, data: { turn: 1 } },
       toolResultIsErrorOnlyEvent(
@@ -355,7 +355,7 @@ describe("renderShowMd 的工具结果错误态", () => {
   });
 
   it("判据只看字段：信封起点写 is-error 而 message.isError 为 false 时不算错误态", () => {
-    // 写入侧的信封属性是给模型看的标注，不是判据。若实现改为读标记文本，这条会失败——
+    // 写入侧的信封属性是给模型看的标注，不是判据。若实现改为读标记文本，这条会失败，
     // 那正是"按文本匹配判定语义"的退化形态。
     const events: Record<string, unknown>[] = [
       { type: "turn/start", seq: 0, time: 10, data: { turn: 1 } },

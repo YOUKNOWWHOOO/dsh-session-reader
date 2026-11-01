@@ -1,7 +1,7 @@
 // 多帧 zstd 物理层：结构性帧扫描（官方 scanZstdFrames 算法）＋逐帧解压＋行拆分＋撕裂尾处理。
 // 官方算法来源：dsh-session-persistence-jsonl/lib/index.js 的 scanZstdFrames（约 1298-1361 行）。
 // 设计约束：只做结构性判定（解析帧头/块头，不扫描魔数）；完整帧才参与解压；
-// tornStart 之后的内容一律丢弃（v1 不做前缀抢救——官方 decompressZstdPrefix 恢复路径留待后续版本）。
+// tornStart 之后的内容一律丢弃（v1 不做前缀抢救，官方 decompressZstdPrefix 恢复路径留待后续版本）。
 import { zstdDecompressSync } from "node:zlib";
 
 /** 结构性扫描错误：帧结构损坏（魔数无效、保留位、保留块类型等）。 */

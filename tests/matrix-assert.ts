@@ -1,4 +1,4 @@
-// 用途：全组合 lint 门禁的产物断言库——md 结构白名单（标题词表/围栏闭合/末尾换行/空行纪律）、
+// 用途：全组合 lint 门禁的产物断言库，md 结构白名单（标题词表/围栏闭合/末尾换行/空行纪律）、
 //       敌意标记载体覆盖、json/jsonl 结构回归，以及 markdownlint JS 入口解析与分批调用判定。
 // 主要入口：checkMarkdownStructure、checkJsonStructure、checkJsonlStructure、resolveMarkdownlintJs、runLint。
 // 关键依赖：node:child_process、node:fs、node:module、node:path；./matrix-cases.ts 的 JsonShape 仅作类型导入。
@@ -22,7 +22,7 @@ const HEADING_WHITELIST =
  * 紧随其后的括号标注表达），因此这里登记的是 15 个标签名，覆盖全部 16 个形态。
  *
  * 判定方式：行首起 `**` 的行的第一个加粗片段就是标签，必须落在词表内。参与这条判定的行只有
- * 时间线标签行——正文一律经载体承载（围栏内的行不参与、行内载体的行不以 `**` 开头），
+ * 时间线标签行，正文一律经载体承载（围栏内的行不参与、行内载体的行不以 `**` 开头），
  * `list --full` 的续行以两空格缩进，因此不会误判。
  *
  * 存在理由：标签是"这条条目是什么"的唯一信号，出现词表外的标签（例如某次改动新造了一个标签
@@ -417,7 +417,7 @@ function checkDistribution(caseId: string, value: unknown, problems: string[]): 
  *
  * 这里同时检查 `scannedCount === includedCount + excluded.length`，但要注意它**只是字段自洽性**
  * 检查：实现就是按 `N = M + K` 构造这三个数（见 store-discovery.ts 的 coverageOf 与各命令的
- * 覆盖计算），因此该等式恒成立、不能用来发现漏读。核对覆盖范围只能依据逐条列出的排除项——
+ * 覆盖计算），因此该等式恒成立、不能用来发现漏读。核对覆盖范围只能依据逐条列出的排除项，
  * 这正是断言 `excluded` 每项都带 id 与 reason 的原因。
  */
 function checkCoverage(caseId: string, value: unknown, problems: string[]): void {
