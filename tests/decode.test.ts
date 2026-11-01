@@ -359,6 +359,32 @@ describe("messageTextFromBlocks（对话正文的统一出口）", () => {
     };
     assert.equal(userMessageText(event), "用户输入");
   });
+
+  const INNER_OPEN = '<dsh-message role="assistant" id="deadbeef" ts="2026-10-29T22:59:56+08:00">';
+  const INNER_CLOSE = "<\\/dsh-message>";
+
+  it("剥完外层注入信封后再清理内层引用的消息标记行对", () => {
+    // subagent-settled 一类注入消息整段引用了子代理的收尾发言：外层是注入信封，内层是带转义终点的
+    // 消息标记行。两层在同一个出口处理，正文只留引用内容本身。
+    const injection = '<dsh-injection kind="subagent-settled" src="child" id="1a2b3c4d">';
+    const body = [
+      injection,
+      "子代理最终回复",
+      INNER_OPEN,
+      "引用正文",
+      INNER_CLOSE,
+      "</dsh-injection>",
+    ].join("\n");
+    assert.equal(messageTextFromBlocks([{ type: "text", text: body }]), "子代理最终回复\n引用正文");
+  });
+
+  it("没有外层信封时内层标记行对同样被清理", () => {
+    const body = ["前文", INNER_OPEN, "引用正文", INNER_CLOSE, "后文"].join("\n");
+    assert.equal(
+      messageTextFromBlocks([{ type: "text", text: body }]),
+      ["前文", "引用正文", "后文"].join("\n"),
+    );
+  });
 });
 
 describe("审查修订补充：加载/分类/抛出物边界", () => {
@@ -497,6 +523,28 @@ describe("审查修订补充：加载/分类/抛出物边界", () => {
         },
       }),
       "",
+    );
+    // 工具结果正文里内层引用的消息标记行对同样被清理（与对话正文同一出口规则）。
+    assert.equal(
+      toolResultText({
+        data: {
+          message: {
+            content: [
+              {
+                type: "text",
+                text: [
+                  "结果首行",
+                  '<dsh-message role="assistant" id="deadbeef" ts="2026-10-29T22:59:56+08:00">',
+                  "引用正文",
+                  "<\\/dsh-message>",
+                  "结果末行",
+                ].join("\n"),
+              },
+            ],
+          },
+        },
+      }),
+      ["结果首行", "引用正文", "结果末行"].join("\n"),
     );
   });
 });

@@ -9,6 +9,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { asArray, asRecord, readBoolean, readNumber, readString } from "./decode.ts";
+import { normalizeSessionTitle } from "./deployment-text.ts";
 import type {
   FieldValue,
   MetadataView,
@@ -133,10 +134,13 @@ export function buildMetadata(cache: ProjCacheState): MetadataView {
   };
   const titleRow = readProjCacheRow(cache, "title");
   collect(!titleRow.ok, titleRow.reason);
+  // 标题必须过与 `findSessionTitle` 同一份归一化：部署标记残片按"没有标题"呈现，但它不是元数据缺失，
+  // 因此这里保持 `unavailable: false`，不产生"元数据不完整"声明。
   const title: FieldValue<string> = titleRow.ok
-    ? typeof titleRow.value === "string"
-      ? { value: titleRow.value, unavailable: false }
-      : { value: null, unavailable: false }
+    ? {
+        value: typeof titleRow.value === "string" ? normalizeSessionTitle(titleRow.value) : null,
+        unavailable: false,
+      }
     : { value: null, unavailable: true };
   const listRow = readProjCacheRow(cache, "sessionListMetadata");
   collect(!listRow.ok, listRow.reason);

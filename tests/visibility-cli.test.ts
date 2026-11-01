@@ -486,3 +486,108 @@ describe("默认参数的注入过滤", () => {
     assert.equal(document.turns[0]?.prompt?.includes("OUTLINE-SNAPSHOT-MARK"), false);
   });
 });
+
+describe("内层引用的消息标记（subagent-settled 形态）", () => {
+  const NESTED_ID = "session-visibility-nested-03";
+  const NESTED_HOME = join(TEMP_ROOT, "nested", "nested-dsh");
+  const INNER_OPEN = '<dsh-message role="assistant" id="deadbeef" ts="2026-10-29T22:59:56+08:00">';
+  const INNER_CLOSE = "<\\/dsh-message>";
+  const SETTLED_BODY = "子代理最终回复 SETTLED-BODY-MARK";
+  const QUOTED = "引用正文 QUOTED-MARK";
+
+  /** 一条注入消息整段引用子代理收尾发言：外层注入信封，内层带转义终点的消息标记行对。 */
+  function nestedEvents(): FixtureEvent[] {
+    const text = [
+      '<dsh-injection kind="subagent-settled" src="child" id="1a2b3c4d" ts="2026-10-29T22:59:57+08:00">',
+      SETTLED_BODY,
+      INNER_OPEN,
+      QUOTED,
+      INNER_CLOSE,
+      "</dsh-injection>",
+    ].join("\n");
+    return [
+      ev("turn/start", 0, 10, { turn: 1 }),
+      ev(
+        "user/message",
+        1,
+        11,
+        {
+          role: "user",
+          content: [{ type: "text", text }],
+          source: { kind: "subagent-settled", senderSessionId: CHILD_ID },
+        },
+        { surfaceOp: "append" },
+      ),
+      ev("turn/end", 2, 12, { turn: 1 }),
+    ];
+  }
+
+  function readOutput(stdout: string): string {
+    const lines = stdout.split("\n").filter((line) => line.length > 0);
+    const pathMatch = /^完整输出已保存到: (.+)$/u.exec(lines[0]);
+    assert.notEqual(pathMatch, null, `stdout 首行不符合契约: ${lines[0]}`);
+    if (pathMatch === null) throw new Error("unreachable");
+    return readFileSync(pathMatch[1], "utf8");
+  }
+
+  before(() => {
+    writeFixtureHome(NESTED_HOME, {
+      sessions: [
+        {
+          id: NESTED_ID,
+          projectDir: PROJECT_DIR,
+          createdAt: 1000,
+          events: nestedEvents(),
+          title: "内层标记夹具",
+          turns: 1,
+          steps: 0,
+          lastPromptAt: 2000,
+        },
+      ],
+    });
+  });
+
+  function args(): string[] {
+    return [
+      "--dsh-home",
+      NESTED_HOME,
+      "--lib-root",
+      REQUIRED_LIB_ROOT,
+      "--output-dir",
+      join(TEMP_ROOT, "nested", "out"),
+    ];
+  }
+
+  it("show 的 md 不含内层标记行，引用正文与收尾回复都在", () => {
+    const result = runCli(["show", NESTED_ID, ...args()]);
+    assert.equal(result.status, 0, `show 失败: ${result.stderr}`);
+    const content = readOutput(result.stdout);
+    assert.equal(content.includes(SETTLED_BODY), true);
+    assert.equal(content.includes(QUOTED), true);
+    assert.equal(content.includes("<dsh-message"), false);
+    assert.equal(content.includes("<\\/dsh-message>"), false);
+  });
+
+  it("show --format json 的 text 字段同样清理", () => {
+    const result = runCli(["show", NESTED_ID, ...args(), "--format", "json"]);
+    assert.equal(result.status, 0, `show json 失败: ${result.stderr}`);
+    const document = JSON.parse(readOutput(result.stdout)) as {
+      messages: Array<{ text: string }>;
+    };
+    const texts = document.messages.map((entry) => entry.text).join("\n");
+    assert.equal(texts.includes(SETTLED_BODY), true);
+    assert.equal(texts.includes(QUOTED), true);
+    assert.equal(texts.includes("<dsh-message"), false);
+    assert.equal(texts.includes("<\\/dsh-message>"), false);
+  });
+
+  it("search 的 text 档产物不含内层标记行", () => {
+    const result = runCli(["search", "QUOTED-MARK", ...args()]);
+    assert.equal(result.status, 0, `search 失败: ${result.stderr}`);
+    const content = readOutput(result.stdout);
+    assert.equal(content.includes("QUOTED-MARK"), true);
+    assert.equal(content.includes("命中总数：1"), true);
+    assert.equal(content.includes("<dsh-message"), false);
+    assert.equal(content.includes("<\\/dsh-message>"), false);
+  });
+});

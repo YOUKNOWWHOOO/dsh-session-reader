@@ -6,9 +6,11 @@ import {
   cleanCompactedSummary,
   compactedSummaryBody,
   leadingInjectionKind,
+  normalizeSessionTitle,
   stripInjectionEnvelopes,
   stripMessageEnvelope,
   stripNestedMessageEnvelope,
+  stripNestedMessageMarkers,
   stripResultEnvelope,
   stripResultEnvelopeLenient,
 } from "../scripts/lib/deployment-text.ts";
@@ -258,5 +260,99 @@ describe("leadingInjectionKind（合成消息判定的结构读取）", () => {
       leadingInjectionKind(`${OPEN}\n正文 <dsh-injection kind="other" src="x"> 之后的文字`),
       "context-compacted",
     );
+  });
+});
+
+describe("stripNestedMessageMarkers（内层引用的消息标记行对）", () => {
+  const OPEN_LINE = ASSISTANT_OPEN;
+
+  it("成对时只删这两行，中间正文逐字保留", () => {
+    const text = ["引用前文", OPEN_LINE, "引用正文", ESCAPED_CLOSE, "引用后文"].join("\n");
+    assert.equal(stripNestedMessageMarkers(text), ["引用前文", "引用正文", "引用后文"].join("\n"));
+  });
+
+  it("起点行两侧的空白不影响识别，被删的行连同其换行一起消失", () => {
+    const text = ["前文", `  ${OPEN_LINE}  `, "正文", `  ${ESCAPED_CLOSE}  `, "后文"].join("\n");
+    assert.equal(stripNestedMessageMarkers(text), ["前文", "正文", "后文"].join("\n"));
+  });
+
+  it("只有起点、只有终点、终点未转义时整段原样返回", () => {
+    const onlyOpen = ["前文", OPEN_LINE, "正文"].join("\n");
+    assert.equal(stripNestedMessageMarkers(onlyOpen), onlyOpen);
+    const onlyClose = ["前文", ESCAPED_CLOSE, "正文"].join("\n");
+    assert.equal(stripNestedMessageMarkers(onlyClose), onlyClose);
+    const unescaped = ["前文", OPEN_LINE, "正文", "</dsh-message>", "后文"].join("\n");
+    assert.equal(stripNestedMessageMarkers(unescaped), unescaped);
+  });
+
+  it("标记混在行内时不处理", () => {
+    const inline = `前文 ${OPEN_LINE} 正文 ${ESCAPED_CLOSE} 后文`;
+    assert.equal(stripNestedMessageMarkers(inline), inline);
+    const headWithText = ["前文", `${OPEN_LINE}同一行的正文`, ESCAPED_CLOSE].join("\n");
+    assert.equal(stripNestedMessageMarkers(headWithText), headWithText);
+  });
+
+  it("多个成对按出现顺序逐个处理", () => {
+    const text = [
+      "第一段",
+      OPEN_LINE,
+      "引用一",
+      ESCAPED_CLOSE,
+      "第二段",
+      OPEN_LINE,
+      "引用二",
+      ESCAPED_CLOSE,
+      "结尾",
+    ].join("\n");
+    assert.equal(
+      stripNestedMessageMarkers(text),
+      ["第一段", "引用一", "第二段", "引用二", "结尾"].join("\n"),
+    );
+  });
+
+  it("幂等：对结果再调用一次不再变化", () => {
+    const text = ["前文", OPEN_LINE, "正文", ESCAPED_CLOSE].join("\n");
+    const once = stripNestedMessageMarkers(text);
+    assert.equal(stripNestedMessageMarkers(once), once);
+  });
+
+  it("只有一个终点、前面有多个起点时只与第一个起点成对", () => {
+    const text = ["开头", OPEN_LINE, "甲", OPEN_LINE, "乙", ESCAPED_CLOSE, "结尾"].join("\n");
+    // 第一个起点与唯一的转义终点成对，被删；夹在中间的第二个起点没有后续终点，保留。
+    assert.equal(
+      stripNestedMessageMarkers(text),
+      ["开头", "甲", OPEN_LINE, "乙", "结尾"].join("\n"),
+    );
+  });
+});
+
+describe("normalizeSessionTitle（标题归一化）", () => {
+  it("四种部署标记起点一律视为没有标题", () => {
+    for (const prefix of [
+      '<dsh-injection kind="subagent-task" src=',
+      '<dsh-message role="assistant" id=',
+      '<dsh-result tool="read" call=',
+      "<compacted-summary>",
+    ]) {
+      assert.equal(normalizeSessionTitle(prefix), null, prefix);
+      assert.equal(normalizeSessionTitle(`  ${prefix}xxx  `), null, prefix);
+    }
+  });
+
+  it("正常标题去掉首尾空白后原样返回", () => {
+    assert.equal(normalizeSessionTitle("  会话标题  "), "会话标题");
+    assert.equal(normalizeSessionTitle("会话标题"), "会话标题");
+  });
+
+  it("以 < 开头但不是标记的标题照常可用", () => {
+    assert.equal(normalizeSessionTitle("<dsh-other 说明"), "<dsh-other 说明");
+    assert.equal(normalizeSessionTitle("<html>标题"), "<html>标题");
+  });
+
+  it("空串、纯空白与 null 都收敛为 null", () => {
+    assert.equal(normalizeSessionTitle(""), null);
+    assert.equal(normalizeSessionTitle("   "), null);
+    assert.equal(normalizeSessionTitle(null), null);
+    assert.equal(normalizeSessionTitle(undefined), null);
   });
 });

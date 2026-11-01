@@ -11,6 +11,7 @@ import { pathToFileURL } from "node:url";
 import {
   stripInjectionEnvelopes,
   stripMessageEnvelope,
+  stripNestedMessageMarkers,
   stripResultEnvelopeLenient,
 } from "./deployment-text.ts";
 import { splitLines } from "./frames.ts";
@@ -319,23 +320,25 @@ export function textFromBlocks(blocks: unknown): string {
 }
 
 /**
- * 拼接对话消息（用户与助手）的可读正文，并剥离部署侧的两层边界信封。
+ * 拼接对话消息（用户与助手）的可读正文，并剥离部署侧的两层边界信封与内层引用的标记行对。
  *
  * 自定义模式在落账侧给两条路径各加一层传输标记：注入消息是 `<dsh-injection …>…</dsh-injection>`
  * （子代理初始任务顺序出现两个），真实用户消息与带文本块的 assistant 消息是
  * `<dsh-message …>…</dsh-message>`。这些是传输层标记，不是消息内容；md、json 与检索面统一用
  * 本函数取正文，`show --format jsonl` 仍保留原始事件。
  *
- * 顺序是先剥注入信封再剥消息信封：注入消息不会被消息信封包裹（部署侧对首块已以
- * `<dsh-injection` 开头的消息跳过消息包裹），因此两步互不干扰；任一信封不完整时该层原样返回
- * （见 deployment-text.ts），不做尽力截取。
+ * 顺序是先剥注入信封再剥消息信封，最后清理内层引用的标记行对：注入消息不会被消息信封包裹（部署侧
+ * 对首块已以 `<dsh-injection` 开头的消息跳过消息包裹），因此前两步互不干扰；第三步处理的是正文里
+ * 整段引用的子代理收尾发言，它的起点行与转义终点行都独立成行（见 deployment-text.ts）。任一信封
+ * 不完整时该层原样返回，不做尽力截取。
  *
  * @param blocks 消息的 content 块数组（`user/message` 的 `data.content` 或 `assistant/message` 的
  *   `data.message.content`）。
- * @returns 剥离完整信封后的正文。
+ * @returns 剥离完整信封与内层标记行对后的正文。
  */
 export function messageTextFromBlocks(blocks: unknown): string {
-  return stripMessageEnvelope(stripInjectionEnvelopes(textFromBlocks(blocks)));
+  const text = stripMessageEnvelope(stripInjectionEnvelopes(textFromBlocks(blocks)));
+  return stripNestedMessageMarkers(text);
 }
 
 /**
@@ -417,7 +420,7 @@ export function toolResultText(event: EventRecord): string {
     const text = readNonEmptyString(record, "text");
     if (text !== undefined) parts.push(text);
   }
-  return stripResultEnvelopeLenient(parts.join("\n"));
+  return stripNestedMessageMarkers(stripResultEnvelopeLenient(parts.join("\n")));
 }
 
 /**

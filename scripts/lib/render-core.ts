@@ -28,6 +28,7 @@ import {
   readString,
   userMessageText,
 } from "./decode.ts";
+import { normalizeSessionTitle } from "./deployment-text.ts";
 import type { IntegerRange } from "./paths.ts";
 import type {
   CoverageSkip,
@@ -179,7 +180,12 @@ export function assembleDocument(sections: readonly string[]): string {
 
 // ------------------------- 共享派生事实（md 与 json 渲染器共用） -------------------------
 
-/** 会话标题：取最后一个非空 `session/title` 事件的 title（无则为 null）。 */
+/**
+ * 会话标题：取最后一个非空 `session/title` 事件的 title，再过与 projcache 同源的标题归一化。
+ *
+ * 两个标题来源必须给出同一份"标题"含义：部署标记残片在两边都收敛为 null，渲染层因此统一显示 `-`，
+ * 调用方也不会看到"list 说没有标题、show 说标题是半行标记"这种自相矛盾的产物。
+ */
 export function findSessionTitle(file: DecodedSessionFile): string | null {
   let title: string | null = null;
   for (const event of file.decoded.events) {
@@ -187,7 +193,7 @@ export function findSessionTitle(file: DecodedSessionFile): string | null {
     const value = readString(asRecord(event.data) ?? {}, "title");
     if (value !== undefined && value.length > 0) title = value;
   }
-  return title;
+  return normalizeSessionTitle(title);
 }
 
 /** 令牌用量汇总：只累计 `assistant/message` 事件自带的 usage。 */

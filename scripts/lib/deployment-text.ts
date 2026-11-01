@@ -252,3 +252,75 @@ export function cleanCompactedSummary(text: string): string {
   if (inner === null) return text;
   return `${SUMMARY_OPEN}\n${stripNestedMessageEnvelope(inner)}\n${SUMMARY_CLOSE}`;
 }
+
+/**
+ * 清理正文里内层引用的消息标记行对。
+ *
+ * `subagent-settled` 一类注入消息会把子代理的收尾发言整段引用进来，于是正文中间出现一对消息标记：
+ * 起点行是 `<dsh-message role="assistant" id="…" ts="…">`，终点行被外层包裹转义成 `<\/dsh-message>`
+ * （写入侧对所有终点统一转义，见 `preset-lib/injection-boundary.mjs`）。它们不是内容，却被原样带进
+ * 可读正文，因此在剥完外层信封之后按“起点行 + 其后第一个转义终点行”成对删除。
+ *
+ * 判据只有两条且都得独占一行：起点行去掉首尾空白后以 `<dsh-message ` 开头并以 `>` 结尾；终点行去掉
+ * 首尾空白后恰好是 `<\/dsh-message>`。找不到成对形态时整段原样返回，不做截取：只有起点、只有终点、
+ * 终点未转义、标记混在行内的形态都不是该结构，猜错会破坏正文本身。
+ *
+ * 只删除这两行，两行之间的正文与其余所有字符逐字不变；多个成对按出现顺序逐个处理；对结果再次调用
+ * 不再有可删除的成对，因此本函数幂等。
+ *
+ * @param text 已剥离外层信封的消息正文。
+ * @returns 删掉标记行对后的正文；没有成对形态时原样返回。
+ */
+export function stripNestedMessageMarkers(text: string): string {
+  const lines = text.split("\n");
+  const removed = new Set<number>();
+  for (let index = 0; index < lines.length; index += 1) {
+    const head = lines[index].trim();
+    if (!head.startsWith(MESSAGE_OPEN_PREFIX) || !head.endsWith(">")) continue;
+    let closeIndex = index + 1;
+    while (closeIndex < lines.length && lines[closeIndex].trim() !== ESCAPED_MESSAGE_CLOSE) {
+      closeIndex += 1;
+    }
+    if (closeIndex >= lines.length) continue;
+    removed.add(index);
+    removed.add(closeIndex);
+    // 从终点之后继续扫描：同一个起点不可能再与后面的终点配成第二对。
+    index = closeIndex;
+  }
+  if (removed.size === 0) return text;
+  return lines.filter((_line, index) => !removed.has(index)).join("\n");
+}
+
+/**
+ * 标题里出现即视为"没有标题"的部署标记起点字面量。
+ *
+ * 上游偶尔把部署标记本身截断成标题（形如 `<dsh-injection kind="subagent-task" src=`），这些值不是
+ * 会话标题，而是落账形态被截断后的残片。字面量必须与写入侧一致，因此直接复用本模块的四个起点常量。
+ */
+export const DEPLOYMENT_MARKER_TITLE_PREFIXES = [
+  INJECTION_OPEN_PREFIX,
+  MESSAGE_OPEN_PREFIX,
+  RESULT_OPEN_PREFIX,
+  SUMMARY_OPEN,
+] as const;
+
+/**
+ * 标题归一化：把部署标记残片与空标题都收敛为 `null`（"没有标题"）。
+ *
+ * 两个标题来源（projcache 的 `title` 字段与日志里最后一个 `session/title` 事件）都必须经过它，
+ * 否则同一会话会在 `list` 与 `show` 里给出两种答案。不可用不等于"元数据不完整"：标记残片是取值本身
+ * 不可用，不是缺字段，因此调用方不得把它记为元数据缺失，渲染层的空值分支（md 显示 `-`、json 为 null）
+ * 直接复用即可。
+ *
+ * @param raw 原始标题文本。
+ * @returns 去掉首尾空白后的标题；标记残片、空串与缺失均返回 null。
+ */
+export function normalizeSessionTitle(raw: string | null | undefined): string | null {
+  if (raw === null || raw === undefined) return null;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+  for (const prefix of DEPLOYMENT_MARKER_TITLE_PREFIXES) {
+    if (trimmed.startsWith(prefix)) return null;
+  }
+  return trimmed;
+}
