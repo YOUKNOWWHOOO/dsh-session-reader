@@ -643,3 +643,71 @@ describe("runSearch 的部署消息信封剥离", () => {
     assert.equal(outcome.data.hits[0]?.excerpt, "用户正文 ENVELOPE-USER");
   });
 });
+
+describe("不区分大小写检索的折叠位置映射", () => {
+  // U+0130（İ）折叠为 `i` 加 U+0307 两个码元：折叠副本比原文多一个码元，用折叠下标切原文会让
+  // 摘录窗口整体偏移一位。本组用例按精确期望串锁定"折回原文码点"这一行为。
+  const root = fileURLToPath(new URL("./.tmp/search-fold", import.meta.url));
+  const PROJECT = "--C-Users-Alice--";
+  const scopeFilters = { origin: "all" as const };
+  let home: string;
+
+  /** 写一个只含单条用户消息的会话；正文即被测文本。 */
+  function writeHome(id: string, text: string): void {
+    home = writeFixtureHome(resetTempDir(root), {
+      sessions: [
+        {
+          id,
+          projectDir: PROJECT,
+          createdAt: 1000,
+          events: [
+            { type: "turn/start", seq: 0, time: 100, data: { turn: 1 } },
+            {
+              type: "user/message",
+              seq: 1,
+              time: 101,
+              data: {
+                role: "user",
+                content: [{ type: "text", text }],
+                source: { kind: "user" },
+              },
+            },
+          ],
+          title: null,
+          turns: 1,
+          steps: 0,
+          lastPromptAt: null,
+        },
+      ],
+    });
+  }
+
+  function search(keyword: string, caseSensitive: boolean, context: number) {
+    const outcome = runSearch(contextOf(home), keyword, scopeFilters, {
+      scope: "text",
+      caseSensitive,
+      context,
+      limit: 0,
+    });
+    assert.equal(outcome.success, true);
+    if (!outcome.success) throw new Error("检索失败");
+    return outcome.data;
+  }
+
+  it("U+0130 折叠成两个码元时，摘录窗口仍按原文码点取", () => {
+    writeHome("session-fold-01", `${"前".repeat(70)}İstanbul`);
+    const result = search("stanbul", false, 10);
+    assert.equal(result.totalHits, 1);
+    assert.equal(result.hits[0].excerpt, `…${"前".repeat(9)}İstanbul`);
+    // 区分大小写的路径不经过折叠：窗口必须与折叠路径一致（两处都按原文码点算）。
+    assert.equal(search("stanbul", true, 10).hits[0].excerpt, `…${"前".repeat(9)}İstanbul`);
+  });
+
+  it("关键词位于 U+0130 之后时窗口不偏移", () => {
+    writeHome("session-fold-02", `İ${"z".repeat(70)}istanbul`);
+    const result = search("istanbul", false, 10);
+    assert.equal(result.totalHits, 1);
+    assert.equal(result.hits[0].excerpt, `…${"z".repeat(10)}istanbul`);
+    assert.equal(search("istanbul", true, 10).hits[0].excerpt, `…${"z".repeat(10)}istanbul`);
+  });
+});

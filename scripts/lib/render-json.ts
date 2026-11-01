@@ -342,6 +342,9 @@ export function renderStatsJson(outcome: StatsOutcome): RenderedOutput {
         sizeBytes: single.sizeBytes,
         metadata: { available: single.metadataAvailable, reasons: single.metadataReasons },
       },
+      // 摘要行的未计入会话数必须同时出现在 json 里：md 摘要说了"N 个会话未计入"，
+      // machine 侧却拿不到同一个数，调用方只能去读 md 或自行重算。
+      excludedMetricSessions: outcome.excludedMetricSessions,
       coverage: outcome.coverage,
       scan: outcome.scan,
     };
@@ -359,6 +362,7 @@ export function renderStatsJson(outcome: StatsOutcome): RenderedOutput {
     latestActivityAt: outcome.latestActivityAt,
     totalSizeBytes: outcome.totalSizeBytes,
     unavailable: outcome.unavailable,
+    excludedMetricSessions: outcome.excludedMetricSessions,
     coverage: outcome.coverage,
     scan: outcome.scan,
   };

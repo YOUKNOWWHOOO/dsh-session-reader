@@ -5,15 +5,7 @@
 // - stdout 固定两行（完整输出已保存到: <绝对路径> / <摘要>；输出文件共 N 行）；终端不显示正文；
 // - stderr 只输出 `错误: <分类>`（分类全集见该文档的 CLI 契约；歧义目标附候选数）；
 // - 退出码：0 成功、1 目标不存在、2 参数错误、3 数据/IO 错误。
-import {
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  renameSync,
-  unlinkSync,
-  writeSync,
-} from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, renameSync, rmSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -952,14 +944,33 @@ interface WriteSuccess {
   readonly lines: number;
 }
 
-function removeFileIfExists(path: string): boolean {
+/**
+ * 删除临时文件；"不存在"按成功处理（`rmSync` 的 `force` 语义），其它删除失败返回 false。
+ *
+ * `force` 只忽略 ENOENT，因此返回 true 一定意味着该路径已经不在了；返回 false 表示临时文件仍留在
+ * 输出目录里，调用方必须把这个事实并入当次失败分类（见 `outputFailure`）。
+ *
+ * 失败原因不外显：`rmSync` 的错误文本含绝对路径，而 stderr 的契约禁止出现任何路径。失败信号因此只走
+ * 返回值这一条通道，而不是被吞掉。
+ */
+export function removeTempFileIfExists(path: string): boolean {
   try {
-    unlinkSync(path);
+    rmSync(path, { force: true });
     return true;
   } catch {
-    // 清理失败无输出通道（stderr 被错误分类契约占用）；不影响主错误分类。
     return false;
   }
+}
+
+/**
+ * 输出阶段失败分类：清理成功时用阶段名，清理失败时追加固定说明（不含任何路径）。
+ *
+ * 两段说明是对外契约（stderr 的 `错误: <分类>` 直接输出整个 classification），文档侧必须同步：
+ * `输出写入失败（临时文件未清理）` 与 `输出移动失败（临时文件未清理）`。
+ */
+export function outputFailure(stage: "write" | "move", tempRemoved: boolean): RunFailure {
+  const base = stage === "write" ? "输出写入失败" : "输出移动失败";
+  return { classification: tempRemoved ? base : `${base}（临时文件未清理）`, exitCode: 3 };
 }
 
 /**
@@ -1004,7 +1015,8 @@ export function writeAllBytes(
  *
  * 写入必须用 `writeAllBytes` 写满：单次 `writeSync` 的部分写入会被提交成截断产物（见该函数的说明）。
  *
- * 失败返回错误分类（输出文件已存在→2；目录创建/写入/移动失败→3）。
+ * 失败返回错误分类（输出文件已存在→2；目录创建/写入/移动失败→3）。写入与移动失败时先删临时文件，
+ * 删除也失败则该事实并入分类（见 `outputFailure`）：临时文件残留是可观察的现场，不能静默忽略。
  * 导出以便测试直接覆盖"已存在拒绝/原子提交/覆盖提交"路径。
  */
 export function writeOutputFile(
@@ -1037,14 +1049,12 @@ export function writeOutputFile(
     );
     closeSync(handle);
   } catch {
-    removeFileIfExists(tempPath);
-    return { ok: false, failure: { classification: "输出写入失败", exitCode: 3 } };
+    return { ok: false, failure: outputFailure("write", removeTempFileIfExists(tempPath)) };
   }
   try {
     renameSync(tempPath, targetPath);
   } catch {
-    removeFileIfExists(tempPath);
-    return { ok: false, failure: { classification: "输出移动失败", exitCode: 3 } };
+    return { ok: false, failure: outputFailure("move", removeTempFileIfExists(tempPath)) };
   }
   return { ok: true, value: { path: targetPath, lines: countLines(content) } };
 }

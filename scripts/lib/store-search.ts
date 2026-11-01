@@ -6,7 +6,8 @@
 // 设计约束：--limit 只限制 hits 数组的收集上限，totalHits 对纳入会话全量计数且不做任何提前终止
 // （totalIsExact 恒为 true）；单会话解码失败记入 coverage.excluded 并继续，而不是让整次检索失败；
 // scope=all 必须把整条事件记录的完整 JSON 载荷纳入检索单元（按类型枚举字段必然有遗漏）；
-// 上下文章节按 Unicode 码点切片，避免在代理对中间切片。数据契约见 store-types.ts 文件头。
+// 上下文章节按 Unicode 码点切片，避免在代理对中间切片；不区分大小写检索必须经折叠位置映射回原文，
+// 不得用折叠后的下标直接切原文（折叠可能改变长度）。数据契约见 store-types.ts 文件头。
 
 import {
   ASK_USER_PAYLOAD_MISMATCH_REASON,
@@ -254,6 +255,43 @@ function eventPayloadJson(event: EventRecord): string {
   return JSON.stringify(event);
 }
 
+/** 大小写折叠后的检索文本：折叠副本 + 每个折叠后码元对应的原文码点区间。 */
+interface FoldedSearchText {
+  /** 按码点逐个折叠后拼接的副本（与小写化后的原文等值）。 */
+  readonly folded: string;
+  /** 每个折叠后 UTF-16 下标所属原文码点的起始下标。 */
+  readonly pointStart: readonly number[];
+  /** 每个折叠后 UTF-16 下标所属原文码点的结束下标（独占）。 */
+  readonly pointEnd: readonly number[];
+}
+
+/**
+ * 生成大小写折叠检索用的副本与位置映射。
+ *
+ * 不能对原文整体 `toLowerCase()` 之后继续用折叠后的下标切原文：Unicode 大小写折叠会改变长度
+ * （例如 U+0130 折叠为 `i` 加 U+0307 两个码元），下标一旦偏移，摘录窗口就会切在错误的位置，
+ * 表现为命中行展示的片段与关键词错位。因此逐码点折叠，并记下每个折叠后码元属于哪一个原文码点，
+ * 命中之后再按映射折回原文的码点下标。区分大小写的路径不使用本函数，行为保持原样。
+ *
+ * @param text 检索单元的原文。
+ * @returns 折叠副本与两份位置映射（长度与折叠副本的 UTF-16 长度一致）。
+ */
+function foldForSearch(text: string): FoldedSearchText {
+  const points = [...text];
+  const pointStart: number[] = [];
+  const pointEnd: number[] = [];
+  let folded = "";
+  for (let index = 0; index < points.length; index += 1) {
+    const lower = points[index].toLowerCase();
+    folded += lower;
+    for (let unit = 0; unit < lower.length; unit += 1) {
+      pointStart.push(index);
+      pointEnd.push(index + 1);
+    }
+  }
+  return { folded, pointStart, pointEnd };
+}
+
 /**
  * search 命令数据：按范围过滤会话，逐会话解码并按 scope 检索。
  *
@@ -372,7 +410,11 @@ export function runSearch(
         replyCallIds,
         context,
       )) {
-        const haystack = options.caseSensitive ? unit.text : unit.text.toLowerCase();
+        // 不区分大小写时在折叠副本上匹配，再用位置映射折回原文码点；区分大小写时直接用原文下标。
+        // 两种方式都产出“码点下标”，因此上下文窗口与省略号规则完全一致。
+        const folded = options.caseSensitive ? null : foldForSearch(unit.text);
+        const haystack = folded === null ? unit.text : folded.folded;
+        const points = [...unit.text];
         let from = 0;
         for (;;) {
           const at = haystack.indexOf(needle, from);
@@ -380,14 +422,16 @@ export function runSearch(
           totalHits += 1;
           sessionHits += 1;
           if (options.limit === 0 || hits.length < options.limit) {
-            // 按 Unicode 码点计算上下文窗口（与 truncateText 同口径；先把 UTF-16 索引折算为码点数），
-            // 避免在代理对（surrogate pair）中间切片产生孤立代理项（UTF-8 落盘后会变为 U+FFFD）。
-            const points = [...unit.text];
-            const startPoint = Math.max(0, [...unit.text.slice(0, at)].length - options.context);
-            const endPoint = Math.min(
-              points.length,
-              [...unit.text.slice(0, at + needle.length)].length + options.context,
-            );
+            // 命中区间的两端都折成原文码点下标：起点取该折叠码元所属码点的起始，终点取该折叠码元
+            // 所属码点的结束（独占），因此即使折叠把同一个码点展开成多个码元，窗口也不会切在半途。
+            const matchStartPoint =
+              folded === null ? [...unit.text.slice(0, at)].length : folded.pointStart[at];
+            const matchEndPoint =
+              folded === null
+                ? [...unit.text.slice(0, at + needle.length)].length
+                : folded.pointEnd[at + needle.length - 1];
+            const startPoint = Math.max(0, matchStartPoint - options.context);
+            const endPoint = Math.min(points.length, matchEndPoint + options.context);
             const excerpt = `${startPoint > 0 ? "…" : ""}${points.slice(startPoint, endPoint).join("")}${endPoint < points.length ? "…" : ""}`;
             hits.push({
               sessionId: view.entry.id,

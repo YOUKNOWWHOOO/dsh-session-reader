@@ -153,6 +153,16 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
     const json = JSON.parse(globalJson.content) as Record<string, unknown>;
     assert.equal(json.kind, "global");
     assert.equal(json.sessionCount, 3);
+    // 摘要里出现的"未计入会话数"必须同时进入 json：md 说了 N 个，machine 侧要拿到同一个数。
+    assert.equal(json.excludedMetricSessions, 0);
+    assert.equal(
+      (
+        JSON.parse(renderStatsJson({ ...global, excludedMetricSessions: 2 }).content) as {
+          excludedMetricSessions: number;
+        }
+      ).excludedMetricSessions,
+      2,
+    );
     // 摘要与 md 同源：json 形态的 stdout 第二行必须与 md 摘要逐字一致。
     assert.equal(globalJson.summary, md.summary);
 
@@ -191,8 +201,11 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
     const singleJsonRendered = renderStatsJson(single);
     const singleJson = JSON.parse(singleJsonRendered.content) as {
       session: Record<string, unknown>;
+      excludedMetricSessions: number;
     };
     assert.equal(singleJson.session.id, "session-aaa-01");
+    // 单会话恒为 0，但字段必须存在，否则两种 kind 的 json 形状不一致。
+    assert.equal(singleJson.excludedMetricSessions, 0);
     assert.equal(singleJsonRendered.summary, singleMd.summary);
   });
 
