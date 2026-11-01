@@ -102,7 +102,7 @@ function messageContent(event: EventRecord): unknown {
  * （或反过来）。三档都包含问答可读文本，是 `text ⊆ tools ⊆ all` 这一单调包含关系的要求。
  *
  * `all` 档的穷尽性是"检索 0 命中 ⇒ 不存在"这一推断成立的前提：按类型枚举字段必然有遗漏
- * （实测 `assistant/attempt` 与 `llm/retry` 的 `data.failure` 内嵌上游错误体，此前任何 scope 都检索不到），
+ * （`assistant/attempt` 与 `llm/retry` 的 `data.failure` 内嵌上游错误体，只按类型枚举的档位检索不到它们），
  * 只有把整条记录纳入检索才能保证任意事件的任意字符串都可命中。
  *
  * 返回的每个单元都带上所属事件的来源归属（仅 `user/message` 事件非 null）：命中行的 `user` 标签
@@ -429,9 +429,7 @@ export function runSearch(
     data: {
       hits,
       totalHits,
-      scannedSessions: views.length,
       truncated: totalHits > shown,
-      searchedSessions: views.length,
       scope: options.scope,
       totalIsExact: true,
       excludedInjections: {

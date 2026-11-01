@@ -12,6 +12,7 @@ import {
   main,
   parseCommandLine,
   validateCommandOptions,
+  writeAllBytes,
   writeOutputFile,
 } from "../scripts/session-reader.ts";
 import {
@@ -207,11 +208,18 @@ describe("parseCommandLine", () => {
     assert.match(listHelp, /用法: <desktop_node> scripts\/session-reader\.ts list/u);
     assert.match(listHelp, /--output-dir/u);
     assert.match(listHelp, /选项终止符/u);
+    // 帮助必须如实说明两个选项的真实生效范围：`--full` 只作用于 md（与 json 同用时被接受但无效果），
+    // `--lib-root` 是显式覆盖而不是"兼容"入口。文案与行为不一致会直接误导调用方。
+    assert.match(listHelp, /仅对 md 生效，与 --format json 同用时被接受但无效果/u);
+    assert.match(listHelp, /官方格式库解析锚点（显式覆盖）/u);
     const general = buildGeneralHelp();
     assert.match(general, /用法: <desktop_node> scripts\/session-reader\.ts <命令> \[选项\]/u);
     for (const command of COMMANDS) assert.equal(general.includes(command.name), true);
     assert.match(general, /选项终止符/u);
     for (const text of [listHelp, general]) assert.match(text, /桌面版 Electron-as-Node/u);
+    // `--scope text` 的覆盖面必须列出四类合成条目：漏写会让调用方误判默认档的命中集。
+    const searchHelp = buildCommandHelp(COMMANDS[2]);
+    assert.match(searchHelp, /上下文摘要\/交接通知\/交接指令\/子代理任务/u);
   });
 
   it("validateCommandOptions：show 组合约束与 stats 范围过滤约束", () => {
@@ -252,6 +260,45 @@ describe("parseCommandLine", () => {
     if (statsGlobalFiltered.kind === "parsed") {
       assert.equal(validateCommandOptions(statsGlobalFiltered.value), null);
     }
+  });
+});
+
+describe("writeAllBytes：部分写入必须写满", () => {
+  it("按每次实际写入的字节数推进偏移量，直到写完", () => {
+    // 用多字节内容并按字节切片：部分写入可能落在 UTF-8 字符中间，循环必须按**字节**推进，
+    // 不能按字符数或一次性文本拼接推进，否则会写出错位的字节序列。
+    const content = "内容\n";
+    const expected = Buffer.from(content, "utf8");
+    const written: Buffer[] = [];
+    let calls = 0;
+    const write = (buffer: Buffer, offset: number): number => {
+      calls += 1;
+      const length = Math.min(2, buffer.length - offset);
+      written.push(buffer.subarray(offset, offset + length));
+      return length;
+    };
+    writeAllBytes(content, write);
+    assert.equal(calls, 4);
+    assert.deepEqual(Buffer.concat(written), expected);
+  });
+
+  it("写入返回 0（无法推进）时抛错并给出已写字节数", () => {
+    const writes: number[] = [];
+    const write = (_buffer: Buffer, offset: number): number => {
+      writes.push(offset);
+      return offset === 0 ? 1 : 0;
+    };
+    assert.throws(() => writeAllBytes("abcd", write), /输出写入未推进：已写 1\/4 字节/u);
+    assert.deepEqual(writes, [0, 1]);
+  });
+
+  it("空内容不调用写入动作", () => {
+    let calls = 0;
+    writeAllBytes("", () => {
+      calls += 1;
+      return 0;
+    });
+    assert.equal(calls, 0);
   });
 });
 
@@ -352,6 +399,10 @@ describe("main 进程内主流程", () => {
     ]);
     assert.equal(badLib.code, 3);
     assert.match(badLib.streams.stderr(), /错误: 内部错误/u);
+    // stderr 契约禁止出现用户名与 dsh 数据/安装路径：`--lib-root` 的取值可能正是这种绝对路径，
+    // 因此加载失败的说明不得把它回显出来（只给固定分类与不含路径的下一步）。
+    assert.equal(badLib.streams.stderr().includes(TEMP_ROOT), false);
+    assert.equal(badLib.streams.stderr().includes("no-lib"), false);
     const emptyHome = join(TEMP_ROOT, "empty");
     mkdirSync(emptyHome, { recursive: true });
     const noSessions = await runMain([

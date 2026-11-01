@@ -38,7 +38,7 @@ describe("renderListMd / renderListJson", () => {
       ),
       true,
     );
-    // 显示值必须与可传值同源：输出完整 id（此前输出 12 字符截断值，子代理 id 会因此歧义）。
+    // 显示值必须与可传值同源：输出完整 id（12 字符截断值会让子代理 id 产生歧义）。
     assert.equal(rendered.content.includes("| `session-aaa-01` |"), true);
     assert.equal(rendered.content.includes("| `session-bbb-02` |"), true);
     assert.equal(rendered.content.includes("`测试标题`"), true);

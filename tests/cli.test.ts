@@ -1118,7 +1118,7 @@ describe("CLI show 对异常数据", () => {
   });
 
   it("header 不可读但目录存在：按前缀取目标报数据不可读（退出 3），与真不存在可区分", () => {
-    // P7 根因修复的独立验证：同一命令、同一前缀形态，存在的损坏会话与不存在的标识必须给出不同分类。
+    // 三态可区分性的独立验证：同一命令、同一前缀形态，存在的损坏会话与不存在的标识必须给出不同分类。
     const unreadable = runCli(["show", "session-broken-corrupt-08", ...baseArgs(BROKEN_HOME)]);
     assert.equal(unreadable.status, 3, `stderr=${unreadable.stderr}`);
     assert.equal(unreadable.stderr, "错误: 数据不可读\n");

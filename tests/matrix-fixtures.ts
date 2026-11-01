@@ -3,8 +3,8 @@
 //           healthySpec/brokenSpec（夹具根定义，供组合矩阵与入口复用）。
 // 关键依赖：./fixtures.ts（FixtureEvent/FixtureHomeSpec/writeFixtureHome）、./matrix-assert.ts（asRecord 判型）。
 // 设计约束：夹具只写 workdir 下的固定子路径（fixture-healthy、fixture-broken、out），真实 dsh 主目录全程只读；
-//           敌意内容集逐条对应 f2 §2.1 的 67 条，禁止增删或改写，注入点分散于消息/工具/系统/压缩/命令/
-//           标题请求/web/交付物字段，注入后的 home 由端到端门禁逐产物复查。
+//           敌意内容集是本文件内的固定清单（`CONTENTS`），禁止增删或改写；注入点分散于消息/工具/系统/压缩/
+//           命令/标题请求/web/交付物字段，注入后的 home 由端到端门禁逐产物复查。
 
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -19,7 +19,7 @@ import {
 } from "./fixtures.ts";
 import { asRecord } from "./matrix-assert.ts";
 
-// ------------------------- 敌意内容集（f2 §2.1 的 67 条，逐条复制） -------------------------
+// ------------------------- 敌意内容集（`CONTENTS` 固定清单，逐条覆盖各类结构风险） -------------------------
 
 const CONTENTS: readonly string[] = [
   "a\tb",
@@ -892,7 +892,7 @@ export function brokenSpec(): FixtureHomeSpec {
   };
 }
 
-/** 覆写 projcache 的 modelSelection 为含下划线/斜杠的敌意值（f2 §5.2 字段级注入）。 */
+/** 覆写 projcache 的 modelSelection 为含下划线/斜杠的敌意值（字段级注入：模型标识必须经载体承载）。 */
 function patchProjCacheModel(home: string, sessionId: string): void {
   const file = join(home, "storages", "session_projcache", "sessions", `${sessionId}.json`);
   const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));

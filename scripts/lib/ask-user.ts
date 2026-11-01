@@ -10,7 +10,7 @@
 // 禁止任何降级形态：不做原样兜底、不做猜测补齐、不静默丢弃——把不可解析的载荷塞进载体或悄悄少算
 // 一条，都会让产物看起来正常却与日志事实不符。
 // 错误态结果（`isError`/`data.error`，即提问被中止或取消）不在此列：它是正常产品形态，
-// 按"没有回答"处理而不是载荷异常，判据与理由见 `isErrorResult`。
+// 按"没有回答"处理而不是载荷异常，判据见 decode.ts 的 `toolResultIsError`。
 // 回答结果的正文可能被部署侧的边界插件包上 `<dsh-result …>…</dsh-result>` 信封，解析前必须先剥离
 // 一个完整信封（见 deployment-text.ts 的严格版）：信封是传输层标记，不是载荷的一部分。
 // 结构与文案逐字依据 doc\开发规范.md 的「提问与回答契约」一节。
@@ -20,9 +20,9 @@ import {
   type EventRecord,
   eventSeq,
   eventType,
-  readBoolean,
   readString,
   textFromBlocks,
+  toolResultIsError,
 } from "./decode.ts";
 import { stripResultEnvelope } from "./deployment-text.ts";
 import type { Result } from "./paths.ts";
@@ -145,24 +145,6 @@ function answerCallIdOf(event: EventRecord): string | null {
   return value === undefined || value.length === 0 ? null : value;
 }
 
-/**
- * 配对结果的错误态判定：`data.message.isError === true` 或 `data.error !== undefined` 任一成立。
- *
- * 存在理由（实测根因）：日志里真实的"提问被中止或取消"会以工具错误态落账——`data.error` 形如
- * `{ name: "UserQuestionError", code: "ASK_ABORTED" | "ASK_CANCELLED" }`，`message.isError` 为 true，
- * `message.content` 是 `Error: ask_user_question was aborted before the user answered` 这类纯文本。
- * 这是正常的产品形态（用户没作答），不是"载荷结构不符合预期"：把它当载荷异常会让这类会话永久
- * 读不了（`show` 恒退出 3），也会让聚合检索把它们逐条排除，代价远大于收益。
- * 因此错误态结果按"没有回答"处理：不产出 `**回答**` 条目、不计入 `Q`、不触发载荷异常，
- * 提问照常呈现（与"未配对的提问照常呈现"同一处理）。
- */
-function isErrorResult(event: EventRecord): boolean {
-  const data = asRecord(event.data) ?? {};
-  if (data.error !== undefined) return true;
-  const message = asRecord(data.message);
-  return message !== undefined && readBoolean(message, "isError") === true;
-}
-
 /** 单个选项一行的文本：`选项：<label>｜<description>`（分隔符是全角竖线，取值即对外契约）。 */
 function optionLines(question: Record<string, unknown>, where: string): Result<string[], string> {
   const options = question.options;
@@ -254,7 +236,7 @@ function customText(answer: Record<string, unknown>, where: string): Result<stri
  * `自定义：<custom>`（`custom` 为非空字符串时）；两者皆无时输出一行 `未作答`。
  * 序号从 1 起（条序即 `answers[]` 数组序）。
  *
- * 调用方必须先用 `isErrorResult` 排除错误态结果：本函数只处理"本该是回答载荷"的内容，
+ * 调用方必须先用 `toolResultIsError` 排除错误态结果：本函数只处理"本该是回答载荷"的内容，
  * 错误态结果的内容是错误文本，进入这里必然被判成结构不符，而那并不是它的语义。
  */
 function answerTextOf(event: EventRecord): Result<string, string> {
@@ -329,9 +311,12 @@ export function analyzeAskUserEvents(
     const callId = answerCallIdOf(event);
     if (callId === null || !callIds.has(callId) || pairedCallIds.has(callId)) continue;
     // 错误态结果不是回答：它承载的是"提问被中止或取消"这一事实，没有 `answers[]` 可解析。
-    // 这里直接跳过（不标记已配对）：错误态结果不参与配对，因此不产出条目、不计入 `Q`，
-    // 该提问以"无回答"的形态呈现。载荷异常只对非错误态结果生效（见 `isErrorResult`）。
-    if (isErrorResult(event)) continue;
+    // 这类落账形如 `data.error = { name: "UserQuestionError", code: "ASK_ABORTED" | "ASK_CANCELLED" }`
+    // 加一段 `Error: ask_user_question was aborted before the user answered` 纯文本，是正常产品形态
+    // 而不是载荷异常；若把它当载荷异常，这类会话会永久读不了（`show` 恒退出 3），聚合检索也会
+    // 逐条排除它们。这里直接跳过（不标记已配对）：错误态结果不参与配对，因此不产出条目、
+    // 不计入 `Q`，该提问以"无回答"的形态呈现。判据本身只有一处实现（`toolResultIsError`）。
+    if (toolResultIsError(event)) continue;
     pairedCallIds.add(callId);
     const text = answerTextOf(event);
     if (!text.success) return text;

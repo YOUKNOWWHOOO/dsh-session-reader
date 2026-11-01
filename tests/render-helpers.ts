@@ -115,8 +115,9 @@ export const RENDER_EVENTS: Record<string, unknown>[] = [
     data: {
       role: "user",
       content: [{ type: "text", text: "用户内容 USER-TEXT" }],
-      // 真实日志的 user/message 恒带 source（307 会话实测零缺失），夹具按 schema 忠实给出：
-      // 缺 source 的形态由 tests\source-annotation.test.ts 专门覆盖（渲染为 `来源 未标注`）。
+      // 真实日志的 user/message 通常带 source（缺 source 的形态由 schema 之外的数据产生），
+      // 夹具按 schema 忠实给出；缺 source 时的渲染由 tests\source-annotation.test.ts 专门覆盖
+      // （渲染为 `来源 未标注`）。
       source: { kind: "user" },
     },
     surfaceOp: "append",

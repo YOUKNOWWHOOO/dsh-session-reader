@@ -28,7 +28,13 @@ import { catalogForEntry } from "./store-types.ts";
 
 const MIN_PREFIX_LENGTH = 8;
 
-/** 主会话 id 形如 session-<uuid>；标识匹配同时接受含 session- 的前缀与裸 uuid 前缀（§3.4 示例）。 */
+/**
+ * 主会话 id 形如 `session-<uuid>`。
+ *
+ * 标识匹配同时接受含 `session-` 的前缀与裸 uuid 前缀：调用方从产物里拿到的 id 带 `session-`，
+ * 而从会话目录名或事件字段里摘出的 uuid 不带，两种写法都必须能取到同一目标（"显示值即可传值"
+ * 与"手工抄 uuid"是同一个目标解析入口的两种输入形态）。
+ */
 function idMatchesPrefix(id: string, loweredValue: string): boolean {
   const loweredId = id.toLowerCase();
   if (loweredId.startsWith(loweredValue)) return true;
@@ -102,7 +108,7 @@ export function resolveTargetWithin(
 /**
  * 解析会话标识：last（主会话最近活动者）／完整 id／唯一前缀（≥8 字符，大小写不敏感）。
  *
- * P7 根因修复——"目标不存在"必须与"目标存在但不可读"可区分：
+ * 三态判定的根因——"目标不存在"必须与"目标存在但不可读"可区分：
  * 解析在发现阶段（`discoverReadableSessions`）之上进行，而发现阶段会跳过 header 不可读的会话目录
  * （日志正在被写入导致撕裂、格式分类为 malformed/unsupported、header 缺 id 等）。这些会话确实存在于
  * 磁盘上，只是此刻读不到。因此：

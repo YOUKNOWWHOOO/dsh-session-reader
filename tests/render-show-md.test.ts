@@ -1,13 +1,17 @@
 // show 的 Markdown 渲染：默认可见性与隐藏摘要、开关全开、--role/--truncate 截断、覆盖声明、归属未知、轮次大纲、子代理块、围栏动态长度、MD014 中和与空事件节点。
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { ASK_USER_QUESTION_LABEL, analyzeAskUserEvents } from "../scripts/lib/ask-user.ts";
+import { renderShowJson } from "../scripts/lib/render-json.ts";
 import { renderShowMd } from "../scripts/lib/render-show-md.ts";
 import type { SessionNode } from "../scripts/lib/store-types.ts";
 import {
+  askQuestionEvent,
   askSampleErrorResult,
   askSampleMalformed,
   askSamplePaired,
   askSampleUnpaired,
+  toolResultIsErrorOnlyEvent,
 } from "./fixtures.ts";
 import {
   assertDocumentShape,
@@ -299,7 +303,6 @@ describe("renderShowMd 的问答条目", () => {
     assert.equal(rendered.content.includes("**提问**"), false);
     assert.equal(rendered.content.includes("**回答**"), false);
   });
-
   it("--probe 给出问答数（未配对与错误态时回答数小于提问数）", () => {
     const paired = showMd(node([], askSamplePaired()), showOptions({ probe: true }));
     assert.equal(paired.content.includes("- 问答数：2 提问 / 2 回答"), true);
@@ -323,5 +326,95 @@ describe("renderShowMd 的问答条目", () => {
     };
     const withSubagents = renderShowMd(node([child]), showOptions({ subagents: true }));
     assert.equal(withSubagents.success, false);
+  });
+});
+
+describe("renderShowMd 的工具结果错误态", () => {
+  it("只写 message.isError 的结果必须标为（错误）", () => {
+    // 真实日志里普通工具失败只写 `message.isError: true`、没有 `data.error`（见 fixtures.ts 的
+    // `toolResultIsErrorOnlyEvent`）。只认 `data.error` 的实现会把这类结果渲染成普通工具结果，
+    // 而它的正文正是 `Error: …`——调用方据标签判断"这次调用是否成功"时会读反。
+    const events: Record<string, unknown>[] = [
+      { type: "turn/start", seq: 0, time: 10, data: { turn: 1 } },
+      toolResultIsErrorOnlyEvent(
+        1,
+        11,
+        "call-edit-1",
+        "Error: old_string and new_string must differ",
+      ),
+      { type: "turn/end", seq: 2, time: 12, data: { turn: 1 } },
+    ];
+    const rendered = showMd(node([], events), showOptions({ tools: true }));
+    assert.equal(rendered.content.includes("**工具结果**（错误）："), true);
+    // 正文经 `<dsh-result …>` 信封剥离后只剩错误文本，信封本身不得进入产物。
+    assert.equal(
+      rendered.content.includes("```text\nError: old_string and new_string must differ\n```"),
+      true,
+    );
+    assert.equal(rendered.content.includes("<dsh-result"), false);
+  });
+
+  it("判据只看字段：信封起点写 is-error 而 message.isError 为 false 时不算错误态", () => {
+    // 写入侧的信封属性是给模型看的标注，不是判据。若实现改为读标记文本，这条会失败——
+    // 那正是"按文本匹配判定语义"的退化形态。
+    const events: Record<string, unknown>[] = [
+      { type: "turn/start", seq: 0, time: 10, data: { turn: 1 } },
+      {
+        type: "tool/result",
+        seq: 1,
+        time: 11,
+        data: {
+          message: {
+            role: "tool",
+            source: { kind: "tool", callId: "call-text-1" },
+            toolCallId: "call-text-1",
+            isError: false,
+            content: [
+              {
+                type: "text",
+                text: '<dsh-result tool="edit" call="call-text-1" is-error="true">\n正文\n</dsh-result>',
+              },
+            ],
+          },
+        },
+        surfaceOp: "append",
+      },
+      { type: "turn/end", seq: 2, time: 12, data: { turn: 1 } },
+    ];
+    const rendered = showMd(node([], events), showOptions({ tools: true }));
+    assert.equal(rendered.content.includes("**工具结果**："), true);
+    assert.equal(rendered.content.includes("（错误）"), false);
+  });
+
+  it("三个消费面结论一致：md 标签、json isError 与问答的错误态处理", () => {
+    // 同一事件在三条路径上必须给出同一答案：md 的标签、json 的字段、问答条目是否产出。
+    // 三面各写一份判据时，最典型的漂移就是"md 标了错误、json 说 false"（本技能实际出现过）。
+    const events: Record<string, unknown>[] = [
+      { type: "turn/start", seq: 0, time: 10, data: { turn: 1 } },
+      askQuestionEvent(1, 11, "call-consistency-1", [{ id: "q1", header: "H", question: "Q" }]),
+      toolResultIsErrorOnlyEvent(2, 12, "call-consistency-1", "Error: old_string must differ"),
+      { type: "turn/end", seq: 3, time: 13, data: { turn: 1 } },
+    ];
+    const md = showMd(node([], events), showOptions({ tools: true }));
+    assert.equal(md.content.includes("**工具结果**（错误）："), true);
+
+    const document = JSON.parse(
+      renderShowJson(node([], events), {
+        summary: false,
+        subagents: false,
+        unattributable: [],
+      }).content,
+    ) as { messages: Array<{ type: string; isError?: boolean }> };
+    const resultEntry = document.messages.find((message) => message.type === "tool/result");
+    assert.equal(resultEntry?.isError, true);
+
+    const analysis = analyzeAskUserEvents(events);
+    assert.equal(analysis.success, true);
+    if (!analysis.success) return;
+    assert.deepEqual(
+      analysis.data.entries.map((entry) => entry.label),
+      [ASK_USER_QUESTION_LABEL],
+    );
+    assert.equal(analysis.data.answerCount, 0);
   });
 });

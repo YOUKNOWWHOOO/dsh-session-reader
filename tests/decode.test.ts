@@ -21,6 +21,7 @@ import {
   type SessionFormatCatalog,
   textFromBlocks,
   toolCallsFromBlocks,
+  toolResultIsError,
   toolResultText,
   userMessageText,
 } from "../scripts/lib/decode.ts";
@@ -246,6 +247,66 @@ describe("事件模型工具", () => {
     assert.equal(eventTime(event), 123);
     assert.equal(textFromBlocks(eventData(event).message), "");
     assert.equal(toolResultText(event), "结果文本");
+  });
+});
+
+describe("toolResultIsError（错误态判据的唯一实现）", () => {
+  /** 只写给定 data 的 tool/result 事件；正文与判据无关，固定给一段错误文本以证明判据不读正文。 */
+  function resultEvent(data: Record<string, unknown>): Record<string, unknown> {
+    return { type: "tool/result", seq: 1, time: 10, data };
+  }
+
+  it("只带 data.error 时为错误态", () => {
+    assert.equal(
+      toolResultIsError(resultEvent({ error: { name: "UserQuestionError", code: "ASK_ABORTED" } })),
+      true,
+    );
+  });
+
+  it("只带 message.isError: true 时为错误态（真实日志里普通工具失败的形态）", () => {
+    assert.equal(
+      toolResultIsError(
+        resultEvent({
+          message: {
+            role: "tool",
+            isError: true,
+            content: [{ type: "text", text: "Error: old_string and new_string must differ" }],
+          },
+        }),
+      ),
+      true,
+    );
+  });
+
+  it("两个字段都没有时为普通结果（正文以 Error 开头也不改变判定）", () => {
+    assert.equal(
+      toolResultIsError(
+        resultEvent({
+          message: { role: "tool", content: [{ type: "text", text: "Error: 只是正文" }] },
+        }),
+      ),
+      false,
+    );
+  });
+
+  it('message.isError 只认严格布尔 true：1、"true"、false 与非对象都不算', () => {
+    for (const isError of [1, "true", false, null]) {
+      assert.equal(
+        toolResultIsError(resultEvent({ message: { role: "tool", isError } })),
+        false,
+        String(isError),
+      );
+    }
+    assert.equal(toolResultIsError(resultEvent({ message: "不是对象" })), false);
+    assert.equal(toolResultIsError(resultEvent({})), false);
+  });
+
+  it("data.error 存在即错误态，即使 isError 为 false 或 message 缺失", () => {
+    assert.equal(
+      toolResultIsError(resultEvent({ error: { name: "X" }, message: { isError: false } })),
+      true,
+    );
+    assert.equal(toolResultIsError(resultEvent({ error: "错误文本" })), true);
   });
 });
 

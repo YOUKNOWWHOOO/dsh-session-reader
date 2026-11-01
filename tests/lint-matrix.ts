@@ -1,4 +1,4 @@
-// 全组合穷尽 lint 门禁（f2 lint 合规 spike §5 方案的可执行实现）。
+// 全组合穷尽 lint 门禁：证明"任意会话内容 × 任意有效参数组合"生成的 md 产物真实通过全局 markdownlint 基线。
 // 目的：证明"任意会话内容 × 任意有效参数组合"生成的 md 产物真实通过全局 markdownlint 基线，
 // 并对 json/jsonl 做结构回归、对手写结构白名单做断言、对确定性/错误路径做验证。
 // 用法（Windows；桌面版 Electron-as-Node 原生执行 TypeScript）：

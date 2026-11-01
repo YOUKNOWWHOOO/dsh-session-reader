@@ -139,8 +139,8 @@ export function checkMarkdownStructure(
   }
   // BOM 只在文件开头才是 BOM 标记；载荷内部的 U+FEFF 是数据，契约明确要求零宽字符在载体内原样保留
   // （开发规范 R4），因此这里只拦"以 BOM 开头"，其余位置的 U+FEFF 由骨架级检查处理（见行循环）。
-  // 实测根因：真实会话的工具结果里就有一段以 U+FEFF 开头的 C++ 源码（web 抓取内容），此前按
-  // `content.includes("\uFEFF")` 判定会让该用例随真实数据在红绿之间摆动。
+  // 实测根因：真实会话的工具结果里就有一段以 U+FEFF 开头的 C++ 源码（web 抓取内容），按
+  // `content.includes("\uFEFF")` 判定会让该用例随真实数据在红绿之间摆动，因此判据必须是"以 BOM 开头"。
   if (content.startsWith("\uFEFF")) fail("以 BOM 开头");
   if (content.includes("\t")) fail("含制表符（应已归一化为空格）");
   // 输出契约要求 LF-only：CR 会被 markdownlint 忽略，因此必须在此单独拦截，

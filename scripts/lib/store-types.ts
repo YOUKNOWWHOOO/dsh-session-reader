@@ -1,7 +1,8 @@
 // 会话数据层：发现（canonical generation 选择）、三源元数据合并（header + projcache + workspace.json）、
 // 读取/搜索/统计/完整性校验。
-// 数据契约（方案 §2.6/§2.7）：日志只读；projcache 是列表/统计元数据的唯一来源（version + identity 校验，
-// 失败/缺失一律显式标注"元数据不可用"，不静默空值）；workspace.json 仅提供工作区标题。
+// 数据契约（见 doc\开发规范.md 的数据契约与覆盖声明契约）：日志只读；projcache 是列表/统计元数据的
+// 唯一来源（version + identity 校验，失败/缺失一律显式标注"元数据不可用"，不静默空值）；workspace.json
+// 仅提供工作区标题。
 // 本模块是数据层的共享类型词表：跨模块使用的数据类型只在此处定义一次
 // （StoreError 错误分类、发现/元数据/列表/检索/统计/校验的视图与 outcome 接口），各实现模块按需以
 // `import type` 引入，从而让实现模块之间只依赖类型、不互相依赖内部结构。
@@ -243,10 +244,7 @@ export interface SearchHit {
 export interface SearchOutcome {
   readonly hits: SearchHit[];
   readonly totalHits: number;
-  readonly scannedSessions: number;
   readonly truncated: boolean;
-  /** 实际参与检索的会话数（= `coverage.includedCount`）。 */
-  readonly searchedSessions: number;
   readonly scope: "text" | "tools" | "all";
   /**
    * 本次作用域内被默认可见性排除的注入条数（按类别分列）。

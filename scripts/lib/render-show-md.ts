@@ -34,6 +34,7 @@ import {
   readString,
   reasoningFromBlocks,
   textFromBlocks,
+  toolResultIsError,
   toolResultText,
   userMessageText,
 } from "./decode.ts";
@@ -109,7 +110,7 @@ function optionalInline(valueText: string | undefined): string {
 }
 
 /**
- * show 头部 KV 块（一个多行段落；值经载体隔离；f2 R2-4）。
+ * show 头部 KV 块（一个多行段落；值经载体隔离；md 输出格式契约 R2）。
  *
  * `probe` 仅在规模探测时为非 null：探测会先做一次完整渲染来量出正文字节数（以"它自己的完整副本"
  * 为准，而不是估算公式），并给出问答事件计数；常规导出传 null，避免"顺手算一遍完整正文"的隐性成本。
@@ -472,7 +473,9 @@ function timelineItem(
     // 回执的默认排除由 renderTimelineMd 统一判定与计数（那里同时决定它是否被跳过），
     // 这里只负责在它进入渲染时按普通工具结果处理——`--tools` 打开时它作为调度往返的记录出现。
     if (options.tools) {
-      const isError = asRecord(data.error) !== undefined;
+      // 错误态判据只有一处实现：`data.error` 与 `message.isError` 任一成立即为错误态，
+      // 只认前者会把只带 `message.isError` 的真实结果渲染成普通结果。
+      const isError = toolResultIsError(event);
       items.push(
         ...fencedItem(
           `**工具结果**${isError ? "（错误）" : ""}`,
@@ -501,7 +504,6 @@ function timelineItem(
       return null;
     }
     // 事件载荷的截断口径与其它文本一致：由 `--truncate` 单独决定，`0` 即不截断。
-    // 此前固定截到 200 字符且不读 `--truncate`，使"默认不截断"的契约在事件视图下静默失效。
     const payload = truncateText(eventDataJson(event), options.truncate);
     return [`${labelLine("**事件**", event, options)}${inlineValue(type)} ${inlineValue(payload)}`];
   }

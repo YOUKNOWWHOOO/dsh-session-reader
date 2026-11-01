@@ -10,9 +10,9 @@
 // 设计约束：本模块不读命令语义、不产出任何命令级文案；载体与归一化是"实现与测试的单一真值源"，
 // 任何新载体都必须复用同一套动态反引号长度规则，禁止各渲染器自造转义或第二份归一化。
 //
-// 以下为拆分前 render.ts 文件头的层规则原稿（输出格式终稿：方案 v2 §3.9 / f2 报告 §4 R1–R5），逐字保留：
+// 层规则（要求与验收标准见 doc\开发规范.md 的「md 输出格式契约」R1–R5；载体与归一化的实现只在本模块）：
 // 渲染层：Markdown（lint-safe）/JSON/JSONL 输出、可见性控制（推理/工具/事件）、范围筛选、截断、覆盖声明、摘要文案。
-// 输出格式为"实现与测试的单一真值源"（方案 v2 §3.9 / f2 报告 §4 R1–R5 为规则终稿）：
+// 输出格式为"实现与测试的单一真值源"：
 // - md：GFM 子集、结构骨架只用固定词表与工具生成值；任意文本只经两种载体承载——
 //   多行文本 → 动态长度围栏（反引号 + `text` 语言）；单行文本 → 行内代码跨度（动态反引号）；
 //   三条极小归一化：CR/CRLF → LF 与制表符 → 4 空格（MD010）、行内值首尾空白去除（MD038）、全 `$` 载荷
@@ -107,7 +107,7 @@ export function tokenTotalsText(tokens: TokenTotals): string {
   return `${tokens.uncachedInputTokens}/${tokens.outputTokens}/${tokens.cacheReadTokens}/${tokens.cacheWriteTokens}`;
 }
 
-// ------------------------- lint-safe 渲染规则（f2 R1–R5） -------------------------
+// ------------------------- lint-safe 渲染规则（R1–R5） -------------------------
 
 /** 最长连续反引号串长度（围栏/行内跨度定界依据）。 */
 function maxBacktickRun(text: string): number {
@@ -117,7 +117,7 @@ function maxBacktickRun(text: string): number {
 }
 
 /**
- * 归一化 1：制表符 → 4 空格（MD010 覆盖围栏与行内代码；f2 R3-1）。
+ * 归一化 1：制表符 → 4 空格（MD010 覆盖围栏与行内代码；R3）。
  *
  * 同一步骤内把 CRLF 与孤立 CR 一律折叠为 LF：输出契约要求产物为"UTF-8 无 BOM、LF"，
  * 而会话正文本身可能含 CR 字节，一旦漏过就会让产物混入 CR。内嵌 CR 不会被 markdownlint
@@ -128,7 +128,7 @@ export function normalizeTabs(text: string): string {
   return text.replace(/\r\n|\r/gu, "\n").replace(/\t/gu, " ".repeat(TAB_WIDTH));
 }
 
-/** MD014 触发判定：所有非空行均以「可选空白 + $ + 空白」开头（f2 R3-3）。 */
+/** MD014 触发判定：所有非空行均以「可选空白 + $ + 空白」开头（R3）。 */
 export function wouldTriggerMd014(payload: string): boolean {
   const lines = payload
     .replace(/\r\n|\r/gu, "\n")
@@ -137,26 +137,26 @@ export function wouldTriggerMd014(payload: string): boolean {
   return lines.length > 0 && lines.every((line) => /^\s*\$\s+/u.test(line));
 }
 
-/** 归一化 2：MD014 中和——在载荷末尾追加一行单个空格（原文各行逐字保留；f2 R3-3）。 */
+/** 归一化 2：MD014 中和——在载荷末尾追加一行单个空格（原文各行逐字保留；R3）。 */
 export function neutralizeMd014(payload: string): string {
   return wouldTriggerMd014(payload) ? `${payload}\n ` : payload;
 }
 
-/** 围栏载体：反引号长度 = 载荷最长连续反引号串 + 1（不小于 3）、信息串固定 `text`（f2 R1-7/R2-1）。 */
+/** 围栏载体：反引号长度 = 载荷最长连续反引号串 + 1（不小于 3）、信息串固定 `text`（R1/R2）。 */
 export function fenceBlock(rawPayload: string): string {
   const payload = neutralizeMd014(normalizeTabs(rawPayload));
   const marker = "`".repeat(Math.max(3, maxBacktickRun(payload) + 1));
   return `${marker}text\n${payload}\n${marker}`;
 }
 
-/** 行内代码跨度：动态反引号长度；内容以反引号开头/结尾时双边加单个空格内边距（f2 R2-2）。 */
+/** 行内代码跨度：动态反引号长度；内容以反引号开头/结尾时双边加单个空格内边距（R2）。 */
 export function inlineCodeSpan(text: string): string {
   const ticks = "`".repeat(maxBacktickRun(text) + 1);
   const needsPad = text.startsWith("`") || text.endsWith("`");
   return needsPad ? `${ticks} ${text} ${ticks}` : `${ticks}${text}${ticks}`;
 }
 
-/** 行内值载体：折叠换行、制表符归一化、去除首尾空白（MD038）；全空白值保留原样（f2 R2-2/R3-2）。 */
+/** 行内值载体：折叠换行、制表符归一化、去除首尾空白（MD038）；全空白值保留原样（R2/R3）。 */
 export function inlineValue(rawValue: string): string {
   let value = rawValue.replace(/\r\n|\r|\n/gu, " ");
   value = normalizeTabs(value);
@@ -164,12 +164,12 @@ export function inlineValue(rawValue: string): string {
   return inlineCodeSpan(value);
 }
 
-/** 表格单元格值：行内值 + 管道符转义（MD056/MD055；f2 R2-3）。 */
+/** 表格单元格值：行内值 + 管道符转义（MD056/MD055；R2）。 */
 export function tableCellValue(rawValue: string): string {
   return inlineValue(rawValue).replace(/\|/gu, "\\|");
 }
 
-/** 文档装配：段落之间恰一个空行、文件末尾恰一个换行（MD012/MD047；f2 R1-1/R1-2）。 */
+/** 文档装配：段落之间恰一个空行、文件末尾恰一个换行（MD012/MD047；R1）。 */
 export function assembleDocument(sections: readonly string[]): string {
   const normalized = sections
     .map((section) => section.replace(/\n+$/u, ""))

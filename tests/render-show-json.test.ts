@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { renderShowJson, renderShowJsonl } from "../scripts/lib/render-json.ts";
+import { toolResultIsErrorOnlyEvent } from "./fixtures.ts";
 import { node, RENDER_EVENTS } from "./render-helpers.ts";
 
 describe("renderShowJson / renderShowJsonl", () => {
@@ -213,5 +214,33 @@ describe("renderShowJson / renderShowJsonl", () => {
     assert.equal(header.type, undefined);
     const event = JSON.parse(lines[1]) as Record<string, unknown>;
     assert.equal(event.seq, 0);
+  });
+
+  it("只写 message.isError 的工具结果在 messages 里为 isError: true", () => {
+    // 与 md 侧同一判据（decode.ts 的 toolResultIsError）。只认 `data.error` 的实现会在这里写出
+    // `isError: false`，而该结果的正文正是 `Error: …`；json 是给程序消费的形态，
+    // 这个字段被读反的影响比标签更直接。
+    const events: Record<string, unknown>[] = [
+      { type: "turn/start", seq: 0, time: 10, data: { turn: 1 } },
+      toolResultIsErrorOnlyEvent(
+        1,
+        11,
+        "call-edit-1",
+        "Error: old_string and new_string must differ",
+      ),
+      { type: "turn/end", seq: 2, time: 12, data: { turn: 1 } },
+    ];
+    const document = JSON.parse(
+      renderShowJson(node([], events), {
+        summary: false,
+        subagents: false,
+        unattributable: [],
+      }).content,
+    ) as { messages: Array<{ type: string; isError?: boolean; text: string }> };
+    const result = document.messages.find((message) => message.type === "tool/result");
+    assert.notEqual(result, undefined);
+    assert.equal(result?.isError, true);
+    // 信封在 json 正文里已剥离，只剩错误文本。
+    assert.equal(result?.text, "Error: old_string and new_string must differ");
   });
 });

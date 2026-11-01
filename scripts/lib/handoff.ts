@@ -35,7 +35,7 @@ import {
 } from "./deployment-text.ts";
 import { EMPTY_VALUE } from "./render-core.ts";
 
-/** `**交接**` 标签取值（对外契约，不得改写；标签词表因此由 12 个扩为 13 个）。 */
+/** `**交接**` 标签取值（对外契约，不得改写；该条目使标签词表新增一个取值）。 */
 export const HANDOFF_LABEL = "交接";
 
 /** 交接事件的来源种类取值（`data.message.source.kind`）。 */

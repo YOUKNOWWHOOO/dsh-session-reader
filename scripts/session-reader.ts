@@ -1,9 +1,9 @@
 // session-reader CLI 入口：选项表驱动的解析/校验/帮助/分派/输出落盘。
-// 契约（方案 §2.4/§2.5/§3）：
+// 契约（见 doc\开发规范.md 的 CLI 契约与输出策略两节）：
 // - 所有命令必须显式 --output-dir（缺省退出 2）；工具对该目录零假定；
 // - 输出文件必须不存在（已存在拒绝）；唯一临时文件关闭后同卷原子移动；UTF-8 无 BOM；
 // - stdout 固定两行（完整输出已保存到: <绝对路径> / <摘要>；输出文件共 N 行）；终端不显示正文；
-// - stderr 只输出 `错误: <分类>`（分类全集见 §2.5；歧义目标附候选数）；
+// - stderr 只输出 `错误: <分类>`（分类全集见该文档的 CLI 契约；歧义目标附候选数）；
 // - 退出码：0 成功、1 目标不存在、2 参数错误、3 数据/IO 错误。
 import {
   closeSync,
@@ -93,7 +93,7 @@ function commonOptions(formatValues: readonly string[]): OptionSpec[] {
       kind: "value",
       valueName: "<目录>",
       valueKind: "string",
-      description: "官方格式库解析锚点（兼容覆盖）",
+      description: "官方格式库解析锚点（显式覆盖）",
       defaultText: "桌面版安装内 app.asar\\dsh\\node_modules；定位不到时用 --lib-root 覆盖",
     },
     {
@@ -194,7 +194,8 @@ export const COMMANDS: readonly CommandSpec[] = [
       {
         name: "--full",
         kind: "switch",
-        description: "逐会话块列出全部字段（替代精简表格；仅 md）",
+        description:
+          "逐会话块列出全部字段（替代精简表格；仅对 md 生效，与 --format json 同用时被接受但无效果）",
       },
     ],
   },
@@ -292,7 +293,7 @@ export const COMMANDS: readonly CommandSpec[] = [
         valueKind: "enum",
         values: SCOPE_VALUES,
         description:
-          "检索范围（text=用户/助手正文与提问/回答的可读文本，与默认提取同口径；tools=另含工具参数与结果；all=另含推理/系统/压缩/命令/标题请求/web 请求/交付物/待办/代理信箱与每条事件载荷，是取回被默认排除内容的入口）",
+          "检索范围（text=用户/助手正文、提问/回答与上下文摘要/交接通知/交接指令/子代理任务的可读文本，与默认提取同口径；tools=另含工具参数与结果；all=另含推理/系统/压缩/命令/标题请求/web 请求/交付物/待办/代理信箱与每条事件载荷，是取回被默认排除内容的入口）",
         defaultText: "text",
       },
       { name: "--case-sensitive", kind: "switch", description: "区分大小写（默认不区分）" },
@@ -946,6 +947,36 @@ function removeFileIfExists(path: string): boolean {
 }
 
 /**
+ * 写满全部字节：`writeSync` 的返回值是本次实际写入的字节数，可能小于请求长度（部分写入在磁盘配额、
+ * 信号中断、网络/虚拟文件系统等情形下都会出现），单次调用后直接 `closeSync` 会留下一个长度不足的
+ * 临时文件，随后被 `renameSync` 提交成"看起来成功、内容被截断"的产物——这比显式失败危险得多。
+ *
+ * 因此按返回值推进偏移量直到写完；某次返回非正数表示写入无法继续推进（磁盘满、管道关闭等），
+ * 立即抛错，由调用方映射为"输出写入失败"（退出 3）并删除临时文件。
+ *
+ * 写成独立的纯函数（写入动作由参数注入）是为了让"部分写入"这条路径可被单元测试覆盖：
+ * 真实文件系统几乎不会产生部分写入，而这段循环恰恰只在那种边缘情形下才被执行。
+ *
+ * @param content 待写入的完整文本（按 UTF-8 编码）。
+ * @param write 写入一段字节并返回实际写入字节数的动作。
+ * @throws Error 写入无法推进（返回非正数）时抛出，消息含已写与总字节数以便定位。
+ */
+export function writeAllBytes(
+  content: string,
+  write: (buffer: Buffer, offset: number) => number,
+): void {
+  const buffer = Buffer.from(content, "utf8");
+  let offset = 0;
+  while (offset < buffer.length) {
+    const written = write(buffer, offset);
+    if (written <= 0) {
+      throw new Error(`输出写入未推进：已写 ${offset}/${buffer.length} 字节`);
+    }
+    offset += written;
+  }
+}
+
+/**
  * 输出协议：目录不存在则创建；写入唯一临时文件后同卷原子移动。
  *
  * 覆盖语义由 `overwrite` 决定，二者都不是"竞争窗口内的侥幸"，而是明确的契约：
@@ -954,6 +985,8 @@ function removeFileIfExists(path: string): boolean {
  * - `overwrite=true`（给出 `--name`）：允许替换调用方自己指定的那一个路径。
  *   Windows 的 `renameSync` 走 `MOVEFILE_REPLACE_EXISTING`，替换是原子的：任何时刻目标文件要么是
  *   旧内容、要么是新内容，不会出现半截文件。覆盖范围严格限于 `<output-dir>/<name>.<ext>`。
+ *
+ * 写入必须用 `writeAllBytes` 写满：单次 `writeSync` 的部分写入会被提交成截断产物（见该函数的说明）。
  *
  * 失败返回错误分类（输出文件已存在→2；目录创建/写入/移动失败→3）。
  * 导出以便测试直接覆盖"已存在拒绝/原子提交/覆盖提交"路径。
@@ -983,7 +1016,9 @@ export function writeOutputFile(
     return { ok: false, failure: { classification: "输出写入失败", exitCode: 3 } };
   }
   try {
-    writeSync(handle, content, null, "utf8");
+    writeAllBytes(content, (buffer, offset) =>
+      writeSync(handle, buffer, offset, buffer.length - offset),
+    );
     closeSync(handle);
   } catch {
     removeFileIfExists(tempPath);
@@ -1028,8 +1063,15 @@ async function runParsedCommand(parsed: ParsedCommand): Promise<RunOutcome> {
       "找不到官方格式库：桌面版安装内的默认锚点（%LOCALAPPDATA%\\Programs\\DeepSeek Harness\\resources\\app.asar\\dsh\\node_modules）未能定位，请用 --lib-root <目录> 指定含 @deepseek-ai 的 node_modules 目录",
     );
   const catalogResult = await loadCatalog(libRoot);
+  // 加载失败的 detail 不得带上 `libRoot`：它是绝对路径，含用户名与 dsh 数据/安装布局，而 stderr 的
+  // 契约是"不含会话内容、会话 ID、用户名与 dsh 数据路径"（见 doc\开发规范.md 的 CLI 契约）。
+  // 因此这里只给固定分类 + 不含路径的下一步，具体原因由 loadCatalog 的返回值内部保留（不外显）。
   if (!catalogResult.success)
-    return failure("内部错误", 3, `官方格式库加载失败，解析锚点为 ${libRoot}`);
+    return failure(
+      "内部错误",
+      3,
+      "官方格式库加载失败；确认桌面版安装完整，或用 --lib-root <目录> 指定含 @deepseek-ai 的 node_modules 目录",
+    );
   const catalog: SessionFormatCatalog = catalogResult.data;
   const prepared =
     parsed.command === "list" || parsed.command === "check"

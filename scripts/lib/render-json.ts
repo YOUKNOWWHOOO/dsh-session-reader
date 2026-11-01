@@ -25,6 +25,7 @@ import {
   readString,
   reasoningFromBlocks,
   textFromBlocks,
+  toolResultIsError,
   toolResultText,
   userMessageText,
 } from "./decode.ts";
@@ -155,7 +156,10 @@ function buildMessageEntries(
         type,
         role: "tool",
         callId: readString(source, "callId") ?? null,
-        isError: asRecord(data.error) !== undefined,
+        // 错误态判据只有一处实现（decode.ts 的 toolResultIsError）：`data.error` 与
+        // `message.isError` 任一成立即为错误态。只认前者会把只带 `message.isError` 的真实
+        // 结果写成 `isError: false`，调用方据此判断调用成败时会读反。
+        isError: toolResultIsError(event),
         text: toolResultText(event),
       });
     } else if (type === "system/message") {

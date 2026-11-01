@@ -16,7 +16,12 @@ import { contextOf } from "./store-helpers.ts";
 
 const SENDER = "aaaa1111-2222-3333-4444-555566667777";
 
-/** 覆盖全部真实来源种类 + 未知 kind + 缺失 source 的事件集（kind 取值来自本机 307 会话的实测）。 */
+/**
+ * 覆盖词表内全部来源种类 + 词表外的未知 kind + 缺失 source 的事件集。
+ *
+ * kind 取值只按 `scripts\lib\message-source.ts` 的 `KNOWN_KINDS` 与"词表外"这一分类构造，
+ * 不按某次数据统计的取值集合构造：来源种类随部署与插件扩展，统计集合必然过时。
+ */
 const EVENTS: Record<string, unknown>[] = [
   { type: "turn/start", seq: 0, time: 10, data: { turn: 1 } },
   {
@@ -306,9 +311,7 @@ describe("json 归属对象", () => {
         },
       ],
       totalHits: 2,
-      scannedSessions: 1,
       truncated: false,
-      searchedSessions: 1,
       scope: "text",
       totalIsExact: true,
       excludedInjections: { userMessages: 0, subagentReceipts: 0 },
@@ -363,9 +366,7 @@ describe("检索命中行的来源标注", () => {
         },
       ],
       totalHits: 2,
-      scannedSessions: 1,
       truncated: false,
-      searchedSessions: 1,
       scope: "text",
       totalIsExact: true,
       excludedInjections: { userMessages: 0, subagentReceipts: 0 },

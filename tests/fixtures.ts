@@ -452,8 +452,13 @@ export function askAnswerEnvelopedEvent(
 /**
  * 错误态结果事件（`tool/result`）：提问被中止或取消时日志里的真实形态。
  *
- * 判据由 `scripts\lib\ask-user.ts` 的 `isErrorResult` 定义（`message.isError` 为 true 或
- * `data.error` 存在）；这里的两个字段都给出，因为真实日志两个都写。
+ * 判据由 `scripts\lib\decode.ts` 的 `toolResultIsError` 定义（`data.error` 存在或 `message.isError`
+ * 为 true）。本夹具表达**两者都写**的形态：`ask_user_question` 被中止或取消时，日志同时给出
+ * `data.error`（`{ name, code }`）与 `message.isError: true`。
+ *
+ * 真实日志里还有另一种形态——只写 `message.isError`、没有 `data.error`（普通工具失败即如此），
+ * 由下面的 `toolResultIsErrorOnlyEvent` 单独表达。两种形态必须都被判为错误态，因此不能用同一份
+ * 夹具冒充两种数据。
  *
  * @param code 工具错误码，实测取值为 `ASK_ABORTED`（用户中止）与 `ASK_CANCELLED`（用户取消）。
  */
@@ -481,6 +486,52 @@ export function askErrorResultEvent(
         content: [{ type: "text", text }],
       },
       error: { name: "UserQuestionError", code },
+    },
+    surfaceOp: "append",
+    ...extra,
+  };
+}
+
+/**
+ * 只写 `message.isError` 的错误态结果事件（`tool/result`）：普通工具失败的真实落账形态。
+ *
+ * 与 `askErrorResultEvent` 的区别只有一处：没有 `data.error`，错误态完全由 `message.isError: true`
+ * 表达。本机真实日志里普通工具失败就是这样落账的（例如编辑工具因 `old_string` 与 `new_string`
+ * 相同而失败，正文是 `Error: …` 纯文本），因此"只认 `data.error`"的实现会把它渲染成普通结果。
+ *
+ * 正文按部署侧边界插件的真实形态包一层 `<dsh-result … is-error="true">` 信封：起点行里的
+ * `is-error` 只是写入侧给模型看的标注，判据**不得**读它（读标记等于按文本匹配判定语义）；
+ * 本夹具保留该属性正是为了让"判据只看字段"这一要求可被测试验证。
+ *
+ * @param text 错误正文（真实取值形如 `Error: old_string and new_string must differ`）。
+ */
+export function toolResultIsErrorOnlyEvent(
+  seq: number,
+  time: number,
+  callId: string,
+  text: string,
+  extra?: FixtureEventExtra,
+): AskFixtureEvent {
+  return {
+    type: "tool/result",
+    seq,
+    time,
+    data: {
+      turn: 1,
+      step: 1,
+      message: {
+        role: "tool",
+        // 同 askAnswerEvent：工具结果的 source.callId 必须与 toolCallId 一致，否则整行被解码器拒绝。
+        source: { kind: "tool", callId },
+        toolCallId: callId,
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `<dsh-result tool="edit" call="${callId}" is-error="true">\n${text}\n</dsh-result>`,
+          },
+        ],
+      },
     },
     surfaceOp: "append",
     ...extra,

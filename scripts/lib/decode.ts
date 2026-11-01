@@ -1,6 +1,6 @@
 // 官方格式库接入（readHeader/createRestore/decodeRow/finish）＋事件模型工具。
 // 兼容性设计：官方库 API 收敛在本文件单点适配；不静态 import 外部包（tsc 解析不到），
-// 一律经 createRequire 锚点解析后动态 import（spike 已验证的机制）。
+// 一律经 createRequire 锚点解析后动态 import（asar 虚拟路径只有桌面运行时能解析，静态导入会连编译都过不去）。
 // 解码策略：生产读取固定为 { recovery: 'recoverable', validation: 'transformed' }。
 // 物理 JSON 行与迁移后的逻辑事件是不同计量，不能用它们的数量相等作为完整性判据。
 import { createRequire } from "node:module";
@@ -418,7 +418,7 @@ export function toolCallsFromBlocks(blocks: unknown): ToolCallBlock[] {
  * 从 tool/result 事件 data.message.content 中抽取工具结果文本。
  *
  * 必须兼容两种内容形态，否则对某一代的日志会**静默抽不到任何文本**（实测踩过：只认
- * `tool-result` 嵌套块时，对当前 v4 日志的 410 个工具结果事件全部返回空串，表现为
+ * `tool-result` 嵌套块时，对当前 v4 日志的工具结果事件全部返回空串，表现为
  * `show --tools` 不显示工具输出、`search --scope tools` 检索不到工具结果）：
  * - 当前 v4：内容块是普通的 `{type:"text", text}`，与消息正文同形；
  * - 旧版本日志：内容是 `{type:"tool-result", content:[…]}` 的嵌套块。
@@ -449,4 +449,28 @@ export function toolResultText(event: EventRecord): string {
     if (nested.length > 0) parts.push(nested);
   }
   return stripResultEnvelopeLenient(parts.join("\n"));
+}
+
+/**
+ * 工具结果的错误态判据：`data.error !== undefined` 或 `data.message.isError === true`，任一成立即为错误态。
+ *
+ * 两个字段都要看，这不是"双保险"而是两种实际落账形态：本机真实日志里既有只带 `data.error` 的结果，
+ * 也有只带 `message.isError: true` 的结果（编辑工具因 `old_string` 与 `new_string` 相同而失败、
+ * 运行时拒绝某次调用等，都只有后者）。只认 `data.error` 会把后者渲染成普通结果、在 json 里写成
+ * `isError: false`，而它的正文往往正是 `Error: …`——调用方据产物判断"这次调用是否成功"时会读反。
+ *
+ * 判据只此一处：md 标签（`**工具结果**（错误）`）、json 的 `isError` 字段与问答的错误态处理
+ * （错误态结果不产出 `**回答**` 条目）都调用本函数。三处各写一份必然漂移，而"呈现"与"检索"
+ * 对同一事件给出不同答案正是本技能要避免的缺陷形态。
+ *
+ * 注意 `message.isError` 只认严格布尔 `true`：缺失、`false` 与非布尔值都不算错误态。
+ *
+ * @param event 已解码的逻辑事件（应为 `tool/result`；其它类型按其字段尽力判定）。
+ * @returns 该结果是否为错误态。
+ */
+export function toolResultIsError(event: EventRecord): boolean {
+  const data = eventData(event);
+  if (data.error !== undefined) return true;
+  const message = asRecord(data.message);
+  return message !== undefined && readBoolean(message, "isError") === true;
 }

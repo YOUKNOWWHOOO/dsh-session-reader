@@ -28,9 +28,7 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
         },
       ],
       totalHits: 4,
-      scannedSessions: 2,
       truncated: true,
-      searchedSessions: 2,
       scope: "all",
       totalIsExact: true,
       excludedInjections: { userMessages: 0, subagentReceipts: 0 },
@@ -62,13 +60,39 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
     assert.equal(rendered.summary, md.summary);
   });
 
+  it("检索范围文案逐项列出 text 档的四类合成条目与默认排除", () => {
+    // 覆盖面描述是调用方判断"0 命中能否当作不存在"的唯一依据：漏写某一类单元会让调用方
+    // 把该类的命中读成不属于本档、把该类的 0 命中读成不存在。因此这里逐项锁定四类合成条目，
+    // 防止文案再次漂移回"只有用户/助手正文与提问/回答"。
+    const outcome: SearchOutcome = {
+      hits: [],
+      totalHits: 0,
+      truncated: false,
+      scope: "text",
+      totalIsExact: true,
+      excludedInjections: { userMessages: 0, subagentReceipts: 0 },
+      coverage: coverage({ includedCount: 1 }),
+      scan: scanSummary(),
+      distribution: [],
+    };
+    const content = renderSearchMd(outcome).content;
+    assert.equal(
+      content.includes(
+        "检索范围：text（用户/助手正文、提问/回答可读文本与上下文摘要/交接通知/交接指令/子代理任务四类合成条目（不含框架注入与子代理调度回执））；命中总数 0 为精确值",
+      ),
+      true,
+    );
+    for (const label of ["上下文摘要", "交接通知", "交接指令", "子代理任务"]) {
+      assert.equal(content.includes(label), true, label);
+    }
+    assert.equal(content.includes("不含框架注入与子代理调度回执"), true);
+  });
+
   it("search 未截断时无截断标注，且排除项逐条列出", () => {
     const outcome: SearchOutcome = {
       hits: [],
       totalHits: 0,
-      scannedSessions: 1,
       truncated: false,
-      searchedSessions: 1,
       scope: "text",
       totalIsExact: true,
       excludedInjections: { userMessages: 0, subagentReceipts: 0 },
