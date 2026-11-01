@@ -17,7 +17,7 @@
 - 子代理会话自身的首条任务消息（header 的 `origin` 为 `subagent`、首条 `source.kind` 为 `user` 且不带 `rpcId`）渲染为 `**子代理任务**`，不再伪装成 `**用户**`；带 `rpcId` 的真实消息不标。父会话中 `subagent` 工具调用的任务条目复用同一标签名。
 - 可读正文统一剥离**完整**部署包装：注入消息的 `<dsh-injection …>…</dsh-injection>`（子代理初始任务的两个顺序信封一并剥离）、用户消息与带文本块的助手消息的 `<dsh-message …>…</dsh-message>`，以及普通工具结果的 `<dsh-result …>…</dsh-result>`。覆盖 `show` 的 md 时间线与 json 的 `text`、轮次大纲、检索单元与命中片段，以及 `**上下文摘要**`、`**交接通知**`、`**交接指令**`、`**子代理任务**` 四个合成条目的正文。不完整或形态异常的包装原样显示，不做尽力截取；`show --format jsonl` 保留原始事件，是逐字核对与取回被剥离标记的唯一入口。注入起点的 `kind` 读取集中在一个单点实现，交接判定只消费它，不自行解析标记。
 - 默认导出的时间线新增 `**交接**` 条目：上下文交接的结构事实，来自 `developer/message` 且其 `data.message.source.kind` 为 `handoff` 的事件。条目恒为三行，分别是 `轮次 <turn>／步 <step>`、`历史替换 seq <start>-<end>（<n> 条事件）`、`投递 <target>；正文 seq <seq>（<字符数> 字符）`；字段缺失按空值契约显示 `-`。该条目默认可见、没有关闭开关，不受 `--thinking`/`--tools`/`--events` 控制（`--events` 打开时同一事件不再以 `**事件**` 形态重复出现），不受 `--role` 影响，仍受 `--turn`/`--seq` 与 `--head`/`--tail` 影响，且不计入任何隐藏计数；`--summary` 不输出该条目，`--format json` 不新增条目类型。
-- 标题归一化：会话标题若以部署标记起点开头（`<dsh-injection`、`<dsh-message`、`<dsh-result` 后接一个空格，或不带空格的起点 `<compacted-summary>`），一律视为不可用。此类取值是注入正文的首行，不是标题，常见于子代理会话。不可用时 md 显示 `-`，json 为 `null`，`--title` 对该类会话落选，且不产生任何元数据不完整声明。
+- 标题归一化：会话标题先去掉首尾空白；空标题与以部署标记起点开头的标题（`<dsh-injection`、`<dsh-message`、`<dsh-result` 后接一个空格，或不带空格的起点 `<compacted-summary>`）一律视为不可用。此类取值是注入正文或落账标记的残片，不是标题，常见于子代理会话。不可用时 md 显示 `-`，json 为 `null`，`--title` 对该类会话落选，且不产生任何元数据不完整声明。
 - `stats --format json` 的顶层（`single` 与 `global` 两种 `kind`）新增 `excludedMetricSessions`，与 md 摘要行的 `（N 个会话未计入，原因见输出文件）` 同源；`single` 恒为 0。
 
 ### Changed

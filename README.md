@@ -80,7 +80,7 @@ scripts/
     decode.ts               官方格式库加载、事件解码与正文抽取出口
     frames.ts               物理层 zstd 帧扫描与逐帧解压
     paths.ts                官方格式库默认锚点、保留设备名与路径工具
-    deployment-text.ts      部署包装的解析与剥离
+    deployment-text.ts      部署包装解析与剥离、内层标记清理、标题归一化
     context-checkpoint.ts   合成上下文消息的判定与正文抽取
     ask-user.ts             问答的可读文本抽取
     handoff.ts              交接的结构事实与投递判定
