@@ -24,7 +24,7 @@ dsh 有两套代理预设：随附的 `standard` 与自定义的 `dsh-custom`（
 
 ## 适用环境
 
-- **平台**：Windows。技能的路径处理、输出文件名校验与文件移动语义都按 Windows 实现（例如拒绝 `CON`、`PRN`、`NUL`、`COM1`-`COM9`、`LPT1`-`LPT9` 这 22 个保留设备名）。
+- **平台**：Windows。技能的路径处理、输出文件名校验与文件移动语义都按 Windows 实现（例如拒绝 `CON`、`PRN`、`AUX`、`NUL`、`COM1`-`COM9`、`LPT1`-`LPT9` 这 22 个保留设备名）。
 - **执行载体**：必须是桌面版 DeepSeek Harness 的 Electron-as-Node。脚本是 TypeScript（ESM），由该运行时原生类型剥离直接执行，没有构建步骤，也不需要 `tsconfig.json` 参与运行。PATH 中的系统 Node（v26 线）同样能原生执行 TypeScript，但解析不了桌面版安装归档 `app.asar` 内的虚拟路径（其 `existsSync` 对归档内路径恒为 false），默认锚点因此定位不到、无法加载官方格式库；本技能不承诺用系统 Node 直接运行，这种用法只适用于用 `--lib-root` 指向真实目录的开发场景。
 
   用法固定为两行设置加 `& $desktopNode` 调用：
@@ -78,7 +78,7 @@ dsh 有两套代理预设：随附的 `standard` 与自定义的 `dsh-custom`（
 - 过滤：`--workspace`、`--since`/`--until`、`--title`、`--origin`。
 - 排序：`--sort time|created|title|size|turns`，默认 `time`；`title` 升序，其余降序。
 - 条数：`--limit N`，默认 100，`0` 为不限。
-- `--full`：换成逐会话的完整块，额外给出 cwd、预设、模型、令牌用量（未缓存输入／输出／缓存读／缓存写）与元数据可用性。
+- `--full`：换成逐会话的完整块，额外给出 cwd、预设、模型、令牌用量（未缓存输入／输出／缓存读／缓存写）与元数据可用性。只改变 md 形态，与 `--format json` 同用时被接受但无效果。
 - 默认隐藏空会话，用 `--include-blank` 显示。
 - 结果末尾给出合计（匹配数、显示数、扫描数）与逐条元数据说明，并带覆盖声明。
 
@@ -199,7 +199,7 @@ $desktopNode = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/resources/
 
 不给 `--name` 时，文件名是 `session-reader-<命令>-<UTC 时间戳>-<随机 6 位>.<扩展名>`，且同名文件已存在就拒绝执行（退出码 2），因此不会覆盖既有文件。给 `--name` 时文件名固定为 `<output-dir>/<name>.<扩展名>`，同名文件被原子替换，会覆盖上一次的内容。
 
-`--name` 只接受单一路径段：ASCII 字母、数字、`_`、`-`，以及全部汉字（含扩展 B 及以后）。长度 1-64。
+`--name` 只接受单一路径段：ASCII 字母、数字、`_`、`-`，以及全部汉字（含扩展 B 及以后）。长度按 UTF-16 单元计，1 到 64。
 
 ### 目标写法
 
@@ -272,10 +272,10 @@ UTF-8 无 BOM、LF 换行、末尾恰一个换行。Markdown 输出满足一套�
 | --- | --- |
 | 0 | 成功，含 0 命中、空结果、`--help`、`check` 未发现异常 |
 | 1 | 目标不存在，含前缀歧义、`--workspace` 无匹配、`--dsh-home` 不存在、`sessions/` 缺失 |
-| 2 | 参数错误，含 `--name` 非法、选项组合违规、缺 `--output-dir`、前缀短于 8 字符、未给 `--name` 时输出文件已存在 |
+| 2 | 参数错误，含 `--name` 非法、选项组合违规、缺 `--output-dir`、关键词为空、前缀短于 8 字符、未给 `--name` 时输出文件已存在 |
 | 3 | 数据或 IO 错误，含 `check` 发现异常、输出目录创建失败、输出写入失败、文件移动失败、官方格式库加载失败、问答载荷结构不符合预期 |
 
-stderr 的格式固定为一行 `错误: <分类>`，分类是固定的 8 个取值（`参数无效`、`目标不存在`、`数据不可读`、`内部错误`、`输出目录创建失败`、`输出文件已存在`、`输出写入失败`、`输出移动失败`）。分类后可能附一段括号说明；调用方应只依赖分类与退出码分流，括号说明的内容可能扩展。
+stderr 的格式固定为一行 `错误: <分类>`，分类是固定的 8 个取值（`参数无效`、`目标不存在`、`数据不可读`、`内部错误`、`输出目录创建失败`、`输出文件已存在`、`输出写入失败`、`输出移动失败`）。分类后可能附一段括号说明；调用方应只依赖分类与退出码分流，括号说明的内容可能扩展。错误行不含会话内容、会话标识、用户名与任何绝对路径（dsh 数据路径与安装路径都算），锚点位置只以 `%LOCALAPPDATA%` 占位形态出现，因此可以原样转贴。
 
 一个例外需要知道：`check` 发现异常时先把结果写入文件并打印两行 stdout，再以 3 结束，stderr 为空。因此退出码 3 不代表没有输出文件。
 
@@ -308,6 +308,9 @@ scripts/          实现
   lib/ask-user.ts     问答（ask_user_question）的可读文本抽取，md 渲染与检索共用
   lib/handoff.ts      交接（developer/message 的 handoff 型）结构事实、旧摘要投递与新格式通知判定，不复制正文
   lib/frames.ts       物理层：结构性 zstd 帧扫描与逐帧解压
+  lib/paths.ts        官方格式库默认锚点、保留设备名与路径工具
+  lib/visibility.ts   默认参数下的注入过滤白名单
+  lib/message-source.ts 来源归属与来源标注，md 与 json 共用
   lib/store-*.ts      会话发现、投影缓存元数据、列表、检索、统计、校验
   lib/render-*.ts     md/json/jsonl 渲染与命令级摘要
 tests/            单元测试、CLI 集成测试、md 渲染单元测试、全组合 lint 门禁
@@ -325,6 +328,9 @@ npm ci
 npx --no-install biome ci .                    # 格式化与 lint
 npx --no-install tsc --noEmit                  # 类型检查
 & $desktopNode --test "tests/**/*.test.ts"     # 测试
+# 帮助文本：总帮助与五个子命令各跑一次，均须退出 0
+& $desktopNode scripts/session-reader.ts --help
+foreach ($command in 'list', 'show', 'search', 'stats', 'check') { & $desktopNode scripts/session-reader.ts $command --help }
 & $desktopNode tests/lint-matrix.ts --workdir tests/.tmp/matrix --real-home $env:USERPROFILE\.dsh   # 全组合 lint 门禁
 npx --no-install markdownlint-cli --config .markdownlint.jsonc .
 & $desktopNode --test --experimental-test-coverage --test-coverage-lines=80 --test-coverage-branches=85 "tests/**/*.test.ts"

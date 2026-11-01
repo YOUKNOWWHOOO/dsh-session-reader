@@ -24,7 +24,7 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
   ```
 
   shim 直接引用该环境变量，缺它时以 `'""' is not recognized`、退出码 1 失败。本文件的命令示例写 `& $desktopNode`，`--help` 输出的用法行写同义的 `<desktop_node>` 占位符。
-- 官方格式库默认取桌面版安装内的 `node_modules`，该目录必须同时含 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-session-format-catalog`。锚点不成立或库加载失败时退出 3 并说明原因。可用 `--lib-root <目录>` 覆盖，取值必须是含 `@deepseek-ai` 的 `node_modules`。
+- 官方格式库默认取桌面版安装内的 `node_modules`，该目录必须同时含 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-session-format-catalog`。锚点不成立或库加载失败时退出 3，错误行只给可执行的下一步（不包含任何安装路径）。可用 `--lib-root <目录>` 覆盖，取值必须是含 `@deepseek-ai` 的 `node_modules`。
 - 全部命令必须显式指定 `--output-dir`，缺省退出 2。
 
 ## 支持的会话来源
@@ -71,10 +71,10 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 - `--limit N`：限制产物列出的条数，默认 100，`0` 为不限；不改变命中总数与覆盖声明。
 - `--case-sensitive`：检索区分大小写，默认不区分。
 - `--head N`、`--tail N`：只对根块的时间线条目取首条数或末条数，`0` 为不限。
-- `--truncate N`：按码点截断所有文本载体，`0` 为不截断；轮次大纲同此口径。
+- `--truncate N`：按码点截断所有正文载体，`0` 为不截断；轮次大纲同此口径。头部字段块不受该选项影响。
 - `--turn A-B`、`--seq A-B`：区间含端点，`--turn` 最小 1，`--seq` 最小 0。作用于每个块，子代理块按自身事件流计；两者同用时取交集。
 - `--since`、`--until`：接受毫秒数或严格 ISO 时间。纯数字按毫秒解释，无时区后缀按 UTC。与会话的最近活动时间比较，缺失该时间时用创建时间；双端含端点，不校验先后。
-- `--title <关键词>`：对标题做子串匹配，不区分大小写；标题不可用时该会话落选。无匹配时正常返回空结果，退出 0。
+- `--title <关键词>`（`list` 专有）：对标题做子串匹配，不区分大小写；标题不可用时该会话落选。无匹配时正常返回空结果，退出 0。
 - `--workspace <路径|标题>`：路径归一化后全等匹配，或工作区标题全等匹配，均不是子串；无匹配时退出 1。
 - `--origin <all|main|subagent>`：按会话日志头的 `origin` 判定，缺失或其它值算主会话。
 - `--role <user|assistant>`：只过滤对话消息，工具与事件不受影响；给出该选项后摘要行会说明角色过滤。
@@ -92,7 +92,7 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
   - `tools` 另含工具调用参数与工具结果正文，包括问答的原始载荷。
   - `all` 另含推理、系统消息、压缩摘要、命令、标题请求、web 检索请求、交付物、待办、代理信箱，以及每个事件的完整 JSON 载荷。它是取回被默认排除内容的入口。
   - 被抑制的助手副本与 `**交接**` 的结构信息在 `text` 与 `tools` 档不产生检索单元，其正文已由 `**上下文摘要**` 或 `**助手**` 承载；`all` 档仍保留整条事件载荷。
-  - `text` 与 `tools` 档会声明排除了多少条框架注入与子代理调度回执。
+  - `text` 与 `tools` 档在确有排除项时声明排除了多少条框架注入与子代理调度回执。
   - `all` 档的载荷是事件的 JSON 序列化，字段值里的引号、反斜杠与制表符是转义形态。需要逐字核对原文时用 `show --format jsonl`。
 
 选项互斥，违者退出 2：
@@ -149,7 +149,7 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 - 产物为 UTF-8 无 BOM、LF、末尾恰一个换行。
 - 未指定 `--name` 时，产物名为 `session-reader-<命令>-<UTC 时间戳>-<随机 6 位>.<扩展名>`；同名文件已存在则退出 2。
 - 指定 `--name <basename>` 时，产物为 `<output-dir>/<basename>.<扩展名>`，同名文件被原子替换，会覆盖上一次内容。
-- `--name` 只接受单一路径段：ASCII 字母、数字、`_`、`-`，以及全部汉字；长度 1 到 64；不得含 `.`、路径分隔符、空白、控制字符或 Windows 保留设备名。违者退出 2。
+- `--name` 只接受单一路径段：ASCII 字母、数字、`_`、`-`，以及全部汉字；长度按 UTF-16 单元计，1 到 64；不得含 `.`、路径分隔符、空白、控制字符或 Windows 保留设备名。违者退出 2。
 - md 产物可直接通过 markdownlint，调用方无需把输出目录排除在静态检查之外；json 与 jsonl 不参与 lint。
 - 产物可能含会话明文，按临时产物管理。
 - `-h/--help` 写 stdout、退出 0、不需要 `--output-dir`。
@@ -162,6 +162,7 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 - 区块标题：`## 时间线`、`### 时间线`（子代理块）、`## 轮次大纲`、`### 轮次大纲`、`## 子代理 <路径编号>`、`## 每会话命中分布`。子代理块固定 H2，标题层级不随深度递进，父子关系只看路径编号，如 `1.2` 是第 1 个子代理的第 2 个子代理。
 - 标签行恒以 `：` 收尾，共 16 个：`**用户**`、`**助手**`、`**推理**`、`**工具调用**（<name>）`、`**工具结果**`、`**工具结果**（错误）`、`**系统消息**`、`**事件**`、`**提问**`、`**回答**`、`**子代理任务**（<description>）`、`**发往子代理**（<子代理 id>）`、`**交接**`、`**上下文摘要**`、`**交接通知**`、`**交接指令**`。`**事件**` 不是围栏，同一行为 `` **事件**：`<类型>` `<载荷 JSON>` ``。
 - 标签行括号内的顺序固定为 `seq N`、本地时间、来源标注。前两项只在 `--headers` 时出现；来源项只在事件是 `user/message` 且来源不是用户本人时出现。
+- `**工具结果**（错误）` 与 `--format json` 的 `isError` 是同一个判据：结果被标记为错误，或其载荷带错误对象，任一成立即为错误结果。判定不看正文文案，正文以 `Error` 开头的普通结果不因此被标成错误。
 - 来源标注为 `来源 <kind>`。`agent-message` 与 `subagent-settled` 追加发送方会话 id，`plugin` 追加插件名，其它 kind 不加取值；kind 缺失或为空时显示 `来源 未标注`。常见 kind 裸写，未列出的取值放在行内代码中原样显示。
 - `**提问**` 与 `**回答**` 来自 `ask_user_question` 的调用与配对结果，默认可见，不受 `--tools` 与 `--role` 控制。提问逐题显示序号、标题、问题正文与选项；回答逐条显示问题标识、所选选项或自定义回答。提问被中止或取消时不显示回答条目，提问照常呈现。载荷结构不符时 `show` 退出 3 且不产出文件，`search` 把该会话列入排除项。
 - `**子代理任务**` 与 `**发往子代理**` 来自 `subagent` 与 `send_message` 的调用实参，默认可见，并取代对应的原始工具条目。前者显示任务正文与括号内的 description，后者显示消息正文与括号内的子代理 id。调度参数不进默认产物，需要逐字核对时用 `--format jsonl`。子代理会话自身的首条任务消息也标为 `**子代理任务**`，括号内没有 description。
@@ -173,7 +174,7 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 - `list --full` 每个会话一块，给出工作区、最近活动、轮次、大小、创建时间、cwd、预设、模型、令牌与元数据状态。
 - `stats` 单会话给出会话标识、标题、空会话、轮次、步数、工具调用、令牌、创建与最近活动、预设、模型、日志与大小；全局给出会话数、空会话数、总轮次、总步数、工具调用总数、各类令牌合计、时间跨度与日志总大小。
 - `check` 每个会话一行，给出格式版本、结构状态、帧数、行数、seq 是否连续、坏行数与异常数，末尾给出结论行。结构状态可能是 `完整`、`结构损坏` 或 `tornStart@<偏移>`。
-- `search` 命中行为 `` - `<完整 id>`（seq <N>）`<标签>`：`<片段>` ``。事件是 `user/message` 且来源不是用户本人时，括号内追加来源。标签可能是事件类型，也可能是检索单元名，如 `user`、`assistant`、`assistant/reasoning`、`tool/call`、`tool/result`、`system`、`agent/inbox`、`title-request`、`command/run`、`command/done`、`todo`、`deliverables`、`web-search-request`、`compaction/summary`、`提问`、`回答`、`上下文摘要`、`交接通知`、`交接指令`、`子代理任务`。
+- `search` 命中行为 `` - `<完整 id>`（seq <N>）`<标签>`：`<片段>` ``。事件是 `user/message` 且来源不是用户本人时，括号内追加来源。标签可能是事件类型，也可能是检索单元名，如 `user`、`assistant`、`assistant/reasoning`、`tool/call`、`tool/result`、`system`、`agent/inbox`、`title-request`、`command/run`、`command/done`、`todo`、`deliverables`、`web-search-request`、`compaction/summary`、`提问`、`回答`、`上下文摘要`、`交接通知`、`交接指令`、`子代理任务`。事件类型缺失时标签为 `(未知类型)`。
 - `show --summary` 的条目为 `- T<turn>（seq <seq>）：<prompt> → <response>`；会话没有轮次事件时整段为 `无`。
 - `list` 默认是一张表格，每行列出一个会话的 id、标题、工作区、最近活动、轮次、类型与大小。
 - 载体：多行文本用动态长度的 `text` 围栏，反引号数量保证不被内容打断；单行文本用行内代码，表格单元格内的 `|` 会转义。
@@ -188,12 +189,12 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
   - `user/message` 字段为 `seq`、`time`、`type`、`role`、`text`、`source`。
   - `assistant/message` 另含 `reasoning` 与 `toolCalls`。
   - `tool/call` 字段为 `seq`、`time`、`type`、`role`、`callId`、`name`、`arguments`。
-  - `tool/result` 字段为 `seq`、`time`、`type`、`role`、`callId`、`isError`、`text`。
+  - `tool/result` 字段为 `seq`、`time`、`type`、`role`、`callId`、`isError`、`text`；`isError` 在 `message.isError` 为真或 `data.error` 存在时为 `true`。
   - `system/message` 字段为 `seq`、`time`、`type`、`role`、`text`。
   - `source` 为 `{ kind, form, senderSessionId, plugin }`，无值者为 `null`，是判断是否用户本人的判据。
   - `--summary` 时 `messages` 为空数组，`turns` 保留；`subagents` 只在 `--subagents` 时非空。
 - `show --format jsonl`：首行是会话头，包含会话标识与格式版本；其后每行一个已解码事件，行数为事件数加一。不含子代理，不做可见性过滤，是逐事件穷尽与逐字核对的入口。
-- `search --format json`：`{ matches, total, truncated, scope, totalIsExact, coverage, scan, distribution }`。`matches[]` 字段为 `sessionId`、`seq`、`time`、`label`、`excerpt`、`source`；`distribution[]` 为 `{ sessionId, type, title, hits }`；`scan` 为 `{ logsDecoded, eventsRead, decodeFailures, frameFailures, observedFrom, observedTo }`。
+- `search --format json`：`{ matches, total, truncated, scope, totalIsExact, excludedInjections, coverage, scan, distribution }`。`matches[]` 字段为 `sessionId`、`seq`、`time`、`label`、`excerpt`、`source`；`distribution[]` 为 `{ sessionId, type, title, hits }`；`scan` 为 `{ logsDecoded, eventsRead, decodeFailures, frameFailures, observedFrom, observedTo }`。`excludedInjections` 为 `{ userMessages, subagentReceipts }`，使调用方判断 `text` 档 0 命中是否由默认排除造成。
 - `stats --format json`：`kind` 为 `single` 或 `global`，各含 `coverage` 与 `scan`。`single` 的 `session` 字段为 `id`、`title`、`blank`、`turns`、`steps`、`toolCalls`、`tokens`、`agentPreset`、`model`、`createdAt`、`lastActivityAt`、`logPath`、`logVersion`、`logCompressed`、`sizeBytes`、`metadata`。`global` 字段为 `sessionCount`、`blankCount`、`turns`、`steps`、`toolCalls`、`tokens`、`earliestCreatedAt`、`latestActivityAt`、`totalSizeBytes`、`unavailable`。
 - `check --format json`：`{ sessions, anomalyCount, coverage }`。会话字段为 `id`、`logPath`、`formatVersion`、`classification`、`structure`、`structureDetail`、`frames`、`lines`、`seqContiguous`、`badLines`、`anomalies`。
 - 时间：md 为本地时区含数值偏移的秒级 ISO 8601，如 `2026-09-18T22:39:06+08:00`；json 为原始毫秒数。
@@ -250,7 +251,7 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 | `2` | 参数错误，含 `--name` 非法、选项组合违规、缺 `--output-dir`、关键词为空、前缀短于 8 字符、未给 `--name` 时输出文件已存在 |
 | `3` | 数据或 IO 错误，含 `check` 发现异常、输出目录或文件操作失败、官方格式库加载失败、问答载荷结构不符 |
 
-- stderr 恒为一行 `错误: <分类>`，分类只有 8 个：`参数无效`、`目标不存在`、`数据不可读`、`内部错误`、`输出目录创建失败`、`输出文件已存在`、`输出写入失败`、`输出移动失败`。
+- stderr 恒为一行 `错误: <分类>`，分类只有 8 个：`参数无效`、`目标不存在`、`数据不可读`、`内部错误`、`输出目录创建失败`、`输出文件已存在`、`输出写入失败`、`输出移动失败`。错误行不含会话内容、会话标识、用户名与任何绝对路径（dsh 数据路径与安装路径都算），锚点位置只以 `%LOCALAPPDATA%` 占位形态出现，因此可以原样转贴。
 - 分类后可能附括号说明。调用方应只依赖退出码与分类分流，不要对括号内容做全等匹配。
 - `check` 发现异常时先写出产物并打印两行 stdout，再以 3 结束，stderr 为空。退出码 3 不代表没有产物。
 - 目标解析有三种结果：唯一匹配且可读时执行；多个匹配时报 `目标不存在（候选 N 个）` 并退出 1；目标存在但日志头不可读时报 `数据不可读` 并退出 3。
