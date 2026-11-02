@@ -4,8 +4,9 @@
 // 设计约束：
 // 1. 判据与词表只此一处：md 渲染（render-show-md.ts、render-md.ts）与 json 渲染（render-json.ts）一律调用本模块，
 //    禁止任何渲染器自行判别来源。理由：同一条消息在时间线、检索命中行与 json 中必须给出同一答案。
-// 2. `kind` 由官方 MessageSourceMap 定义，且该联合是"合并可扩展"的（`@deepseek-ai/dsh-llm` 的 message.d.ts：
-//    "Merge-extensible sum type — plugins add their own kinds"）。因此未知 kind 必须原样呈现，禁止丢弃，
+// 2. `kind` 由官方 MessageSourceMap 定义，且该联合是"合并可扩展"的（该声明在桌面安装里以
+//    `dsh-llm\lib\typert.host.js` 的 `declaration` 字符串承载，见下方 KNOWN_KINDS 的注释：
+//    桌面安装**不发运任何 `.d.ts`**）。因此未知 kind 必须原样呈现，禁止丢弃，
 //    也禁止归入最接近的已知类别，那会把"未知"伪装成"已知"。
 // 3. 骨架里只有固定词"来源"与词表内的 kind 裸写；词表外的 kind 与一切取自日志的取值（plugin 名、
 //    会话 id 等）一律经行内载体承载（inlineValue）。原因：日志的字段值可能含反引号或换行，
@@ -32,42 +33,61 @@ export interface SourceAttribution {
 /**
  * 本技能识别的 kind：词表内的值在 md 中裸写，词表外的值入行内载体。
  *
- * 词表的来源分三层，均取自本机安装的官方包（下列文件为实测位置；不写行号，行号会随官方包升级漂移）：基础成员 4 个由
- * `@deepseek-ai/dsh-llm\lib\types\message.d.ts` 的 `MessageSourceMap` 声明（`user`、`plugin`、
- * `model`、`tool`）；`agent-message`、`subagent-settled`、`skill-invocation`、`goal`、
- * `session-reference` 由 `dsh-subagent`、`dsh-skill`、`dsh-goal`、`dsh-session-reference` 各自
- * `declare module` 增补；`team-message` 在本机 `@deepseek-ai` 的 `.d.ts` 中没有声明，只出现在
- * `dsh-llm\lib\typert.host.js` 的聚合声明与官方适配器白名单里（同名类型 `TeamMessageSource` 亦然）。
- * `skill-catalog`、`agent-instructions`、`webhook` 由对应插件包增补。`coordinator`、`subagent-report`
- * 不出现在任何合并声明中，只出现在官方迁移适配器与持久化 worker 的取值白名单里
- * （`dsh-session-format-v0-to-v1`、`dsh-session-format-v2-to-v3`、`dsh-session-persistence-jsonl`），
- * 但它们是官方承认的合法取值，故一并视为已知。该词表**不是**对官方词表的完整声明，联合是合并
- * 可扩展的，任何未列入的取值都会走载体分支原样呈现，这正是设计意图。
+ * 词表的来源分三层，均取自本机安装的官方包（下列文件为实测位置；不写行号，行号会随官方包升级漂移）。
+ *
+ * 其一，`MessageSourceMap` 本身。**桌面安装不发运任何 `.d.ts`**：`app.asar` 内的
+ * `@deepseek-ai` 作用域按文件名后缀统计，`.d.ts` 为 0，类型文本以各包 `lib\typert.host.js`
+ * 里的 `declaration` 字符串承载。因此本词表的类型依据只能取该字段，不能引用任何 `.d.ts`
+ * 路径。`dsh-llm\lib\typert.host.js` 的 `MessageSourceMap` 声明共 23 个键：
+ * `user`、`model`、`tool`、`system-prompt`、`model-selection`、`runtime-context`、
+ * `working-directory`、`user-approval`、`ptc-mode`、`tool-registry`、`user-rpc`、
+ * `agent-message`、`subagent-settled`、`skill-invocation`、`compact-checkpoint`、
+ * `cordis-host-runner`、`team-message`、`user-question-reply`、`goal`、`plan-mode`、
+ * `schedule`、`session-reference`、`webhook`。同一份 23 键声明在 12 个包里逐字重复
+ * （`dsh-agent-preset-registry`、`dsh-api-session-controller`、`dsh-api-terminal-controller`、
+ * `dsh-client-file-upload`、`dsh-commands`、`dsh-cordis-host-runner`、`dsh-goal`、`dsh-llm`、
+ * `dsh-permission-presets`、`dsh-session-reference`、`dsh-subagent`、`dsh-user-questions`），
+ * 12 份并集仍是这 23 个键，说明它是随构建摊平的同一份聚合声明，不是各包分别增补。
+ *
+ * 其二，**不在**上述声明里、但属官方承认合法取值的：`plugin`（历史取值，只出现在迁移适配器
+ * 与持久化 worker 的取值白名单里）、`skill-catalog`（`dsh-tool-skill` 等包使用）、
+ * `agent-instructions`（`dsh-agent-instructions` 使用）、`coordinator`、`subagent-report`
+ * （只在迁移适配器与持久化 worker 的白名单里，见 `dsh-session-format-v0-to-v1`、
+ * `dsh-session-format-v2-to-v3`、`dsh-session-format-v3-to-v4`、`dsh-session-persistence-jsonl`）。
+ * 其中 `plugin` 曾被本注释并列为「声明里的基础成员」，那是失实表述：它不在声明里。
+ *
+ * 其三，**本文部署侧**声明的取值：`global-spec`、`injection-boundary`。这两个不是官方取值，
+ * 由自定义预设的插件写入，`KNOWN_KINDS` 收录它们只为让标注裸写而非入载体。
+ *
+ * 该词表**不是**对官方词表的完整声明，联合是合并可扩展的，任何未列入的取值都会走载体分支
+ * 原样呈现，这正是设计意图。
  */
 const KNOWN_KINDS: readonly string[] = [
+  // 官方 `MessageSourceMap` 声明里的取值（该声明共 23 键，见上方注释）。
   "user",
-  "plugin",
   "model",
   "tool",
   "agent-message",
   "subagent-settled",
-  "skill-catalog",
   "skill-invocation",
-  "agent-instructions",
   "team-message",
-  "coordinator",
-  "subagent-report",
   "goal",
   "webhook",
   "session-reference",
-  // 自定义模式新增的来源种类：全局规范消息、注入边界消息（runtime-context / user-question-reply
+  "compact-checkpoint",
+  "working-directory",
+  // 不在官方 `MessageSourceMap` 声明里、但由官方包实际写入或由迁移适配器与持久化 worker
+  // 的白名单承认的取值。`plugin` 是历史取值（声明里没有它），`skill-catalog` 与
+  // `agent-instructions` 由对应插件写入，`coordinator` 与 `subagent-report` 只出现在白名单里。
+  "plugin",
+  "skill-catalog",
+  "agent-instructions",
+  "coordinator",
+  "subagent-report",
+  // 本文部署侧新增的来源种类：全局规范消息、注入边界消息（runtime-context / user-question-reply
   // 两侧的独立边界消息）。它们是部署侧插件声明的取值，裸写可读性高于行内载体。
   "global-spec",
   "injection-boundary",
-  // 标准模式官方压缩检查点：来源种类固定为 compact-checkpoint，由官方包声明。
-  "compact-checkpoint",
-  // 标准模式的工作目录变更通知（runtime-context 之外的独立注入消息）。
-  "working-directory",
 ];
 
 /** 取非空字符串字段：缺失、非字符串与空串一律视为"无该字段"。 */

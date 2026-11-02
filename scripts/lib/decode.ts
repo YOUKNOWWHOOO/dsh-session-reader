@@ -118,6 +118,12 @@ function errorMessage(error: unknown): string {
  *
  * 只校验本技能真正消费的导出：`sessionFormatCatalog` 及其 `readHeader` 与 `createRestore`。
  * 历史格式支持所需的第三个包（`dsh-session-format-v3-to-v4`）不再解析，也不再断言其导出。
+ *
+ * 「只校验两个包」只约束**本函数的锚点判定**，不意味着两个包目录就能拼出一棵可用的库：
+ * `dsh-session-format-catalog` 自身静态 import 了 `dsh-session`、`dsh-session-format` 与四代
+ * 迁移适配器（`v0-to-v1`、`v1-to-v2`、`v2-to-v3`、`v3-to-v4`），而 `dsh-session` 又 import 了
+ * `@deepseek-ai/cordis`。因此 `--lib-root` 指向的目录必须是一棵**依赖闭包完整、可解析**的
+ * `node_modules`；实测只复制若干包到磁盘后加载会以 `Cannot find package '@deepseek-ai/cordis'` 失败。
  */
 export async function loadCatalog(libRoot: string): Promise<Result<SessionFormatCatalog, string>> {
   try {
