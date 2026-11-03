@@ -7,7 +7,7 @@
   "description": "读取、列出、检索、统计与校验 dsh 会话历史的技能（只读、离线、无构建步骤；本文件仅供开发期工具链使用，运行时不依赖任何安装）",
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
-    "@types/node": "26.6.2",
+    "@types/node": "24.19.2",
     "markdownlint-cli": "0.50.0",
     "typescript": "7.0.2"
   }
