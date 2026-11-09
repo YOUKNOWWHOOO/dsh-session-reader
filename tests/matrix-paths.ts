@@ -18,9 +18,10 @@ export const SESSION_READER = join(SKILL_ROOT, "scripts", "session-reader.ts");
 export const DEFAULT_LINT_CONFIG = join(SKILL_ROOT, ".markdownlint.jsonc");
 
 /**
- * 官方格式库锚点：与 CLI 的默认锚点同源（桌面版安装内 `app.asar\dsh\node_modules`，见 `scripts/lib/paths.ts`）。
+ * 官方格式库锚点：与 CLI 的默认锚点同源，由 `scripts/lib/paths.ts` 的 `defaultLibRoot` 按
+ * `%LOCALAPPDATA%\Programs` 下唯一一棵桌面安装结构定位。
  *
- * 不写死某个具体机器的安装路径：锚点由 `paths.ts` 按 `%LOCALAPPDATA%` 派生，夹具与门禁取同一函数，
+ * 不写死某个具体机器的安装路径与产品目录名：锚点由 `paths.ts` 按结构派生，夹具与门禁取同一函数，
  * 避免两处各写一份路径算术。取不到时本函数直接抛错并给出可执行的下一步：
  * 门禁的每一组组合都要真实加载官方库，没有它继续跑只会让每组各自失败、把根因淹没在成百条失败里。
  */

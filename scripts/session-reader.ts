@@ -387,22 +387,19 @@ function formatOptionLine(spec: OptionSpec): string {
   return `  ${(flags + valuePart).padEnd(34)} ${spec.description}${defaultPart}`;
 }
 
-/** 帮助文本里的脚本入口前缀（相对技能目录，与 `SKILL.md` 的命令块同源）。 */
-const USAGE_ENTRY = "<desktop_node> scripts/session-reader.ts";
+/** 帮助文本里的调用入口（相对技能目录，与 `SKILL.md` 的命令块同源）。 */
+const USAGE_ENTRY = '& "<skill_dir>\\scripts\\session-reader.ps1"';
 
 /**
  * 总帮助与子命令帮助共用的执行载体说明。
  *
- * 用法行必须写 `<desktop_node>` 占位符而不是 `node`：官方格式库位于桌面版安装归档 `app.asar`
- * 的虚拟路径内，只有桌面版 Electron-as-Node 能解析，PATH 中的系统 Node 解析不了它，
- * 写成 `node session-reader.ts` 会被读成用系统 Node 直接运行。
- *
- * 两种等价载体必须与“运行前提”登记一致，因此这里同时写明 shim 的 `DSH_DESKTOP_NODE_EXECUTABLE`
- * 前提与它转发的 `--expose-internals`；只写载体名会让只读帮助的调用方漏参数。该开关按 shim 的做法
- * 保留（实测桌面版可执行文件在默认锚点下加与不加都能完成一次 `list`，故它不被表述为硬性前提）。
+ * 用法行必须写技能自带的 PowerShell 入口脚本，而不是 `node <脚本>`：官方格式库位于桌面版安装
+ * 归档 `app.asar` 的虚拟路径内，只有桌面版 Electron-as-Node 能解析，PATH 中的系统 Node 解析不了；
+ * 而"以 Electron-as-Node 启动本脚本"这一动作由入口脚本完成，调用方不需要自己拼环境变量。
+ * 因此帮助只暴露入口脚本，并在此说明它负责的事情与 `--lib-root` 的适用范围。
  */
 const DESKTOP_NODE_NOTE =
-  "`<desktop_node>` 指桌面版 Electron-as-Node 执行载体：优先用桌面版安装自带的 runtime\\bin\\node.cmd shim，它自行设置 ELECTRON_RUN_AS_NODE=1 并转发 --expose-internals（要求 DSH_DESKTOP_NODE_EXECUTABLE 指向桌面版可执行文件）；也可自行设置 ELECTRON_RUN_AS_NODE=1、按 shim 的做法附 --expose-internals 后直接调用桌面版可执行文件。PATH 中的系统 Node 解析不了 app.asar 内的虚拟路径（existsSync 对归档内路径恒为 false），默认锚点下无法加载官方格式库。";
+  "本技能的唯一调用入口是 scripts/session-reader.ps1，它自行定位桌面版安装，以 Electron-as-Node 方式启动本脚本，并把全部参数原样转发。PATH 中的系统 Node 解析不了 app.asar 内的虚拟路径（existsSync 对归档内路径恒为 false），默认锚点下无法加载官方格式库。--lib-root 只用于开发期指向依赖闭包完整的 node_modules。";
 
 /** 构建子命令帮助文本（与选项表同源）。 */
 export function buildCommandHelp(command: CommandSpec): string {
@@ -1086,7 +1083,7 @@ async function runParsedCommand(parsed: ParsedCommand): Promise<RunOutcome> {
     return failure(
       "内部错误",
       3,
-      "找不到官方格式库：桌面版安装内的默认锚点（%LOCALAPPDATA%\\Programs\\DeepSeek Harness\\resources\\app.asar\\dsh\\node_modules）未能定位，请用 --lib-root <目录> 指定含 @deepseek-ai 的 node_modules 目录",
+      "找不到官方格式库：桌面版安装内的默认锚点未能唯一定位（要求 %LOCALAPPDATA%\\Programs 下恰有一棵含 @deepseek-ai 两个锚点包的安装树），请用 --lib-root <目录> 指定含 @deepseek-ai 的 node_modules 目录",
     );
   const catalogResult = await loadCatalog(libRoot);
   // 加载失败的 detail 不得带上 `libRoot`：它是绝对路径，含用户名与 dsh 数据/安装布局，而 stderr 的

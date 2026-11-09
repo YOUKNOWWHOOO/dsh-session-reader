@@ -1,8 +1,9 @@
-// 路径、时间与输出命名工具：DSH_HOME 解析、sessions 根、桌面安装内的格式库锚点、时间解析/格式化、
-// 路径归一化、输出文件名（时间戳命名与调用方指定的 basename）、`--name` 与区间参数校验。
+// 路径、时间与输出命名工具：DSH_HOME 解析、sessions 根、按结构定位的官方格式库默认锚点、
+// 时间解析/格式化、路径归一化、输出文件名（时间戳命名与调用方指定的 basename）、
+// `--name` 与区间参数校验。
 // 本模块不依赖其它 lib 模块（最底层），Result 类型在此定义并被其它模块复用。
 import { randomInt } from "node:crypto";
-import { existsSync } from "node:fs";
+import { type Dirent, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 /** 统一的 Result 风格错误返回；error 为内部诊断文本，绝不直接输出到 stderr。 */
@@ -27,46 +28,52 @@ export function sessionsRoot(dshHome: string): string {
   return join(dshHome, "sessions");
 }
 
-/** Windows 桌面版安装目录名（Electron 安装根下的产品目录名）。 */
-const DESKTOP_INSTALL_DIR_NAME = "DeepSeek Harness";
 /** 探测安装树时使用的锚点包：它必定存在于 dsh 实际使用的那棵树里。 */
 const INSTALL_ANCHOR_PACKAGE = "dsh";
 /** 本技能加载官方格式库所需的包名（限定在 `@deepseek-ai` 作用域内）。 */
 const LIBRARY_PACKAGE = "dsh-session-format-catalog";
 
 /**
- * Windows 桌面版安装内 dsh 的 `node_modules` 路径。
+ * 判定一个 `node_modules` 是否为可加载官方格式库的安装树。
  *
- * `app.asar` 是 Electron 归档文件，其内部路径只在桌面运行时（桌面 Electron-as-Node）可解析；
- * 此处只做路径拼接，不假设系统 Node 能解析它。
+ * 判据是两个锚点包同时存在：`@deepseek-ai/dsh` 证明这是 dsh 自身的依赖树，
+ * `@deepseek-ai/dsh-session-format-catalog` 证明这棵树里带着本技能要加载的那个库。
+ * 只看目录存在不够，必须看 `package.json`：空目录或中途失败的安装不会留下该文件。
+ *
+ * @param nodeModules 待判定的 `node_modules` 绝对路径。
  */
-function desktopInstallNodeModules(localAppData: string): string {
-  return join(
-    localAppData,
-    "Programs",
-    DESKTOP_INSTALL_DIR_NAME,
-    "resources",
-    "app.asar",
-    "dsh",
-    "node_modules",
+function isOfficialLibraryTree(nodeModules: string): boolean {
+  const scope = join(nodeModules, "@deepseek-ai");
+  return (
+    existsSync(join(scope, INSTALL_ANCHOR_PACKAGE, "package.json")) &&
+    existsSync(join(scope, LIBRARY_PACKAGE, "package.json"))
   );
 }
 
 /**
- * 官方格式库默认解析锚点：**Windows 桌面版安装内的 `app.asar\dsh\node_modules`**。
+ * 官方格式库默认解析锚点：`%LOCALAPPDATA%\Programs` 下**唯一一棵**桌面安装结构里的
+ * `resources\app.asar\dsh\node_modules`。
  *
- * 为什么不再探测 npm 缓存的 npx 安装树或 `<dsh-home>\profiles\node_modules`：默认库来源是随桌面版
- * 发行的那一份，桌面安装归档是该来源的**唯一权威位置**；另两处只取决于某次安装或运行的历史痕迹，
- * 是否恰好存在与版本都随本机状态漂移，因此既不能保证与桌面版同版，也不能作为锚点判据。默认形态
- * 是**唯一锚点**，找不到就是找不到，不回落任何其它目录。
+ * 这是默认形态下的唯一锚点，没有任何回退：既不看 npm 缓存里的 npx 安装树，也不看
+ * `<dsh-home>\profiles\node_modules`。默认库来源是随桌面版发行的那一份，桌面安装归档是该来源的
+ * 唯一权威位置；另两处只取决于某次安装或运行的历史痕迹，是否恰好存在与版本都随本机状态漂移，
+ * 既不能保证与桌面版同版，也不能作为锚点判据。定位不到就是定位不到，由调用方给出可执行诊断。
  *
- * 锚点判定与旧探测同源：该 `node_modules` 必须同时含 `@deepseek-ai/dsh` 与
- * `@deepseek-ai/dsh-session-format-catalog` 的 `package.json`，否则返回 undefined，由调用方给出
- * 可执行的诊断。调用方也可用 `--lib-root` 显式指定。
+ * 为什么按结构定位而不拼产品目录名：写死名称会把任何名称形态差异直接变成定位失败，而该失败形态
+ * 与真实缺装无法区分；结构判据不依赖名称。锚点因此只能是结构本身：`Programs` 的直接子目录里，
+ * 同时含两个锚点包的 `resources\app.asar\dsh\node_modules`。
+ *
+ * 为什么要求**恰好一棵**：多于一棵时无法判断哪一棵与当前运行的桌面版同版，猜一棵等于加载到
+ * 版本不确定的库；返回 undefined 让调用方给出 `--lib-root` 的可执行诊断更安全。
+ *
+ * `app.asar` 是 Electron 归档文件，其内部路径只在桌面运行时（桌面 Electron-as-Node）可解析。
+ * 本函数正是在那种运行时下被调用，`existsSync` 因此能读到归档内的 `package.json`。
+ *
+ * 调用方也可用 `--lib-root` 显式指定，此时本函数不参与。
  *
  * @param env 提供 `LOCALAPPDATA` 的环境（默认 `process.env`）；缺少有效取值时无法定位。
- * @param platform 用于判定是否为 Windows 桌面版安装（默认 `process.platform`）。
- * @returns 可直接作为 `libRoot` 的目录，或 undefined（本环境未能定位）。
+ * @param platform 用于判定是否适用该安装布局（默认 `process.platform`）。
+ * @returns 可直接作为 `libRoot` 的 `node_modules` 目录，或 undefined（本环境未能唯一定位）。
  */
 export function defaultLibRoot(
   env: NodeJS.ProcessEnv = process.env,
@@ -75,11 +82,29 @@ export function defaultLibRoot(
   if (platform !== "win32") return undefined;
   const localAppData = env.LOCALAPPDATA;
   if (localAppData === undefined || localAppData.length === 0) return undefined;
-  const nodeModules = desktopInstallNodeModules(localAppData);
-  const scope = join(nodeModules, "@deepseek-ai");
-  const hasAnchor = existsSync(join(scope, INSTALL_ANCHOR_PACKAGE, "package.json"));
-  const hasLibrary = existsSync(join(scope, LIBRARY_PACKAGE, "package.json"));
-  return hasAnchor && hasLibrary ? nodeModules : undefined;
+  const programsRoot = join(localAppData, "Programs");
+  // `Programs` 不存在或不可读时，本环境没有安装树可定位。这不是异常，而是本机没有可用桌面安装的
+  // 正常表现，返回 undefined 交给调用方统一给出诊断。
+  let entries: readonly Dirent[];
+  try {
+    entries = readdirSync(programsRoot, { withFileTypes: true });
+  } catch {
+    return undefined;
+  }
+  const candidates: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const nodeModules = join(
+      programsRoot,
+      entry.name,
+      "resources",
+      "app.asar",
+      "dsh",
+      "node_modules",
+    );
+    if (isOfficialLibraryTree(nodeModules)) candidates.push(nodeModules);
+  }
+  return candidates.length === 1 ? candidates[0] : undefined;
 }
 
 /** 路径比较用归一化：反斜杠转正斜杠、去尾部斜杠、转小写（大小写不敏感）。 */

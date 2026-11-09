@@ -15,16 +15,12 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 
 ## 运行前提
 
-- 平台：Windows。
-- 执行载体：在运行本技能的 PowerShell 里先执行下列两条，后续示例中的 `& $desktopNode` 即用它运行。
-
-  ```powershell
-  $env:DSH_DESKTOP_NODE_EXECUTABLE = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/DeepSeek Harness.exe'
-  $desktopNode = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/resources/runtime/bin/node.cmd'
-  ```
-
-  shim 直接引用该环境变量，缺它时以 `'""' is not recognized`、退出码 1 失败。本文件的命令示例写 `& $desktopNode`，`--help` 输出的用法行写同义的 `<desktop_node>` 占位符。
-- 官方格式库默认取桌面版安装内的 `node_modules`，该目录必须同时含 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-session-format-catalog`。锚点不成立或库加载失败时退出 3，错误行只给可执行的下一步（不包含任何安装路径）。可用 `--lib-root <目录>` 覆盖，取值必须是含 `@deepseek-ai` 的 `node_modules`。
+- 平台：Windows，pwsh 7 及以上，执行策略允许运行本地脚本。
+- 执行载体是本技能自带的入口脚本 `scripts\session-reader.ps1`。调用方不设置任何环境变量，也不需要知道桌面版安装位置或产品目录名。入口脚本自行按结构定位唯一一份桌面版安装，以 Electron-as-Node 启动技能目录下的 `scripts/session-reader.ts`，把收到的全部参数原样转发，并把 CLI 的退出码原样回传。
+- 入口脚本不改变当前工作目录，`--output-dir` 的相对路径按调用方当前目录解析。
+- 入口脚本不做二次解析，`&`、`|`、`%` 等 PowerShell 元字符仍须由调用方按 PowerShell 规则加引号。
+- 定位不到唯一安装、存在多个候选安装，或安装目录缺少与目录同名的可执行文件时，入口脚本以退出码 3 失败，stdout 为空，stderr 为一行 `错误: 内部错误（…）`，且不产生输出文件；它不回退到系统 Node、`.cmd` 垫片或其它目录。
+- 官方格式库默认锚点由 CLI 按结构定位，候选是 `%LOCALAPPDATA%\Programs` 的直接子目录中 `resources\app.asar\dsh\node_modules` 同时含 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-session-format-catalog` 的那一棵，必须恰好一个。锚点不成立或库加载失败时退出 3，错误行只给可执行的下一步（不包含任何安装路径）。可用 `--lib-root <目录>` 覆盖，取值必须是含 `@deepseek-ai` 的 `node_modules`。
 - **`--lib-root` 的成功覆盖需要一棵依赖闭包完整的 `node_modules`**：锚点判定只查上面那两个包，但那只是「这个目录像不像 dsh 安装树」的判据。官方格式库自身静态引用会话库、格式库与四代迁移适配器，会话库又引用 `@deepseek-ai/cordis`；只复制若干包目录过去会以找不到 `@deepseek-ai/cordis` 失败。判据是对该目录执行一次 `list` 退出 0。
 - 全部命令必须显式指定 `--output-dir`，缺省退出 2。
 
@@ -43,24 +39,24 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 
 ## 命令
 
-脚本路径相对于本技能目录。`<project_tmp>` 是项目临时目录占位符，`& $desktopNode` 是“运行前提”一节设置的执行载体。
+`<skill_dir>` 是本技能目录的绝对路径占位符，`<project_tmp>` 是项目临时目录占位符。全部命令都经入口脚本调用，入口脚本的行为见“运行前提”一节。
 
 ```text
-& $desktopNode scripts/session-reader.ts list   --output-dir <project_tmp> [--name <basename>] [--workspace <路径|标题>]
-                                      [--since <时间>] [--until <时间>] [--title <关键词>]
-                                      [--origin all|main|subagent] [--include-blank] [--limit N]
-                                      [--sort time|created|title|size|turns] [--full] [--format md|json]
-& $desktopNode scripts/session-reader.ts show   <id|唯一前缀|last> --output-dir <project_tmp> [--name <basename>] [--summary]
-                                      [--role user|assistant] [--thinking] [--tools] [--events] [--subagents]
-                                      [--headers] [--truncate N] [--turn <A-B|A>] [--seq <A-B|A>]
-                                      [--head N] [--tail N] [--probe] [--format md|json|jsonl]
-& $desktopNode scripts/session-reader.ts search <关键词> --output-dir <project_tmp> [--name <basename>] [--scope text|tools|all]
-                                      [--case-sensitive] [--context N] [--limit N] [--session <会话标识>]
-                                      [--exclude-session <会话标识>] [--workspace <路径|标题>]
-                                      [--since <时间>] [--until <时间>] [--origin all|main|subagent] [--format md|json]
-& $desktopNode scripts/session-reader.ts stats  [<id|唯一前缀|last>] --output-dir <project_tmp> [--name <basename>]
-                                      [--workspace/--since/--until/--origin；仅全局聚合可用] [--format md|json]
-& $desktopNode scripts/session-reader.ts check  [<id|唯一前缀|last>] --output-dir <project_tmp> [--name <basename>] [--format md|json]
+& "<skill_dir>\scripts\session-reader.ps1" list   --output-dir <project_tmp> [--name <basename>] [--workspace <路径|标题>]
+                                           [--since <时间>] [--until <时间>] [--title <关键词>]
+                                           [--origin all|main|subagent] [--include-blank] [--limit N]
+                                           [--sort time|created|title|size|turns] [--full] [--format md|json]
+& "<skill_dir>\scripts\session-reader.ps1" show   <id|唯一前缀|last> --output-dir <project_tmp> [--name <basename>] [--summary]
+                                           [--role user|assistant] [--thinking] [--tools] [--events] [--subagents]
+                                           [--headers] [--truncate N] [--turn <A-B|A>] [--seq <A-B|A>]
+                                           [--head N] [--tail N] [--probe] [--format md|json|jsonl]
+& "<skill_dir>\scripts\session-reader.ps1" search <关键词> --output-dir <project_tmp> [--name <basename>] [--scope text|tools|all]
+                                           [--case-sensitive] [--context N] [--limit N] [--session <会话标识>]
+                                           [--exclude-session <会话标识>] [--workspace <路径|标题>]
+                                           [--since <时间>] [--until <时间>] [--origin all|main|subagent] [--format md|json]
+& "<skill_dir>\scripts\session-reader.ps1" stats  [<id|唯一前缀|last>] --output-dir <project_tmp> [--name <basename>]
+                                           [--workspace/--since/--until/--origin；仅全局聚合可用] [--format md|json]
+& "<skill_dir>\scripts\session-reader.ps1" check  [<id|唯一前缀|last>] --output-dir <project_tmp> [--name <basename>] [--format md|json]
 ```
 
 全局选项为 `--dsh-home <路径>`、`--lib-root <目录>`、`--output-dir`、`--name`、`--format` 与 `-h/--help`。选项不可重复，否则退出 2；开关不接受值；支持 `--opt=value`；位置参数不终止选项解析。
@@ -112,12 +108,12 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 示例：
 
 ```text
-& $desktopNode scripts/session-reader.ts list --output-dir <project_tmp> --workspace <工作区路径> --limit 20 --name 会话清单
-& $desktopNode scripts/session-reader.ts show 39b27999 --output-dir <project_tmp> --thinking --tools
-& $desktopNode scripts/session-reader.ts show last --output-dir <project_tmp> --subagents --format json
-& $desktopNode scripts/session-reader.ts show last --output-dir <project_tmp> --turn 3-5
-& $desktopNode scripts/session-reader.ts show last --output-dir <project_tmp> --probe
-& $desktopNode scripts/session-reader.ts search compact --output-dir <project_tmp> --scope all
+& "<skill_dir>\scripts\session-reader.ps1" list --output-dir <project_tmp> --workspace <工作区路径> --limit 20 --name 会话清单
+& "<skill_dir>\scripts\session-reader.ps1" show 39b27999 --output-dir <project_tmp> --thinking --tools
+& "<skill_dir>\scripts\session-reader.ps1" show last --output-dir <project_tmp> --subagents --format json
+& "<skill_dir>\scripts\session-reader.ps1" show last --output-dir <project_tmp> --turn 3-5
+& "<skill_dir>\scripts\session-reader.ps1" show last --output-dir <project_tmp> --probe
+& "<skill_dir>\scripts\session-reader.ps1" search compact --output-dir <project_tmp> --scope all
 ```
 
 ## 默认调用
@@ -125,11 +121,11 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 用户没有明确要求用什么参数时，优先按默认参数读取会话历史。
 
 ```text
-& $desktopNode scripts/session-reader.ts list                      --output-dir <project_tmp>
-& $desktopNode scripts/session-reader.ts show   <id|唯一前缀|last> --output-dir <project_tmp>
-& $desktopNode scripts/session-reader.ts search <关键词>            --output-dir <project_tmp>
-& $desktopNode scripts/session-reader.ts stats                     --output-dir <project_tmp>
-& $desktopNode scripts/session-reader.ts check                     --output-dir <project_tmp>
+& "<skill_dir>\scripts\session-reader.ps1" list   --output-dir <project_tmp>
+& "<skill_dir>\scripts\session-reader.ps1" show   <id|唯一前缀|last> --output-dir <project_tmp>
+& "<skill_dir>\scripts\session-reader.ps1" search <关键词> --output-dir <project_tmp>
+& "<skill_dir>\scripts\session-reader.ps1" stats  --output-dir <project_tmp>
+& "<skill_dir>\scripts\session-reader.ps1" check  --output-dir <project_tmp>
 ```
 
 默认行为：
@@ -259,9 +255,10 @@ description: 当需要查看、列出、检索、统计或校验本机 dsh（Dee
 | `0` | 成功，含 0 命中、空结果、`--help`、`check` 未发现异常 |
 | `1` | 目标不存在，含前缀歧义、`--workspace` 无匹配、`--dsh-home` 不存在、`sessions` 缺失 |
 | `2` | 参数错误，含 `--name` 非法、选项组合违规、缺 `--output-dir`、关键词为空、前缀短于 8 字符、未给 `--name` 时输出文件已存在 |
-| `3` | 数据或 IO 错误，含 `check` 发现异常、输出目录或文件操作失败、官方格式库加载失败、问答载荷结构不符 |
+| `3` | 数据或 IO 错误，含 `check` 发现异常、输出目录或文件操作失败、官方格式库加载失败、问答载荷结构不符，或入口脚本定位不到唯一的桌面版安装、或无法启动桌面版可执行文件 |
 
 - stderr 恒为一行 `错误: <分类>`，分类只有 8 个：`参数无效`、`目标不存在`、`数据不可读`、`内部错误`、`输出目录创建失败`、`输出文件已存在`、`输出写入失败`、`输出移动失败`。错误行不含会话内容、会话标识、用户名与任何绝对路径（dsh 数据路径与安装路径都算），锚点位置只以 `%LOCALAPPDATA%` 占位形态出现，因此可以原样转贴。
+- 入口脚本自身的失败同样遵守这套约束：stdout 为空、stderr 一行、不含任何绝对路径，失败分类取 `内部错误`。
 - 分类后可能附括号说明。调用方应只依赖退出码与分类分流，不要对括号内容做全等匹配。
 - 临时文件清理失败并入当次失败分类：写入阶段的临时文件未能清理时报 `输出写入失败（临时文件未清理）`，移动阶段未能清理时报 `输出移动失败（临时文件未清理）`；说明不含任何路径。
 - `check` 发现异常时先写出产物并打印两行 stdout，再以 3 结束，stderr 为空。退出码 3 不代表没有产物。

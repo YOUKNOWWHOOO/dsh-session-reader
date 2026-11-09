@@ -29,18 +29,14 @@ dsh 自身不提供读取这些日志的命令，要查看一次会话只能手�
 ## 适用环境
 
 - **平台**：Windows。技能的路径处理、产物文件名校验与文件移动语义都按 Windows 实现。
-- **执行载体**：桌面版 DeepSeek Harness 的 Electron-as-Node。脚本是 TypeScript（ESM），由该运行时原生类型剥离直接执行，没有构建步骤，`tsconfig.json` 只服务开发期类型检查。
+- **执行载体**：技能自带的入口脚本 `scripts\session-reader.ps1`。它自行定位唯一的桌面版安装，以 Electron-as-Node 方式运行 `scripts/session-reader.ts`；脚本是 TypeScript（ESM），由该运行时原生类型剥离直接执行，没有构建步骤，`tsconfig.json` 只服务开发期类型检查。调用方不设置任何环境变量，也不手写桌面版安装路径。
 - **dsh 安装**：本机需有一份可用的 dsh 安装，它提供两样东西，即会话数据本身，以及随桌面版发运的官方会话格式库。
 - **会话日志格式**：只支持当前格式。旧版本日志按不可读处理，具体行为见 `SKILL.md` 的“支持的会话来源”。
 - **主目录**：默认取环境变量 `DSH_HOME`，未设置时取 `~/.dsh`，可用 `--dsh-home` 覆盖。该选项只决定数据来源，不改变官方格式库的位置与版本。
 
 ### 官方格式库的位置
 
-官方格式库随桌面版 dsh 一同安装，位于安装归档内的虚拟路径：
-
-```text
-%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\app.asar\dsh\node_modules
-```
+官方格式库随桌面版 dsh 一同安装，位于安装根下的 `resources\app.asar\dsh\node_modules`。安装根由入口脚本与 CLI 按结构定位，不在文档中写死目录名。
 
 该路径只有桌面版 Electron-as-Node 能读取。系统 Node 的 `existsSync` 对 `app.asar` 内路径恒为 false，因此用系统 Node 直接运行默认组合必然在加载格式库这一步失败；这种用法只适用于用 `--lib-root` 指向真实目录的开发场景。
 
@@ -50,20 +46,13 @@ dsh 自身不提供读取这些日志的命令，要查看一次会话只能手�
 
 1. 本机已安装桌面版 DeepSeek Harness 并至少使用过一次，`~/.dsh/sessions/` 下有会话日志。
 1. 技能目录放在 `<dsh-home>/skills/session-reader/`，会话创建时它会被技能目录收录，模型可按名称加载。
-1. 在运行命令的 PowerShell 里先设置执行载体，后续用 `& $desktopNode` 调用：
-
-   ```powershell
-   $env:DSH_DESKTOP_NODE_EXECUTABLE = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/DeepSeek Harness.exe'
-   $desktopNode = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/resources/runtime/bin/node.cmd'
-   ```
-
-   shim 设置 `ELECTRON_RUN_AS_NODE=1` 并转发 `--expose-internals`，其第三行直接引用 `DSH_DESKTOP_NODE_EXECUTABLE`。它是 `.cmd`，PowerShell 会等待并回传退出码。缺少该变量时的失败形态见 `SKILL.md` 的“运行前提”。
+1. 调用技能自带的入口脚本 `scripts\session-reader.ps1`，调用形态为 `& "<skill_dir>\scripts\session-reader.ps1" <命令> [选项]`。入口脚本自行定位桌面版安装并启动 CLI，调用方不需要设置环境变量，也不需要填写任何安装路径。
 1. 全部命令必须显式指定 `--output-dir`，它没有默认值。惯例是指向项目临时目录。
 
 ## 最小可运行示例
 
 ```powershell
-& $desktopNode scripts/session-reader.ts list --output-dir .\tmp
+& "<skill_dir>\scripts\session-reader.ps1" list --output-dir .\tmp
 ```
 
 命令把会话清单写入 `.\tmp`。命令、选项与输出契约的完整说明见 `SKILL.md`。
@@ -75,6 +64,8 @@ SKILL.md                    技能说明，也是面向调用方的唯一契约�
 README.md                   本文件：项目定位、环境、安装运行与开发入口
 CHANGELOG.md                对外变更记录
 scripts/
+  session-reader.ps1        调用方入口：定位桌面版安装并原样转发参数
+  desktop-runtime.ps1       桌面安装定位与 Electron-as-Node 启动的单一实现
   session-reader.ts         CLI 入口：解析、校验、分发、写出产物
   lib/
     decode.ts               官方格式库加载、事件解码与正文抽取出口
@@ -94,22 +85,24 @@ doc/开发规范.md              开发、测试与维护的要求与验收标�
 
 ## 开发与校验链
 
-在技能目录下依次执行。前两步依赖 `npm ci` 安装的开发依赖，测试与门禁需要真实官方格式库与真实会话。
+在技能目录下依次执行。开头几行从 `scripts\desktop-runtime.ps1` 取得桌面版执行载体的路径，并把 shim 需要的 `DSH_DESKTOP_NODE_EXECUTABLE` 设为同一个可执行文件；测试与门禁都经该载体运行。`npm ci` 安装开发依赖后，格式化、类型检查与 lint 才可运行。测试与门禁需要真实官方格式库与真实会话。
 
 ```powershell
-$env:DSH_DESKTOP_NODE_EXECUTABLE = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/DeepSeek Harness.exe'
-$desktopNode = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/resources/runtime/bin/node.cmd'
+. .\scripts\desktop-runtime.ps1
+$runtime = Get-DesktopRuntime
+$env:DSH_DESKTOP_NODE_EXECUTABLE = $runtime.ExecutablePath
+$desktopNode = $runtime.NodeCmdPath
 npm ci
-npx --no-install biome ci .
-npx --no-install tsc --noEmit
+npm exec --yes=false --package=@biomejs/biome -- biome ci .
+npm exec --yes=false --package=typescript -- tsc --noEmit
 & $desktopNode --test "tests/**/*.test.ts"
 & $desktopNode scripts/session-reader.ts --help
 foreach ($command in 'list', 'show', 'search', 'stats', 'check') { & $desktopNode scripts/session-reader.ts $command --help }
 & $desktopNode tests/lint-matrix.ts --workdir tests/.tmp/matrix --real-home $env:USERPROFILE\.dsh
-npx --no-install markdownlint-cli --config .markdownlint.jsonc .
+npm exec --yes=false --package=markdownlint-cli -- markdownlint --config .markdownlint.jsonc .
 ```
 
-覆盖率门禁按 `doc/开发规范.md` 的“测试要求”执行，它与上面最后一条命令共用 `tests/**/*.test.ts` 入口。
+覆盖率门禁按 `doc/开发规范.md` 的“测试要求”执行，它与上面的 `--test` 命令共用 `tests/**/*.test.ts` 入口。
 
 门禁的 `--workdir` 必须指向临时位置，否则逐组合结果与合成夹具会写进技能目录。测试或门禁取不到官方格式库、真实会话时直接失败，不跳过。
 
