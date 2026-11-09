@@ -1,8 +1,9 @@
 // 检索层：检索单元构造（text/tools/all 三档单调包含）、逐会话全量计数检索、上下文切片、每会话命中分布。
 // 主要入口：runSearch（search 命令数据）；collectSearchUnits 定义三档覆盖范围。
-// 关键依赖：ask-user.ts（提问与回答的可读文本抽取，与 md 条目同源）、decode.ts（事件类型与正文/推理/
-// 工具结果取值）、store-discovery.ts（发现、读取与扫描摘要）、store-list.ts（会话视图收集）、
-// store-target.ts（--session/--exclude-session 子树展开）、store-types.ts。
+// 关键依赖：ask-user.ts（提问与回答的可读文本抽取，与 md 条目同源）、context-checkpoint.ts（子代理
+// 相关工具调用的可读正文，与 md 条目同源）、decode.ts（事件类型与正文/推理/工具结果取值）、
+// store-discovery.ts（发现、读取与扫描摘要）、store-list.ts（会话视图收集）、store-target.ts
+// （--session/--exclude-session 子树展开）、store-types.ts。
 // 设计约束：--limit 只限制 hits 数组的收集上限，totalHits 对纳入会话全量计数且不做任何提前终止
 // （totalIsExact 恒为 true）；单会话解码失败记入 coverage.excluded 并继续，而不是让整次检索失败；
 // scope=all 必须把整条事件记录的完整 JSON 载荷纳入检索单元（按类型枚举字段必然有遗漏）；
@@ -18,6 +19,7 @@ import {
   analyzeContextCheckpoints,
   CONTEXT_CHECKPOINT_LABEL,
   type ContextAnalysis,
+  extractSubagentCallContent,
   HANDOFF_NOTICE_LABEL,
   HANDOFF_PROMPT_LABEL,
   SUBAGENT_TASK_LABEL,
@@ -89,16 +91,19 @@ function messageContent(event: EventRecord): unknown {
  * 收集单个事件的可检索文本单元。
  *
  * 三档语义（单调包含）：
- * - `text`：用户/助手正文，以及 `ask` 给出的提问/回答可读文本；与 `show` 默认参数**同一可见性**
+ * - `text`：用户/助手正文、`ask` 给出的提问/回答可读文本，以及子代理相关工具调用的可读正文
+ *   （创建工具的 `prompt`、`send_message` 的 `message`）；与 `show` 默认参数**同一可见性**
  *   （框架注入的消息与子代理调度回执都不进本档）；
- * - `tools`：另含工具调用参数与工具结果（含问答的原始载荷；子代理调度回执不进本档）；
+ * - `tools`：另含工具调用参数与工具结果（含问答的原始载荷；子代理调度回执不进本档）；子代理相关
+ *   调用的原始实参同样在此档，不因已有专用正文而被替代；
  * - `all`：另含推理、系统消息、压缩摘要、命令、标题请求、web 检索请求、交付物、待办、代理信箱，
  *   **以及整条事件记录的完整 JSON 载荷**（label 取事件类型）。`all` 是穷尽档，不做可见性过滤：
  *   它是"检索 0 命中 ⇒ 不存在"这一推断成立的前提，也是取回被默认排除内容的入口。
  *
  * `ask` 必须由调用方从 `ask-user.ts` 的分析结果里按事件取回，而不是在这里自行解析载荷：
  * 检索单元与 md 条目必须是同一份抽取的产物，否则调用方会读到"呈现里有、检索里没有"这类不一致
- * （或反过来）。三档都包含问答可读文本，是 `text ⊆ tools ⊆ all` 这一单调包含关系的要求。
+ * （或反过来）。三档都包含问答可读文本与子代理调用正文，是 `text ⊆ tools ⊆ all` 这一单调包含
+ * 关系的要求。
  *
  * `all` 档的穷尽性是"检索 0 命中 ⇒ 不存在"这一推断成立的前提：按类型枚举字段必然有遗漏
  * （`assistant/attempt` 与 `llm/retry` 的 `data.failure` 内嵌上游错误体，只按类型枚举的档位检索不到它们），
@@ -107,7 +112,7 @@ function messageContent(event: EventRecord): unknown {
  * 返回的每个单元都带上所属事件的来源归属（仅 `user/message` 事件非 null）：命中行的 `user` 标签
  * 会把子代理中继与插件注入显示成用户消息，来源归属是调用方区分它们的唯一依据。
  *
- * @param replyCallIds 会话内 `subagent` 调用的 `callId` 集合，用于识别调度回执（与 `visibility.ts` 同源）。
+ * @param replyCallIds 会话内子代理创建调用的 `callId` 集合，用于识别调度回执（与 `visibility.ts` 同源）。
  */
 function collectSearchUnits(
   event: EventRecord,
@@ -117,14 +122,10 @@ function collectSearchUnits(
   context: ContextAnalysis,
 ): SearchUnit[] {
   const type = eventType(event);
-  const seq = eventSeq(event);
   // 可见性与 show 默认参数同源：注入消息与调度回执在 `text`/`tools` 两档都不进检索单元，
   // 否则"默认检索不到"会与"默认提取里有"互相矛盾，调用方会把被排除读成不存在。
   // `all` 是穷尽档，不做过滤，它同时是取回被排除内容的唯一检索入口。
   if (scope !== "all" && !isVisibleEvent(event, replyCallIds)) return [];
-  // 已由 `上下文摘要` 承载正文的助手副本：`text`/`tools` 档不建字段单元（与 show 默认视图同口径），
-  // `all` 档仍保留整条事件载荷单元，因此逐字原文始终可检索。
-  const suppressed = seq !== undefined && context.suppressedAssistantSeqs.has(seq);
   const units: TextUnit[] = [];
   if (type === "user/message") {
     const checkpoint = context.checkpoints.get(event);
@@ -141,13 +142,24 @@ function collectSearchUnits(
       const label = context.subagentTask === event ? SUBAGENT_TASK_LABEL : "user";
       if (text.length > 0) units.push({ label, text });
     }
-  } else if (type === "assistant/message" && !suppressed) {
+  } else if (type === "assistant/message") {
     const text = messageTextFromBlocks(messageContent(event));
     if (text.length > 0) units.push({ label: "assistant", text });
-  } else if (scope !== "text" && type === "tool/call") {
-    const argumentsText = readString(asRecord(event.data) ?? {}, "arguments");
-    if (argumentsText !== undefined && argumentsText.length > 0) {
-      units.push({ label: "tool/call", text: argumentsText });
+  } else if (type === "tool/call") {
+    // 子代理相关调用（创建工具的 `prompt`、`send_message` 的 `message`）在三档都建可读正文单元，
+    // 与 show 的专用条目同源：否则会出现"呈现里有、检索里没有"的不一致。三档都含它，是
+    // `text ⊆ tools ⊆ all` 这一单调包含关系的要求。
+    const subagentCall = extractSubagentCallContent(event);
+    if (subagentCall !== null) {
+      units.push({ label: subagentCall.label, text: subagentCall.text });
+    }
+    // `tools`/`all` 另保留原始实参：专用正文只是实参里的一段，其余调度参数与逐字实参仍需可检索，
+    // 不能因为已经有专用正文就丢掉原参数单元。
+    if (scope !== "text") {
+      const argumentsText = readString(asRecord(event.data) ?? {}, "arguments");
+      if (argumentsText !== undefined && argumentsText.length > 0) {
+        units.push({ label: "tool/call", text: argumentsText });
+      }
     }
   } else if (scope !== "text" && type === "tool/result") {
     const text = toolResultText(event);

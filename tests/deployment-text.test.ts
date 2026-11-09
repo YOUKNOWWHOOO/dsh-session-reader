@@ -1,15 +1,12 @@
 // 部署包装解析的单元测试：完整信封才剥离、不完整原样返回、两个顺序信封、严格版与宽松版的差异、
-// 消息信封的宽松剥离与转义终点、`<compacted-summary>` 只认整段完整信封、摘要内层的嵌套残形。
+// 消息信封的宽松剥离与转义终点、内层引用的消息标记行对与标题归一化。
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-  cleanCompactedSummary,
-  compactedSummaryBody,
   leadingInjectionKind,
   normalizeSessionTitle,
   stripInjectionEnvelopes,
   stripMessageEnvelope,
-  stripNestedMessageEnvelope,
   stripNestedMessageMarkers,
   stripResultEnvelope,
   stripResultEnvelopeLenient,
@@ -146,84 +143,6 @@ describe("stripMessageEnvelope（展示面与检索面的宽松版）", () => {
 
   it("空正文信封剥离后返回空串", () => {
     assert.equal(stripMessageEnvelope(`${MESSAGE_OPEN}\n\n</dsh-message>`), "");
-  });
-});
-
-describe("stripNestedMessageEnvelope（交接摘要内层的嵌套残形）", () => {
-  it("剥离完整起点行与转义终点行", () => {
-    assert.equal(
-      stripNestedMessageEnvelope(`${ASSISTANT_OPEN}\n正文第一行\n正文第二行\n${ESCAPED_CLOSE}`),
-      "正文第一行\n正文第二行",
-    );
-  });
-
-  it("没有起点行时原样返回（旧数据是纯正文）", () => {
-    assert.equal(stripNestedMessageEnvelope("纯正文"), "纯正文");
-    assert.equal(stripNestedMessageEnvelope(`正文\n${ESCAPED_CLOSE}`), `正文\n${ESCAPED_CLOSE}`);
-  });
-
-  it("起点行含正文时原样返回", () => {
-    const text = `${ASSISTANT_OPEN}正文\n${ESCAPED_CLOSE}`;
-    assert.equal(stripNestedMessageEnvelope(text), text);
-  });
-
-  it("终点不是转义形态时原样返回", () => {
-    const text = `${ASSISTANT_OPEN}\n正文\n</dsh-message>`;
-    assert.equal(stripNestedMessageEnvelope(text), text);
-  });
-
-  it("终点前没有换行时原样返回", () => {
-    const text = `${ASSISTANT_OPEN}\n正文${ESCAPED_CLOSE}`;
-    assert.equal(stripNestedMessageEnvelope(text), text);
-  });
-
-  it("正文自身的转义终点不被当成本信封终点之外的内容", () => {
-    const text = `${ASSISTANT_OPEN}\n正文 ${ESCAPED_CLOSE} 仍在正文里\n${ESCAPED_CLOSE}`;
-    assert.equal(stripNestedMessageEnvelope(text), `正文 ${ESCAPED_CLOSE} 仍在正文里`);
-  });
-});
-
-describe("cleanCompactedSummary", () => {
-  it("纯正文摘要逐字返回（重建不引入差异）", () => {
-    const text = "<compacted-summary>\n摘要正文\n</compacted-summary>";
-    assert.equal(cleanCompactedSummary(text), text);
-  });
-
-  it("内层带嵌套残形时清理并保留标签", () => {
-    const text = `<compacted-summary>\n${ASSISTANT_OPEN}\n摘要正文\n${ESCAPED_CLOSE}\n</compacted-summary>`;
-    assert.equal(
-      cleanCompactedSummary(text),
-      "<compacted-summary>\n摘要正文\n</compacted-summary>",
-    );
-  });
-
-  it("不是整段摘要信封时原样返回（官方检查点前言在信封外）", () => {
-    const text = `检查点前言\n\n<compacted-summary>\n摘要\n</compacted-summary>`;
-    assert.equal(cleanCompactedSummary(text), text);
-  });
-
-  it("普通正文原样返回", () => {
-    assert.equal(cleanCompactedSummary("普通正文"), "普通正文");
-  });
-});
-
-describe("compactedSummaryBody", () => {
-  it("完整信封取内层正文", () => {
-    assert.equal(compactedSummaryBody("<compacted-summary>\n摘要\n</compacted-summary>"), "摘要");
-  });
-
-  it("官方检查点前言在信封外时不命中", () => {
-    assert.equal(
-      compactedSummaryBody(
-        "这是自动生成的检查点前言。\n\n<compacted-summary>\n摘要\n</compacted-summary>",
-      ),
-      null,
-    );
-  });
-
-  it("缺少成对换行时不命中", () => {
-    assert.equal(compactedSummaryBody("<compacted-summary>摘要</compacted-summary>"), null);
-    assert.equal(compactedSummaryBody("<compacted-summary>\n摘要"), null);
   });
 });
 

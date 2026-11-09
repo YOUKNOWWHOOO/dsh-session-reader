@@ -1,7 +1,8 @@
 // 用途：默认参数下的"哪些事件进入产物"判定的唯一真值源，框架与插件自动注入的消息、框架事件、
 // 工具调度回执一律不进默认产物；只有携带真实交流内容的消息才进。
 // 主要入口：isInjectedUserMessage（注入消息判定）、isVisibleEvent（默认可见性判定）、
-// collectSubagentReplyCallIds（子代理调用回执的识别集合）、injectedEventCount（排除计数）。
+// isSubagentCreationTool（子代理创建工具名判定）、collectSubagentReplyCallIds（子代理调用回执的
+// 识别集合）、countExcludedInjections（排除计数）。
 // 设计约束：
 // 1. 判据只能是日志字段（`user/message` 的 `data.source.kind`、事件 type、`tool/call` 的 `name` 与
 //    `callId`），禁止任何文本匹配。理由：同一注入换个文案就会漏；`<dsh-injection …>` 由多种注入
@@ -59,11 +60,30 @@ export const KEPT_USER_MESSAGE_KINDS: readonly string[] = [
   "user-question-reply",
 ];
 
-/** 子代理调度工具名：它的调用实参携带发往子代理的任务正文，它的结果是一条回执。 */
-export const SUBAGENT_TOOL_NAME = "subagent";
+/**
+ * 创建子代理的工具名（`subagent` 与 `subagent_fork`）。
+ *
+ * 两个工具的调用实参都携带任务正文（`prompt`），它们的配对的 `tool/result` 都是调度回执，
+ * 不是子代理的回答。名单只有这两个取值：`send_message` 是把消息发给**已存在**的子代理，
+ * 它不创建子代理，其配对结果因而不是创建回执。
+ */
+const SUBAGENT_CREATION_TOOL_NAMES: readonly string[] = ["subagent", "subagent_fork"];
 
 /** 主代理主动发消息给已存在子代理的工具名。 */
 export const SEND_MESSAGE_TOOL_NAME = "send_message";
+
+/**
+ * 该工具名是否为子代理创建工具。
+ *
+ * 渲染层与检索层都只经本函数判定创建工具，禁止各自维护工具名字面量：两处判据一旦分叉，
+ * 同一调用会出现"呈现有专用条目、检索不覆盖"这类不一致。`send_message` 不在此列。
+ *
+ * @param name `tool/call` 事件的 `data.name`；缺失时为 undefined。
+ * @returns 属于 `subagent` 或 `subagent_fork` 时为 true。
+ */
+export function isSubagentCreationTool(name: string | undefined): boolean {
+  return name !== undefined && SUBAGENT_CREATION_TOOL_NAMES.includes(name);
+}
 
 /** `user/message` 事件的来源种类（缺失、非字符串与空串一律返回 null）。 */
 function userMessageSourceKind(event: EventRecord): string | null {
@@ -86,13 +106,18 @@ export function isInjectedUserMessage(event: EventRecord): boolean {
   return kind === null || !KEPT_USER_MESSAGE_KINDS.includes(kind);
 }
 
-/** `subagent` 工具调用的 `callId` 集合：其配对的 `tool/result` 是调度回执，不是子代理的回答。 */
+/**
+ * 子代理创建工具调用的 `callId` 集合：其配对的 `tool/result` 是调度回执，不是子代理的回答。
+ *
+ * 回执判定必须与专用条目的识别同源（同用 `isSubagentCreationTool`）：`subagent_fork` 的回执
+ * 若漏在这里，它会被当作子代理的回答显示出来。
+ */
 export function collectSubagentReplyCallIds(events: readonly EventRecord[]): ReadonlySet<string> {
   const callIds = new Set<string>();
   for (const event of events) {
     if (eventType(event) !== "tool/call") continue;
     const data = asRecord(event.data);
-    if (data === undefined || readString(data, "name") !== SUBAGENT_TOOL_NAME) continue;
+    if (data === undefined || !isSubagentCreationTool(readString(data, "name"))) continue;
     const callId = readString(data, "callId");
     if (callId !== undefined && callId.length > 0) callIds.add(callId);
   }
@@ -102,7 +127,7 @@ export function collectSubagentReplyCallIds(events: readonly EventRecord[]): Rea
 /**
  * 该 `tool/result` 是否为子代理调度回执（正文形如 `started subagent <id>`）。
  *
- * 识别方式是 `toolCallId` 与某个 `subagent` 调用配对，而不是正文文案：文案随产品变化，
+ * 识别方式是 `toolCallId` 与某个子代理创建调用配对，而不是正文文案：文案随产品变化，
  * 配对关系是日志的结构事实。
  */
 export function isSubagentReceipt(event: EventRecord, replyCallIds: ReadonlySet<string>): boolean {

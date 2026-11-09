@@ -1,5 +1,6 @@
 node_modules/
 tests/.tmp/
+/tmp/
 
 # 全组合 lint 门禁（tests/lint-matrix.ts）按 --workdir 落盘的中间产物：合成 DSH_HOME 夹具
 # （fixture-healthy/、fixture-broken/）、逐组合结果、markdownlint 原始输出与九百余份产物。

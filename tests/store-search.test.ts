@@ -145,8 +145,13 @@ describe("runSearch 的合成上下文消息检索单元", () => {
               time: 101,
               data: {
                 role: "user",
-                content: [{ type: "text", text: "生成交接指令 PROMPT-MARK" }],
-                source: { kind: "user" },
+                content: [
+                  {
+                    type: "text",
+                    text: `<dsh-injection kind="handoff-instruction" src="handoff" id="abcdef12" ts="2026-10-31T12:44:50+08:00">\n生成交接指令 PROMPT-MARK\n</dsh-injection>`,
+                  },
+                ],
+                source: { kind: "handoff" },
               },
             },
             {
@@ -157,7 +162,7 @@ describe("runSearch 的合成上下文消息检索单元", () => {
                 turn: 1,
                 message: {
                   role: "assistant",
-                  content: [{ type: "text", text: "交接正文 BODY-MARK" }],
+                  content: [{ type: "text", text: "助手回复 BODY-MARK" }],
                 },
               },
             },
@@ -173,43 +178,7 @@ describe("runSearch 的合成上下文消息检索单元", () => {
               surfaceOp: { op: "replace", startSeq: 1, endSeq: 2 },
               sourceEventSeqs: [1, 2],
             },
-            {
-              type: "agent/inbox/spliced",
-              seq: 4,
-              time: 104,
-              data: {
-                target: "next-step",
-                start: 0,
-                inserted: [
-                  {
-                    role: "user",
-                    source: { kind: "user" },
-                    content: [
-                      {
-                        type: "text",
-                        text: "<compacted-summary>\n交接正文 BODY-MARK\n</compacted-summary>",
-                      },
-                    ],
-                  },
-                ],
-              },
-            },
-            {
-              type: "user/message",
-              seq: 5,
-              time: 105,
-              data: {
-                role: "user",
-                content: [
-                  {
-                    type: "text",
-                    text: "<compacted-summary>\n交接正文 BODY-MARK\n</compacted-summary>",
-                  },
-                ],
-                source: { kind: "user" },
-              },
-            },
-            { type: "turn/end", seq: 6, time: 106, data: { turn: 1 } },
+            { type: "turn/end", seq: 4, time: 104, data: { turn: 1 } },
           ],
         },
         {
@@ -277,8 +246,8 @@ describe("runSearch 的合成上下文消息检索单元", () => {
           ],
         },
         {
-          // 新格式交接：维护指令与压缩通知都是来源 handoff 的注入消息，各自独立成检索单元；
-          // 交接正文保留在助手事件里（新格式不抑制副本）。
+          // 文件式交接：维护指令与压缩通知都是来源 handoff 的注入消息，各自独立成检索单元；
+          // 助手回复即助手消息本身，不再有单独的摘要投递单元。
           id: "session-ctx-notice-04",
           projectDir: PROJECT,
           createdAt: 1300,
@@ -307,7 +276,7 @@ describe("runSearch 的合成上下文消息检索单元", () => {
                 turn: 1,
                 message: {
                   role: "assistant",
-                  content: [{ type: "text", text: "新格式交接正文 NOTICEBODYONLY" }],
+                  content: [{ type: "text", text: "维护完成说明 NOTICEBODYONLY" }],
                 },
               },
             },
@@ -376,7 +345,7 @@ describe("runSearch 的合成上下文消息检索单元", () => {
     );
   });
 
-  it("text 档：新格式的压缩通知单独成单元，维护指令与助手正文各自命中", () => {
+  it("text 档：文件式交接的压缩通知单独成单元，维护指令与助手正文各自命中", () => {
     assert.deepEqual(
       search("NOTICENOTICE-MARK", "text").hits.map((hit) => hit.label),
       ["交接通知"],
@@ -395,22 +364,21 @@ describe("runSearch 的合成上下文消息检索单元", () => {
     );
   });
 
-  it("text 档：被抑制的助手副本不建单元，摘要正文只命中一次", () => {
+  it("text 档：文件式交接的助手回复只由 assistant 单元命中", () => {
     const data = search("BODY-MARK", "text");
     assert.deepEqual(
       data.hits.map((hit) => hit.label),
-      ["上下文摘要"],
+      ["assistant"],
     );
     assert.equal(data.totalHits, 1);
   });
 
-  it("all 档：被抑制副本的原始载荷仍可检索", () => {
+  it("all 档：文件式交接的助手回复保留按字段枚举的单元与整条事件载荷", () => {
     const data = search("BODY-MARK", "all");
     const labels = new Set(data.hits.map((hit) => hit.label));
-    assert.equal(labels.has("上下文摘要"), true);
-    // `all` 档保留整条事件载荷单元，因此被抑制的助手正文仍可检索到（逐字核对入口）。
+    assert.equal(labels.has("assistant"), true);
     assert.equal(labels.has("assistant/message"), true);
-    assert.equal(data.totalHits > 1, true);
+    assert.equal(data.totalHits, 2);
   });
 });
 

@@ -74,7 +74,7 @@ scripts/
     deployment-text.ts      部署包装解析与剥离、内层标记清理、标题归一化
     context-checkpoint.ts   合成上下文消息的判定与正文抽取
     ask-user.ts             问答的可读文本抽取
-    handoff.ts              交接的结构事实与投递判定
+    handoff.ts              交接的结构事实抽取
     visibility.ts           默认参数下的可见性白名单
     message-source.ts       来源归属与来源标注
     store-*.ts              会话发现、投影缓存元数据、列表、检索、统计、校验
@@ -85,7 +85,9 @@ doc/开发规范.md              开发、测试与维护的要求与验收标�
 
 ## 开发与校验链
 
-在技能目录下依次执行。开头几行从 `scripts\desktop-runtime.ps1` 取得桌面版执行载体的路径，并把 shim 需要的 `DSH_DESKTOP_NODE_EXECUTABLE` 设为同一个可执行文件；测试与门禁都经该载体运行。`npm ci` 安装开发依赖后，格式化、类型检查与 lint 才可运行。测试与门禁需要真实官方格式库与真实会话。
+在技能目录下依次执行。开头几行从 `scripts\desktop-runtime.ps1` 取得桌面版执行载体的路径，并把 shim 需要的 `DSH_DESKTOP_NODE_EXECUTABLE` 设为同一个可执行文件；测试与门禁都经该载体运行。`npm ci` 安装开发依赖后，格式化、类型检查、静态分析与 lint 才可运行。测试与门禁需要真实官方格式库与真实会话。
+
+帮助检查调用技能自带的入口脚本 `scripts\session-reader.ps1`，与调用方实际使用的形态一致，不用桌面版 Node 直接运行 TypeScript 入口代替。PowerShell 静态分析传入的配置是 dsh 数据根下的 `preset-plugins/全局规范/配置文件模板/PSScriptAnalyzerSettings.psd1`，按绝对路径显式传入，本技能不另外维护项目级配置。
 
 ```powershell
 . .\scripts\desktop-runtime.ps1
@@ -95,9 +97,10 @@ $desktopNode = $runtime.NodeCmdPath
 npm ci
 npm exec --yes=false --package=@biomejs/biome -- biome ci .
 npm exec --yes=false --package=typescript -- tsc --noEmit
+Invoke-ScriptAnalyzer -Path scripts -Recurse -Settings '<全局 PSScriptAnalyzer 基线配置文件的绝对路径>' -EnableExit
 & $desktopNode --test "tests/**/*.test.ts"
-& $desktopNode scripts/session-reader.ts --help
-foreach ($command in 'list', 'show', 'search', 'stats', 'check') { & $desktopNode scripts/session-reader.ts $command --help }
+& .\scripts\session-reader.ps1 --help
+foreach ($command in 'list', 'show', 'search', 'stats', 'check') { & .\scripts\session-reader.ps1 $command --help }
 & $desktopNode tests/lint-matrix.ts --workdir tests/.tmp/matrix --real-home $env:USERPROFILE\.dsh
 npm exec --yes=false --package=markdownlint-cli -- markdownlint --config .markdownlint.jsonc .
 ```

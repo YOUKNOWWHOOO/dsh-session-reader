@@ -10,7 +10,6 @@ import {
   ASK_PAIRED_ID,
   ASK_UNPAIRED_ID,
   CHILD_ID,
-  HANDOFF_ID,
   HANDOFF_NOTICE_ID,
   healthySpec,
   MAIN_CWD,
@@ -71,11 +70,9 @@ const SPECIAL_IDS = [
   ASK_PAIRED_ID,
   ASK_UNPAIRED_ID,
   ASK_ERROR_ID,
-  // 交接样本：默认导出产出 `**交接**` 条目，开关全开时同一事件不得再以 `**事件**` 形态出现，
-  // 范围选择下条目仍受 `--turn`/`--seq` 约束。三条路径因此都在全组合层面受检。
-  HANDOFF_ID,
-  // 新格式交接样本：维护指令与压缩通知分别产出 `**交接指令**` 与 `**交接通知**`，助手正文不被抑制；
-  // 新增标签因此进入结构门禁的白名单校验路径。
+  // 文件式交接样本：默认导出产出 `**交接**` 条目，开关全开时同一事件不得再以 `**事件**` 形态出现，
+  // 范围选择下条目仍受 `--turn`/`--seq` 约束；维护指令与压缩通知分别产出 `**交接指令**` 与
+  // `**交接通知**`。三条路径与这两个标签因此都在全组合层面受检。
   HANDOFF_NOTICE_ID,
 ] as const;
 

@@ -1,12 +1,11 @@
 // 用途：部署侧边界标记的解析与剥离，`<dsh-injection …>…</dsh-injection>`（用户角色注入消息）、
 // `<dsh-message role="…" …>…</dsh-message>`（真实用户消息与带文本块的 assistant 消息，即消息时间
-// 标记）、`<dsh-result …>…</dsh-result>`（普通工具结果），以及普通消息交接的 `<compacted-summary>` 信封。
+// 标记）、`<dsh-result …>…</dsh-result>`（普通工具结果）。
 // 主要入口：stripInjectionEnvelopes（宽松：完整才剥离，不完整原样返回）、stripMessageEnvelope（宽松：
 // 消息信封最多一个且位于最外层）、stripResultEnvelope（严格：不完整返回 null，供问答载荷解析显式
-// 失败）、stripResultEnvelopeLenient（宽松：不完整原样返回）、compactedSummaryBody（完整信封时取内层
-// 正文）、stripNestedMessageEnvelope（交接摘要内层的消息信封残形）、cleanCompactedSummary（清理摘要
-// 内层残形并保留标签）、stripNestedMessageMarkers（正文里内联引用的整段标记行对）、
-// normalizeSessionTitle（把部署标记残片标题收敛为“没有标题”）。
+// 失败）、stripResultEnvelopeLenient（宽松：不完整原样返回）、leadingInjectionKind（读取注入起点行的
+// kind）、stripNestedMessageMarkers（正文里内联引用的整段标记行对）、normalizeSessionTitle（把部署
+// 标记残片标题收敛为“没有标题”）。
 // 关键依赖：无（纯字符串函数，不依赖事件模型，便于单测与复用）。
 // 设计约束：
 // 1. 标记形态、转义规则与幂等判据的唯一实现处是 `$DSH_HOME/preset-lib/injection-boundary.mjs`；
@@ -21,11 +20,9 @@
 // 4. 消息信封没有严格版：它不承载需要解析的结构化载荷，展示面与检索面一律用宽松版。消息信封最多
 //    一个且是真实用户消息或 assistant 消息的最外层，因此不做顺序排列的循环；终点之后还有内容时
 //    不是完整信封，原样返回。
-// 5. 只有两类内层形态允许剥“非完整”结构，判据都是确定的写入结果而不是尽力截取：
-//    其一是 `<compacted-summary>` 内层的消息信封残形，判据三条缺一不可（消息起点前缀、起点行以
-//    `>` 收尾、末尾是换行加转义终点）；其二是正文里内联引用整段发言时出现的一对标记行，判据两条
+// 5. 允许剥“非完整”结构的内层形态只有一种：正文里内联引用整段发言时出现的一对标记行，判据两条
 //    （起点行独占一行且以 `>` 收尾、其后第一个转义终点行也独占一行），只删这两行、中间正文逐字
-//    保留，找不到成对时整段原样返回。两者都不反转义。
+//    保留，找不到成对时整段原样返回。不反转义。
 // 6. 本模块不判断"该不该显示某条消息"（那是 visibility.ts 的职责），只负责把部署包装从可读正文中剥离。
 //    是否剥离由调用方按展示面决定：md/json/search 剥离，`--format jsonl` 保留原始事件。
 
@@ -71,11 +68,13 @@ export const RESULT_OPEN_PREFIX = "<dsh-result ";
 /** 工具结果标记的终点字面量。 */
 export const RESULT_CLOSE = "</dsh-result>";
 
-/** 交接摘要信封的起点（单独成行）。 */
+/**
+ * 标准压缩检查点摘要标签的起点字面量（`<compacted-summary>`）。
+ *
+ * 本模块不切分该标签，只把它的起点用于标题归一化：上游偶尔把部署标记本身截断成标题，形如
+ * `<compacted-summary>`，这类取值不是会话标题。
+ */
 const SUMMARY_OPEN = "<compacted-summary>";
-
-/** 交接摘要信封的终点（单独成行）。 */
-const SUMMARY_CLOSE = "</compacted-summary>";
 
 /** 一个从文本起点开始的完整信封在文本中的位置。 */
 interface EnvelopeSpan {
@@ -194,67 +193,13 @@ export function stripMessageEnvelope(text: string): string {
 }
 
 /**
- * 取 `<compacted-summary>` 信封的内层正文。
- *
- * 只认“整段恰好是一个完整信封”：起点在开头且单独成行、终点在末尾且单独成行。官方压缩检查点的
- * 正文前面还有一段英文检查点前言，因此不满足本判据；本函数只用于识别普通消息交接投递的那条
- * 用户消息（其正文由交接插件写成严格的 `<compacted-summary>\n…\n</compacted-summary>`）。
- *
- * @param text 已拼接的完整消息正文。
- * @returns 内层正文；不是完整信封时返回 null。
- */
-export function compactedSummaryBody(text: string): string | null {
-  if (!text.startsWith(`${SUMMARY_OPEN}\n`)) return null;
-  if (!text.endsWith(`\n${SUMMARY_CLOSE}`)) return null;
-  return text.slice(SUMMARY_OPEN.length + 1, text.length - SUMMARY_CLOSE.length - 1);
-}
-
-/**
  * 消息终点的转义形态。
  *
  * 外层包裹对内层终点统一转义（`preset-lib/injection-boundary.mjs` 的 `wrapSegments`），转义后的
- * 字面量是“反斜杠 + 斜杠 + 标签名”。本常量只用于识别嵌套残形的终点，不做任何反转义，反转义会
- * 改坏正文本身含反斜杠的正规载荷。
+ * 字面量是“反斜杠 + 斜杠 + 标签名”。本常量用于识别正文里内联引用的标记行对，不做任何反转义，
+ * 反转义会改坏正文本身含反斜杠的正规载荷。
  */
 const ESCAPED_MESSAGE_CLOSE = "<\\/dsh-message>";
-
-/**
- * 剥掉交接摘要内层的消息信封残形。
- *
- * 投递消息的内层是助手消息落账后的文本，因此带着一对 `<dsh-message>`；外层
- * `<dsh-message role="user">` 又把它的终点转义为 `<\/dsh-message>`，使它不构成完整信封。
- * 本函数只处理这一种确定形态，判据三条缺一不可：以消息起点前缀开头、起点行在首个换行处结束
- * 且该行以 `>` 收尾、末尾是换行加转义终点。任一不满足即原样返回，不猜、不截取。
- *
- * 剥离只去掉起点行与转义终点行，不反转义，也不改动内层正文的任何字符。
- *
- * @param text 已取出的 `<compacted-summary>` 内层文本。
- * @returns 剥掉残形后的正文；不是该形态时原样返回。
- */
-export function stripNestedMessageEnvelope(text: string): string {
-  if (!text.startsWith(MESSAGE_OPEN_PREFIX)) return text;
-  const openEnd = text.indexOf("\n");
-  if (openEnd < 0 || text[openEnd - 1] !== ">") return text;
-  const suffix = `\n${ESCAPED_MESSAGE_CLOSE}`;
-  if (!text.endsWith(suffix)) return text;
-  return text.slice(openEnd + 1, text.length - suffix.length);
-}
-
-/**
- * 清理交接摘要条目正文里内层的嵌套残形。
- *
- * 只对“整段恰好是一个 `<compacted-summary>` 信封”生效，判据与 `compactedSummaryBody` 相同；
- * 官方压缩检查点的正文前面还有检查点前言，因此原样返回，不会被二次切分。清理后保留标签本身，
- * 使调用方仍能从正文读出这是摘要而不是用户输入。
- *
- * @param text 已剥离外层消息信封的 `user/message` 正文。
- * @returns 清理内层残形后的完整摘要文本；不是整段信封时原样返回。
- */
-export function cleanCompactedSummary(text: string): string {
-  const inner = compactedSummaryBody(text);
-  if (inner === null) return text;
-  return `${SUMMARY_OPEN}\n${stripNestedMessageEnvelope(inner)}\n${SUMMARY_CLOSE}`;
-}
 
 /**
  * 清理正文里内层引用的消息标记行对。

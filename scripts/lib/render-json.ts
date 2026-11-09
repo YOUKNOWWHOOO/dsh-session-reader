@@ -9,11 +9,7 @@
 // 同源同口径：作用域是本目标及其子树，可归属的排除项恒为空。每个 json 渲染函数与 md 侧同签名返回
 // `{ content, summary }`：摘要是 stdout 第二行，只能取自 render-summary.ts，CLI 不得自行拼接。
 
-import {
-  analyzeContextCheckpoints,
-  type ContextAnalysis,
-  checkpointSeqsOf,
-} from "./context-checkpoint.ts";
+import { analyzeContextCheckpoints, checkpointSeqsOf } from "./context-checkpoint.ts";
 import {
   asArray,
   asRecord,
@@ -101,18 +97,12 @@ export function renderListJson(outcome: ListOutcome): RenderedOutput {
  *
  * 注意 `meta` 的统计口径不受影响，`userMessages` 等计数描述整会话，不是本数组的条数。
  */
-function buildMessageEntries(
-  file: DecodedSessionFile,
-  context: ContextAnalysis,
-): Record<string, unknown>[] {
+function buildMessageEntries(file: DecodedSessionFile): Record<string, unknown>[] {
   const entries: Record<string, unknown>[] = [];
   const replyCallIds = collectSubagentReplyCallIds(file.decoded.events);
   for (const event of file.decoded.events) {
     if (!isVisibleEvent(event, replyCallIds)) continue;
     const seq = eventSeq(event);
-    // 已由 `**上下文摘要**` 承载正文的助手副本不进入 messages（与 md 时间线同口径；
-    // 原始事件仍由 jsonl 提供）。
-    if (seq !== undefined && context.suppressedAssistantSeqs.has(seq)) continue;
     const type = eventType(event);
     const data = asRecord(event.data) ?? {};
     if (type === "user/message") {
@@ -239,7 +229,7 @@ function nodeToJson(node: SessionNode, includeMessages: boolean): Record<string,
       prompt: turn.prompt,
       response: turn.response,
     })),
-    messages: includeMessages ? buildMessageEntries(node.file, context) : [],
+    messages: includeMessages ? buildMessageEntries(node.file) : [],
     subagents: node.children.map((child) => nodeToJson(child, includeMessages)),
   };
 }

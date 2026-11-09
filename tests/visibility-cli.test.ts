@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { asArray, asRecord, readNumber, readString } from "../scripts/lib/decode.ts";
 import { defaultLibRoot } from "../scripts/lib/paths.ts";
 import { type FixtureEvent, resetTempDir, writeFixtureHome } from "./fixtures.ts";
 
@@ -32,8 +33,13 @@ const OUTLINE_ID = "session-visibility-outline-02";
 
 const CALL_ID = "call_subagent_1";
 const PROMPT = "子代理任务正文 PROMT-MARK";
+const FORK_CALL_ID = "call_subagent_fork_1";
+const FORK_PROMPT = "子代理任务正文 FORK-PROMPT-MARK";
+const FORK_DESCRIPTION = "并行审计";
 const SEND_MESSAGE = "后续消息正文 SEND-MARK";
 const RECEIPT = "started subagent visibility-child-aaaa-1111-222233334444";
+const FORK_RECEIPT = "started subagent visibility-fork-child-bbbb-5555-666677778888";
+const PROVIDER_ARG = "PROVIDER-ARG-MARK";
 
 function ev(
   type: string,
@@ -128,7 +134,7 @@ function mainEvents(): FixtureEvent[] {
         name: "subagent",
         arguments: JSON.stringify({
           description: "审计测试术语",
-          provider: "p",
+          provider: PROVIDER_ARG,
           model: "m",
           prompt: PROMPT,
         }),
@@ -159,6 +165,39 @@ function mainEvents(): FixtureEvent[] {
       {
         turn: 1,
         step: 1,
+        callId: FORK_CALL_ID,
+        name: "subagent_fork",
+        arguments: JSON.stringify({
+          description: FORK_DESCRIPTION,
+          prompt: FORK_PROMPT,
+        }),
+      },
+      { surfaceOp: "append" },
+    ),
+    ev(
+      "tool/result",
+      10,
+      20,
+      {
+        turn: 1,
+        step: 1,
+        message: {
+          role: "tool",
+          source: { kind: "tool", callId: FORK_CALL_ID },
+          toolCallId: FORK_CALL_ID,
+          isError: false,
+          content: [{ type: "text", text: FORK_RECEIPT }],
+        },
+      },
+      { surfaceOp: "append" },
+    ),
+    ev(
+      "tool/call",
+      11,
+      21,
+      {
+        turn: 1,
+        step: 1,
         callId: "call_send_1",
         name: "send_message",
         arguments: JSON.stringify({ agent_id: CHILD_ID, message: SEND_MESSAGE }),
@@ -167,8 +206,8 @@ function mainEvents(): FixtureEvent[] {
     ),
     ev(
       "tool/result",
-      10,
-      20,
+      12,
+      22,
       {
         turn: 1,
         step: 1,
@@ -184,20 +223,20 @@ function mainEvents(): FixtureEvent[] {
     ),
     ev(
       "assistant/message",
-      11,
-      21,
+      13,
+      23,
       {
         turn: 1,
         message: { role: "assistant", content: [{ type: "text", text: "助手正文 ASSIST-MARK" }] },
       },
       { surfaceOp: "append" },
     ),
-    ev("session/title", 12, 22, {
+    ev("session/title", 14, 24, {
       title: "可见性夹具",
       messageSeqs: [1],
       source: { kind: "fallback" },
     }),
-    ev("turn/end", 13, 23, { turn: 1 }),
+    ev("turn/end", 15, 25, { turn: 1 }),
   ];
 }
 
@@ -288,6 +327,42 @@ function searchMd(keyword: string, extra: readonly string[] = []): string {
   return readFileSync(pathMatch[1], "utf8");
 }
 
+/** 检索 JSON 产物：只取断言需要的命中标签与命中总数。 */
+interface SearchDocument {
+  readonly labels: string[];
+  readonly total: number;
+}
+
+function searchJson(keyword: string, scope: "text" | "tools" | "all" = "text"): SearchDocument {
+  const result = runCli(["search", keyword, ...baseArgs(), "--scope", scope, "--format", "json"]);
+  assert.equal(result.status, 0, `search --format json 失败: ${result.stderr}`);
+  const lines = result.stdout.split("\n").filter((line) => line.length > 0);
+  const pathMatch = /^完整输出已保存到: (.+)$/u.exec(lines[0]);
+  assert.notEqual(pathMatch, null);
+  if (pathMatch === null) throw new Error("unreachable");
+  const parsed: unknown = JSON.parse(readFileSync(pathMatch[1], "utf8"));
+  const document = asRecord(parsed);
+  assert.notEqual(document, undefined, "检索 JSON 顶层不是对象");
+  if (document === undefined) throw new Error("检索 JSON 顶层不是对象");
+  const matches = asArray(document.matches);
+  assert.notEqual(matches, undefined, "检索 JSON 缺少 matches 数组");
+  if (matches === undefined) throw new Error("检索 JSON 缺少 matches 数组");
+  const total = readNumber(document, "total");
+  assert.notEqual(total, undefined, "检索 JSON 缺少 total 数字");
+  if (total === undefined) throw new Error("检索 JSON 缺少 total 数字");
+  const labels: string[] = [];
+  for (const match of matches) {
+    const record = asRecord(match);
+    assert.notEqual(record, undefined, "检索命中项不是对象");
+    if (record === undefined) throw new Error("检索命中项不是对象");
+    const label = readString(record, "label");
+    assert.notEqual(label, undefined, "检索命中项缺少字符串 label");
+    if (label === undefined) throw new Error("检索命中项缺少字符串 label");
+    labels.push(label);
+  }
+  return { labels, total };
+}
+
 before(() => {
   resetTempDir(TEMP_ROOT);
   writeFixtureHome(HOME, {
@@ -328,7 +403,7 @@ describe("默认参数的注入过滤", () => {
       assert.equal(content.includes(marker), false, `${marker} 不应出现在默认视图`);
     }
     assert.equal(content.includes("已排除 4 条框架注入（--events 显示）"), true);
-    assert.equal(content.includes("已排除 1 条子代理调度回执（--tools 显示）"), true);
+    assert.equal(content.includes("已排除 2 条子代理调度回执（--tools 显示）"), true);
   });
 
   it("--events 恢复被排除的注入，且不再计入排除数", () => {
@@ -339,23 +414,34 @@ describe("默认参数的注入过滤", () => {
     assert.equal(content.includes("已排除 4 条框架注入"), false);
   });
 
-  it("子代理任务与发往子代理的正文默认呈现，调度回执默认不呈现", () => {
+  it("两个创建工具的任务正文与发往子代理的正文默认呈现，调度回执默认不呈现", () => {
     const { content } = showMd();
     assert.equal(content.includes("**子代理任务**（`审计测试术语`）："), true);
     assert.equal(content.includes(PROMPT), true);
+    assert.equal(content.includes(`**子代理任务**（\`${FORK_DESCRIPTION}\`）：`), true);
+    assert.equal(content.includes(FORK_PROMPT), true);
     assert.equal(content.includes("**发往子代理**（"), true);
     assert.equal(content.includes(SEND_MESSAGE), true);
     assert.equal(content.includes(RECEIPT), false);
+    assert.equal(content.includes(FORK_RECEIPT), false);
+    // 调度参数不是交流内容，默认视图不呈现。
+    assert.equal(content.includes(PROVIDER_ARG), false);
   });
 
-  it("--tools 不解除注入过滤，也不改变子代理任务的专用条目", () => {
+  it("--tools 不解除注入过滤，也不改变两个创建工具的专用条目", () => {
     const { content } = showMd(["--tools"]);
     assert.equal(content.includes("CATALOG-MARK"), false);
     assert.equal(content.includes("JOB-MARK"), false);
     assert.equal(content.includes("**子代理任务**（`审计测试术语`）："), true);
+    assert.equal(content.includes(`**子代理任务**（\`${FORK_DESCRIPTION}\`）：`), true);
     assert.equal(content.includes(RECEIPT), true, "--tools 下回执作为原始工具结果可见");
+    assert.equal(content.includes(FORK_RECEIPT), true, "--tools 下回执作为原始工具结果可见");
+    // `send_message` 的结果不是创建回执，按普通工具结果呈现。
+    assert.equal(content.includes("DELIVERED-MARK"), true);
     // 同一调用不重复呈现：专用条目取代原始工具条目。
     assert.equal(content.includes("**工具调用**（`subagent`）"), false);
+    assert.equal(content.includes("**工具调用**（`subagent_fork`）"), false);
+    assert.equal(content.includes("**工具调用**（`send_message`）"), false);
   });
 
   it("--subagents 的子代理块沿用同一可见性", () => {
@@ -368,9 +454,10 @@ describe("默认参数的注入过滤", () => {
   it("search 默认档与默认提取同口径：注入不可命中，--scope all 可取回", () => {
     const byDefault = searchMd("CATALOG-MARK");
     assert.equal(byDefault.includes("命中总数：0"), true);
-    // 排除量按**库内纳入会话**累加：主会话 4 条注入 + 子会话 1 条注入、回执 1 条（主会话）。
+    // 排除量按**库内纳入会话**累加：主会话 4 条注入 + 子会话 1 条注入；创建回执 2 条（主会话）。
+    // `send_message` 的结果不是创建回执，不进入该计数。
     assert.equal(
-      byDefault.includes("已排除 5 条框架注入与 1 条子代理调度回执（--scope all 可检索）"),
+      byDefault.includes("已排除 5 条框架注入与 2 条子代理调度回执（--scope all 可检索）"),
       true,
     );
     const exhaustive = searchMd("CATALOG-MARK", ["--scope", "all"]);
@@ -380,11 +467,40 @@ describe("默认参数的注入过滤", () => {
     const tools = searchMd("CATALOG-MARK", ["--scope", "tools"]);
     assert.equal(tools.includes("命中总数：0"), true);
     assert.equal(
-      tools.includes("已排除 5 条框架注入与 1 条子代理调度回执（--scope all 可检索）"),
+      tools.includes("已排除 5 条框架注入与 2 条子代理调度回执（--scope all 可检索）"),
       true,
     );
     const receipt = searchMd("started subagent");
     assert.equal(receipt.includes("命中总数：0"), true, "回执在默认档不可命中");
+  });
+
+  it("search 默认档以专用标签检索两个创建工具与发往子代理的正文", () => {
+    const subagent = searchJson(PROMPT);
+    assert.deepEqual(subagent.labels, ["子代理任务"]);
+    assert.equal(subagent.total, 1);
+    const fork = searchJson(FORK_PROMPT);
+    assert.deepEqual(fork.labels, ["子代理任务"]);
+    assert.equal(fork.total, 1);
+    const send = searchJson(SEND_MESSAGE);
+    assert.deepEqual(send.labels, ["发往子代理"]);
+    assert.equal(send.total, 1);
+    // 调度参数不进默认档，只在 tools 档随原始参数可检索；只有 `subagent` 实参带该字段。
+    assert.equal(searchJson(PROVIDER_ARG).total, 0);
+    assert.equal(searchJson(PROVIDER_ARG, "tools").total, 1);
+  });
+
+  it("search 的 tools 与 all 档在专用正文之外保留原始参数与整条事件载荷", () => {
+    const tools = searchJson(PROMPT, "tools");
+    assert.equal(tools.total, 2);
+    assert.deepEqual(new Set(tools.labels), new Set(["子代理任务", "tool/call"]));
+    const all = searchJson(PROMPT, "all");
+    // 专用正文单元 + tool/call 原始参数单元 + 整条事件载荷单元。
+    assert.equal(all.total, 3);
+    assert.equal(all.labels.includes("子代理任务"), true);
+    assert.equal(all.labels.includes("tool/call"), true);
+    // send_message 的正文在 tools/all 档同样保留原始参数，计数按检索单元累计。
+    assert.equal(searchJson(SEND_MESSAGE, "tools").total, 2);
+    assert.equal(searchJson(SEND_MESSAGE, "all").total, 3);
   });
 
   it("show --format json 的 messages 与默认视图同口径", () => {

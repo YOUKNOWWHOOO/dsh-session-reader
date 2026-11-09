@@ -291,7 +291,7 @@ export const COMMANDS: readonly CommandSpec[] = [
         valueKind: "enum",
         values: SCOPE_VALUES,
         description:
-          "检索范围（text=用户/助手正文、提问/回答与上下文摘要/交接通知/交接指令/子代理任务的可读文本，与默认提取同口径；tools=另含工具参数与结果；all=另含推理/系统/压缩/命令/标题请求/web 请求/交付物/待办/代理信箱与每条事件载荷，是取回被默认排除内容的入口）",
+          "检索范围（text=用户与助手正文、提问与回答、上下文摘要/交接通知/交接指令/子代理任务与发往子代理的可读正文（子代理任务含 subagent/subagent_fork 的任务正文，发往子代理为 send_message 的消息正文），与默认提取同口径；tools=另含原始工具参数与结果；all=另含推理/系统/压缩/命令/标题请求/web 请求/交付物/待办/代理信箱与每条事件载荷，是取回被默认排除内容的入口）",
         defaultText: "text",
       },
       { name: "--case-sensitive", kind: "switch", description: "区分大小写（默认不区分）" },

@@ -3,10 +3,9 @@
 // 覆盖的对外契约：
 // 1. `**交接**` 默认可见、不受 `--thinking`/`--tools`/`--events` 控制，且同一事件只产出一条条目
 //    （`--events` 打开时不得再以通用 `**事件**` 形态出现第二次）；
-// 2. 旧格式交接只给结构事实，正文由 `**上下文摘要**` 条目承载一次、助手副本被抑制；生成指令另由
-//    `**交接指令**` 条目承载；
-// 3. 新格式交接不投递摘要：正文保留在 `**助手**` 条目，`context-compacted` 通知由 `**交接通知**`
-//    单独承载；维护指令经多步工具往返后仍被定位为 `**交接指令**`；
+// 2. `**交接**` 只给三行结构事实：轮次/步、历史替换、前置助手消息与交接通知的定位；条目不承载正文；
+// 3. 文件式交接不投递摘要：助手完成说明保留在 `**助手**` 条目，`context-compacted` 通知由
+//    `**交接通知**` 单独承载；维护指令经多步工具往返后仍被定位为 `**交接指令**`；
 // 4. 非 handoff 型的 `developer/message`（`tool-registry`）不进交接条目，仍由 `--events` 控制。
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -30,14 +29,16 @@ const HOME = join(TEMP_ROOT, "handoff-dsh");
 const OUT_DIR = join(TEMP_ROOT, "out");
 const PROJECT_DIR = "--C-Users-Alice-user_projects--";
 const MAIN_ID = "session-handoff-main-01";
-/** 新格式交接夹具会话 id：与旧格式样本分处两个会话，两种期望互不覆盖。 */
+/** 文件式交接夹具会话 id：与主夹具分处两个会话，两种期望互不覆盖。 */
 const NOTICE_ID = "session-handoff-notice-02";
 
-const BODY_MARK = "交接正文 HANDOFF-BODY-MARK";
+const BODY_MARK = "助手回复 HANDOFF-BODY-MARK";
+const MAIN_INSTRUCTION_MARK = "维护指令 MAIN-INSTRUCTION-MARK";
+const MAIN_NOTICE_MARK = "压缩通知 MAIN-NOTICE-MARK";
 const NORMAL_MARK = "普通回答 NORMAL-MARK";
 const NOTICE_INSTRUCTION_MARK = "维护指令 NOTICE-INSTRUCTION-MARK";
 const NOTICE_MARK = "压缩通知 NOTICE-MARK";
-const NOTICE_BODY_MARK = "新格式交接正文 NOTICE-BODY-MARK";
+const NOTICE_BODY_MARK = "维护完成说明 NOTICE-BODY-MARK";
 const NOTICE_CONTINUE_MARK = "继续 NOTICE-CONTINUE-MARK";
 
 /** 部署侧消息时间标记的固定时间戳，形态取自 `preset-lib/injection-boundary.mjs` 的 RFC 3339 秒级带偏移。 */
@@ -47,8 +48,8 @@ const MESSAGE_TS = "2026-10-29T22:59:57+08:00";
  * 给对话消息正文套上部署侧的消息信封。
  *
  * 当期部署在会话 `append` 包装层给真实用户消息与带文本块的助手消息各加一对 `<dsh-message>`
- * （纯工具调用的 assistant 消息不包裹）。夹具必须复现这一形态：投递判定与助手副本抑制的
- * 回归只有在信封存在时才会暴露，不带信封的旧形态会让缺陷假通过。`id` 取值不是解析判据
+ * （纯工具调用的 assistant 消息不包裹）。夹具必须复现这一形态：前置助手消息的字符数必须按
+ * 剥净后的正文计算，带信封的形态才能暴露把信封长度算进坐标的缺陷。`id` 取值不是解析判据
  * （剥离只认形态），此处用固定值保持夹具确定性。
  *
  * @param role 消息角色，取 `user` 或 `assistant`。
@@ -60,22 +61,7 @@ function enveloped(role: "user" | "assistant", text: string): string {
 }
 
 /**
- * 投递消息的内层：助手落账文本被原样复制进摘要，外层包裹再把它的终点转义。
- *
- * 真实数据里投递消息的内层不是纯正文，而是“助手消息落账后的文本”：带着一对 `<dsh-message>`
- * 与 `role`/`id`/`ts` 起点行；随后 `<dsh-message role="user">` 的外层包裹把它的终点转义为
- * `<\/dsh-message>`（`preset-lib/injection-boundary.mjs` 的 `wrapSegments` 对三种终点统一转义）。
- * 夹具必须复现这一形态，否则摘要正文的标记清理与助手副本抑制会在"内层是纯正文"的假形态下假通过。
- *
- * @param text 交接正文（助手消息的正文）。
- * @returns 带助手消息标记、终点已转义的文本。
- */
-function deliveryInner(text: string): string {
-  return enveloped("assistant", text).replace("</dsh-message>", "<\\/dsh-message>");
-}
-
-/**
- * 部署侧注入信封（新格式交接的两条协议消息都由交接插件自己包裹）。
+ * 部署侧注入信封（文件式交接的两条协议消息都由交接插件自己包裹）。
  *
  * 形态取自 `preset-lib/injection-boundary.mjs`：起点单独成行、正文另起一行、终点单独成行。
  * `kind` 是合成条目判定的结构锚点；`src` 恒为 `handoff`。
@@ -97,7 +83,7 @@ function ev(
   return { type, seq, time: 1000 + seq, data, ...extra };
 }
 
-/** 交接正文 + 交接边界 + 投递消息 + 非交接型 developer/message 的完整会话。 */
+/** 文件式交接：维护指令注入 + 助手正文 + 交接边界 + 压缩通知 + 非交接型 developer/message。 */
 function handoffEvents(): FixtureEvent[] {
   return [
     ev("turn/start", 0, { turn: 1 }),
@@ -106,14 +92,8 @@ function handoffEvents(): FixtureEvent[] {
       1,
       {
         role: "user",
-        // 生成正文的前一条且不带 rpcId：按合成上下文消息契约，它是交接生成指令。
-        content: [
-          {
-            type: "text",
-            text: enveloped("user", "从现在起，你唯一的任务是给出交接指令 PROMPT-MARK"),
-          },
-        ],
-        source: { kind: "user" },
+        content: [{ type: "text", text: injected("handoff-instruction", MAIN_INSTRUCTION_MARK) }],
+        source: { kind: "handoff" },
       },
       { surfaceOp: "append" },
     ),
@@ -139,37 +119,14 @@ function handoffEvents(): FixtureEvent[] {
       },
       { surfaceOp: { op: "replace", startSeq: 0, endSeq: 2 }, sourceEventSeqs: [0, 1, 2] },
     ),
-    ev("agent/inbox/spliced", 4, {
-      target: "next-step",
-      start: 0,
-      inserted: [
-        {
-          role: "user",
-          source: { kind: "user" },
-          content: [
-            {
-              type: "text",
-              text: `<compacted-summary>\n${BODY_MARK}\n</compacted-summary>`,
-            },
-          ],
-        },
-      ],
-    }),
+    ev("agent/inbox/spliced", 4, { target: "next-step", start: 0, inserted: [] }),
     ev(
       "user/message",
       5,
       {
         role: "user",
-        content: [
-          {
-            type: "text",
-            text: enveloped(
-              "user",
-              `<compacted-summary>\n${deliveryInner(BODY_MARK)}\n</compacted-summary>`,
-            ),
-          },
-        ],
-        source: { kind: "user" },
+        content: [{ type: "text", text: injected("context-compacted", MAIN_NOTICE_MARK) }],
+        source: { kind: "handoff" },
       },
       { surfaceOp: "append" },
     ),
@@ -195,7 +152,8 @@ function handoffEvents(): FixtureEvent[] {
 }
 
 /**
- * 新格式交接：维护指令 → 多步工具往返 → 最终回复 → 交接事件 → 投递 → `context-compacted` 通知。
+ * 文件式交接：维护指令 → 多步工具往返 → 最终回复 → 交接事件 → 代理信箱拼接事件 →
+ * `context-compacted` 通知。
  *
  * 生成阶段刻意跨两个步骤（第一步只有工具调用、第二步才是最终文本），复现真实日志里"维护指令与
  * 最终回复不相邻"的形态；只看前一条事件的判据在这里会失败，因此本夹具能拦住该回归。
@@ -303,7 +261,7 @@ function handoffNoticeEvents(): FixtureEvent[] {
         turn: 1,
         message: {
           role: "assistant",
-          content: [{ type: "text", text: enveloped("assistant", "新格式交接后的回答") }],
+          content: [{ type: "text", text: enveloped("assistant", "文件式交接后的回答") }],
         },
       },
       { surfaceOp: "append" },
@@ -398,7 +356,7 @@ before(() => {
         projectDir: PROJECT_DIR,
         createdAt: 1000,
         events: handoffEvents(),
-        title: "交接夹具",
+        title: "文件式交接主夹具",
         turns: 1,
         steps: 2,
         lastPromptAt: 2000,
@@ -408,7 +366,7 @@ before(() => {
         projectDir: PROJECT_DIR,
         createdAt: 900,
         events: handoffNoticeEvents(),
-        title: "新格式交接夹具",
+        title: "文件式交接夹具",
         turns: 1,
         steps: 3,
         lastPromptAt: 1900,
@@ -424,24 +382,27 @@ describe("交接条目的默认呈现", () => {
     assert.equal(content.includes("轮次 1／步 1"), true);
     assert.equal(content.includes("历史替换 seq 0-2（3 条事件）"), true);
     assert.equal(
-      content.includes(`投递 next-step；正文 seq 5（${String([...BODY_MARK].length)} 字符）`),
+      content.includes(
+        `前置助手消息 seq 2（${String([...BODY_MARK].length)} 字符）；交接通知 seq 5`,
+      ),
       true,
     );
   });
 
-  it("正文只由上下文摘要条目出现一次，助手副本被抑制，生成指令单独成条", () => {
+  it("助手回复只出现一次，不产生上下文摘要，维护指令与通知各自成条", () => {
     const { content } = showMd();
-    assert.equal(countOf(content, "**上下文摘要**："), 1);
     assert.equal(countOf(content, BODY_MARK), 1);
+    assert.equal(countOf(content, "**上下文摘要**："), 0);
     assert.equal(countOf(content, "**交接指令**："), 1);
-    assert.equal(content.includes("PROMPT-MARK"), true);
-    // 投递正文不进默认视图（它在 spliced 事件里，属框架注入路径）。
-    assert.equal(content.includes("SPLICED-MARK"), false);
-    // 消息信封是传输层标记：任何可读正文都不得带它的起点行或终点行。
+    assert.equal(content.includes(MAIN_INSTRUCTION_MARK), true);
+    assert.equal(countOf(content, "**交接通知**："), 1);
+    assert.equal(content.includes(MAIN_NOTICE_MARK), true);
+    // 消息信封与注入标记都是传输层形态：任何可读正文都不得带它们的起点行或终点行。
     assert.equal(content.includes("<dsh-message"), false);
     assert.equal(content.includes("</dsh-message>"), false);
-    // 摘要内层的嵌套残形同样不得泄漏：正文里既没有助手起点行，也没有转义终点行。
-    assert.equal(content.includes("<\\/dsh-message>"), false);
+    assert.equal(content.includes("<dsh-injection"), false);
+    // 旧自定义摘要投递已删除：默认视图不再出现 `<compacted-summary>` 标签。
+    assert.equal(content.includes("<compacted-summary>"), false);
   });
 
   it("非 handoff 型 developer/message 不进交接条目，且计入隐藏的生命周期事件", () => {
@@ -475,14 +436,15 @@ describe("交接条目的默认呈现", () => {
     assert.equal(content.includes("<dsh-message"), false);
   });
 
-  it("--role 不影响交接条目与上下文摘要条目", () => {
+  it("--role 不影响交接条目与交接通知，但助手正文按角色过滤", () => {
     const { content } = showMd(["--role", "user"]);
     assert.equal(countOf(content, "**交接**："), 1);
-    assert.equal(countOf(content, "**上下文摘要**："), 1);
-    assert.equal(content.includes(BODY_MARK), true);
+    assert.equal(countOf(content, "**交接通知**："), 1);
+    assert.equal(content.includes(MAIN_NOTICE_MARK), true);
+    assert.equal(content.includes(BODY_MARK), false);
   });
 
-  it("--format json 不新增条目类型：messages 里没有 developer/message，助手副本不重复", () => {
+  it("--format json 不新增条目类型：messages 里没有 developer/message，助手正文只出现一次", () => {
     const result = runCli(["show", MAIN_ID, ...baseArgs(), "--format", "json"]);
     assert.equal(result.status, 0, `show --format json 失败: ${result.stderr}`);
     const lines = result.stdout.split("\n").filter((line) => line.length > 0);
@@ -499,13 +461,13 @@ describe("交接条目的默认呈现", () => {
   });
 });
 
-describe("新格式交接的默认呈现", () => {
-  it("维护指令、交接结构、通知与助手正文各自成条，正文只出现一次", () => {
+describe("文件式交接的默认呈现", () => {
+  it("维护指令、交接结构、通知与助手回复各自成条，正文只出现一次", () => {
     const { content } = showMd([], NOTICE_ID);
     assert.equal(countOf(content, "**交接**："), 1);
     assert.equal(
       content.includes(
-        `投递 next-step；正文 seq 8（${String([...NOTICE_BODY_MARK].length)} 字符）`,
+        `前置助手消息 seq 8（${String([...NOTICE_BODY_MARK].length)} 字符）；交接通知 seq 13`,
       ),
       true,
     );
@@ -513,7 +475,7 @@ describe("新格式交接的默认呈现", () => {
     assert.equal(content.includes(NOTICE_INSTRUCTION_MARK), true);
     assert.equal(countOf(content, "**交接通知**："), 1);
     assert.equal(content.includes(NOTICE_MARK), true);
-    // 新格式不投递摘要，也不抑制助手副本。
+    // 文件式交接不投递摘要，助手回复只由助手条目承载。
     assert.equal(countOf(content, "**上下文摘要**："), 0);
     assert.equal(countOf(content, NOTICE_BODY_MARK), 1);
     // 注入标记是传输层形态，任何可读正文都不得带它。

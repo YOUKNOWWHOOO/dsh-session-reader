@@ -112,17 +112,11 @@ export const ASK_UNPAIRED_ID = "session-adv-ask-unpaired-18";
 export const ASK_ERROR_ID = "session-adv-ask-error-19";
 export const ASK_MALFORMED_ID = "session-adv-ask-malformed-20";
 /**
- * 交接夹具会话 id：一次完整交接（助手正文 → handoff 型 `developer/message` → 投递）加一个
- * 非 handoff 型（`tool-registry`）`developer/message`。两者必须在同一会话里，门禁才能同时断言
- * “进 `**交接**` 条目”与“仍由 `--events` 按通用事件呈现”两条路径。
- */
-export const HANDOFF_ID = "session-adv-handoff-21";
-/**
- * 新格式交接夹具会话 id：维护指令（来源 `handoff` 的 `handoff-instruction` 注入）→ 助手正文 →
- * handoff 型 `developer/message` → 投递 → `context-compacted` 通知。
+ * 文件式交接夹具会话 id：维护指令（来源 `handoff` 的 `handoff-instruction` 注入）→ 助手正文 →
+ * handoff 型 `developer/message` → 代理信箱拼接事件 → `context-compacted` 通知。
  *
- * 与 `HANDOFF_ID` 分处两个会话：旧格式的正文由 `**上下文摘要**` 承载且抑制助手副本，新格式的正文
- * 保留在 `**助手**`、通知单独成条；混在同一会话里会让两种期望互相覆盖。
+ * 门禁据此覆盖 `**交接**` 结构事实、`**交接指令**` 与 `**交接通知**` 两个标签、助手回复只由
+ * `**助手**` 承载一次的形态，以及非 handoff 型 `developer/message` 仍由 `--events` 呈现的路径。
  */
 export const HANDOFF_NOTICE_ID = "session-adv-handoff-notice-22";
 /** 夹具主/子会话共用的工作目录（含空格、方括号与井号）。 */
@@ -159,20 +153,6 @@ const MESSAGE_TS = "2026-10-29T22:59:57+08:00";
  */
 function enveloped(role: "user" | "assistant", text: string): string {
   return `<dsh-message role="${role}" id="abcdef12" ts="${MESSAGE_TS}">\n${text}\n</dsh-message>`;
-}
-
-/**
- * 投递摘要的内层：助手落账文本被原样复制进来，终点被外层包裹转义。
- *
- * 真实数据里投递消息的内层带着 `<dsh-message role="assistant">` 起点行，终点则是
- * `<\/dsh-message>`（`preset-lib/injection-boundary.mjs` 的 `wrapSegments` 对外层正文的三种终点
- * 统一转义）。门禁夹具必须复现这一形态，否则摘要正文的标记清理与助手副本抑制会在假形态下通过。
- *
- * @param text 交接正文。
- * @returns 带助手消息标记、终点已转义的文本。
- */
-function deliveryInner(text: string): string {
-  return enveloped("assistant", text).replace("</dsh-message>", "<\\/dsh-message>");
 }
 
 /** 主会话事件：把敌意内容分散注入到消息/工具/系统/压缩/命令/标题请求/web/交付物字段。 */
@@ -354,125 +334,12 @@ function specialEvents(texts: readonly string[], title: string): FixtureEvent[] 
 }
 
 /**
- * 交接样本事件：生成指令 → 助手正文 → handoff 型 `developer/message` → `agent/inbox/spliced` 投递 →
- * 投递消息（正文为 `<compacted-summary>` 信封），另加一个非 handoff 型（`tool-registry`）
- * `developer/message`。
- *
- * 正文只由 `**上下文摘要**` 条目承载：助手的生成副本被抑制，投递消息是模型可见正文的落点；
- * 生成指令渲染为 `**交接指令**`（它的结构位置就是"生成正文的前一条、来源为 user、不带 rpcId"）。
- * `developer/message` 的正文保持空数组（与当期插件写入形态一致），`**交接**` 条目只呈现结构事实
- * 并用 seq 指向投递消息。非 handoff 型样本与它同处一个会话是有意的：门禁据此覆盖
- * “进条目”与“仍由 `--events` 呈现”两条路径。
- */
-function handoffSampleEvents(): FixtureEvent[] {
-  return [
-    ev("turn/start", 0, 10, { turn: 1 }),
-    ev(
-      "user/message",
-      1,
-      11,
-      {
-        role: "user",
-        // 生成正文的前一条且不带 rpcId：按合成上下文消息契约，它就是交接生成指令，
-        // 门禁据此覆盖 `**交接指令**` 标签。
-        content: [
-          {
-            type: "text",
-            text: enveloped("user", "从现在起，你唯一的任务是给出交接指令 PROMPT-MARK"),
-          },
-        ],
-        source: { kind: "user" },
-      },
-      { surfaceOp: "append" },
-    ),
-    ev(
-      "assistant/message",
-      2,
-      12,
-      {
-        turn: 1,
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: enveloped("assistant", "交接正文 `code`\n第二行") }],
-        },
-      },
-      { surfaceOp: "append" },
-    ),
-    ev(
-      "developer/message",
-      3,
-      13,
-      {
-        turn: 1,
-        step: 1,
-        message: { role: "developer", source: { kind: "handoff" }, content: [] },
-      },
-      { surfaceOp: { op: "replace", startSeq: 0, endSeq: 2 }, sourceEventSeqs: [0, 1, 2] },
-    ),
-    ev("agent/inbox/spliced", 4, 14, {
-      target: "next-step",
-      start: 0,
-      inserted: [
-        {
-          role: "user",
-          source: { kind: "user" },
-          content: [
-            {
-              type: "text",
-              text: "<compacted-summary>\n交接正文 `code`\n第二行\n</compacted-summary>",
-            },
-          ],
-        },
-      ],
-    }),
-    ev(
-      "user/message",
-      5,
-      15,
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: enveloped(
-              "user",
-              `<compacted-summary>\n${deliveryInner("交接正文 `code`\n第二行")}\n</compacted-summary>`,
-            ),
-          },
-        ],
-        source: { kind: "user" },
-      },
-      { surfaceOp: "append" },
-    ),
-    ev("developer/message", 6, 16, {
-      turn: 1,
-      step: 2,
-      message: { role: "developer", source: { kind: "tool-registry" }, content: [] },
-    }),
-    ev(
-      "assistant/message",
-      7,
-      17,
-      {
-        turn: 1,
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: enveloped("assistant", "交接后的普通回答") }],
-        },
-      },
-      { surfaceOp: "append" },
-    ),
-    ev("turn/end", 8, 18, { turn: 1, reason: { kind: "completed" } }),
-  ];
-}
-
-/**
- * 新格式交接样本事件：维护指令注入 → 助手正文 → handoff 型 `developer/message` → 投递 →
- * `context-compacted` 通知。
+ * 文件式交接样本事件：维护指令注入 → 助手正文 → handoff 型 `developer/message` →
+ * 代理信箱拼接事件 → `context-compacted` 通知 → 非 handoff 型 `developer/message`。
  *
  * 两条协议消息都带部署侧的注入标记（来源 `handoff`），门禁据此覆盖 `**交接指令**` 与
- * `**交接通知**` 两个新标签；助手正文不被抑制，因此同一段正文只由 `**助手**` 承载一次。
- * 注入正文里带反引号与换行，使围栏长度与多行载体的规则也在新标签上受检。
+ * `**交接通知**` 两个标签；助手回复保留在助手事件中，因此同一段正文只由 `**助手**` 承载一次。
+ * 注入正文里带反引号与换行，使围栏长度与多行载体的规则也在这两个标签上受检。
  */
 function handoffNoticeSampleEvents(): FixtureEvent[] {
   const ts = "2026-10-31T12:44:50+08:00";
@@ -507,9 +374,7 @@ function handoffNoticeSampleEvents(): FixtureEvent[] {
         turn: 1,
         message: {
           role: "assistant",
-          content: [
-            { type: "text", text: enveloped("assistant", "新格式交接正文 `code`\n第二行") },
-          ],
+          content: [{ type: "text", text: enveloped("assistant", "维护完成说明 `code`\n第二行") }],
         },
       },
       { surfaceOp: "append" },
@@ -528,21 +393,7 @@ function handoffNoticeSampleEvents(): FixtureEvent[] {
     ev("agent/inbox/spliced", 4, 14, {
       target: "next-step",
       start: 0,
-      inserted: [
-        {
-          role: "user",
-          source: { kind: "handoff" },
-          content: [
-            {
-              type: "text",
-              text: injected(
-                "context-compacted",
-                "本会话刚才发生了上下文压缩，你是接续会话。你必须完整读取 C:\\Users\\Alice\\tmp\\交接指令.md，依据其中的所有内容继续原任务。",
-              ),
-            },
-          ],
-        },
-      ],
+      inserted: [],
     }),
     ev(
       "user/message",
@@ -563,7 +414,12 @@ function handoffNoticeSampleEvents(): FixtureEvent[] {
       },
       { surfaceOp: "append" },
     ),
-    ev("turn/end", 6, 16, { turn: 1, reason: { kind: "completed" } }),
+    ev("developer/message", 6, 16, {
+      turn: 1,
+      step: 2,
+      message: { role: "developer", source: { kind: "tool-registry" }, content: [] },
+    }),
+    ev("turn/end", 7, 17, { turn: 1, reason: { kind: "completed" } }),
   ];
 }
 
@@ -808,29 +664,17 @@ function handoffNoticeSampleEvents(): FixtureEvent[] {
         steps: 1,
         lastPromptAt: 730,
       },
-      // 交接样本。createdAt 与 lastPromptAt 同样取在现有最小值以下，`last` 仍指向 pcpart-13，
+      // 文件式交接样本。createdAt 与 lastPromptAt 取在现有最小值以下，`last` 仍指向 pcpart-13，
       // 因此 `show last` 这类组合不会落到本样本上（本样本的期望是默认导出成功并产出交接条目）。
-      {
-        id: HANDOFF_ID,
-        projectDir: PROJECT_DIR,
-        cwd: MAIN_CWD,
-        createdAt: 640,
-        events: handoffSampleEvents(),
-        title: "交接夹具",
-        turns: 1,
-        steps: 2,
-        lastPromptAt: 740,
-      },
-      // 新格式交接样本：与旧格式样本同样的 createdAt/lastPromptAt 取值区间，不影响 `last` 的指向。
       {
         id: HANDOFF_NOTICE_ID,
         projectDir: PROJECT_DIR,
         cwd: MAIN_CWD,
         createdAt: 650,
         events: handoffNoticeSampleEvents(),
-        title: "新格式交接夹具",
+        title: "文件式交接夹具",
         turns: 1,
-        steps: 1,
+        steps: 2,
         lastPromptAt: 750,
       },
     ],

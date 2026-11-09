@@ -234,8 +234,8 @@ interface TurnSummary {
  * （实测：某会话首轮 prompt 落到了 `user-approval` 的"审批策略已变更"通知上）。
  * response 取自 `assistant/message`，该类型不在注入过滤范围内，无需判定。
  *
- * `skipPromptSeqs` 由上下文摘要分析提供：标准压缩检查点与自定义交接投递消息不是用户提问，
- * 轮次大纲不得把摘要正文当成 prompt；跳过它们后，该轮的下一条真实用户消息（若有）成为 prompt。
+ * `skipPromptSeqs` 由合成上下文消息分析提供：标准压缩检查点、交接通知与交接维护指令不是用户提问，
+ * 轮次大纲不得把它们的正文当成 prompt；跳过它们后，该轮的下一条真实用户消息（若有）成为 prompt。
  */
 export function computeTurns(
   file: DecodedSessionFile,

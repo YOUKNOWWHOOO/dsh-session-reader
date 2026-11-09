@@ -9,7 +9,11 @@ import type {
   SessionFormatCatalog,
 } from "../scripts/lib/decode.ts";
 
-/** 夹具事件：v3 合法信封。 */
+/**
+ * 夹具事件定义：满足当前会话日志格式结构约束的事件记录。
+ *
+ * 字段含义与写盘前的结构规范化统一由本文件的 `eventLine` 承担，测试用例不按版本号假设结构。
+ */
 export interface FixtureEvent {
   readonly type: string;
   readonly seq: number;

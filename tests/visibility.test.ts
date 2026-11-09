@@ -31,6 +31,24 @@ function subagentCall(callId: string): Record<string, unknown> {
   };
 }
 
+function subagentForkCall(callId: string): Record<string, unknown> {
+  return {
+    type: "tool/call",
+    seq: 4,
+    time: 4,
+    data: { callId, name: "subagent_fork", arguments: '{"prompt":"p"}' },
+  };
+}
+
+function sendMessageCall(callId: string): Record<string, unknown> {
+  return {
+    type: "tool/call",
+    seq: 5,
+    time: 5,
+    data: { callId, name: "send_message", arguments: '{"agent_id":"a","message":"m"}' },
+  };
+}
+
 function toolResult(callId: string): Record<string, unknown> {
   return {
     type: "tool/result",
@@ -119,24 +137,32 @@ describe("默认可见性判定", () => {
     assert.equal(isInjectedUserMessage(subagentCall("call_1")), false);
   });
 
-  it("子代理调度回执按 callId 配对识别，与正文文案无关", () => {
+  it("两个创建工具的调度回执按 callId 配对识别，与正文文案无关", () => {
     const ids = collectSubagentReplyCallIds([
       subagentCall("call_sub_1"),
+      subagentForkCall("call_fork_1"),
       {
         type: "tool/call",
-        seq: 4,
-        time: 4,
+        seq: 6,
+        time: 6,
         data: { callId: "call_read_1", name: "read", arguments: "{}" },
       },
+      sendMessageCall("call_send_1"),
     ]);
-    assert.deepEqual([...ids], ["call_sub_1"]);
+    assert.deepEqual([...ids], ["call_sub_1", "call_fork_1"]);
     assert.equal(isSubagentReceipt(toolResult("call_sub_1"), ids), true);
+    assert.equal(isSubagentReceipt(toolResult("call_fork_1"), ids), true);
     assert.equal(isSubagentReceipt(toolResult("call_read_1"), ids), false);
+    // `send_message` 的结果不是创建回执：它属于普通工具结果，必须默认可见。
+    assert.equal(isSubagentReceipt(toolResult("call_send_1"), ids), false);
+    assert.equal(isVisibleEvent(toolResult("call_send_1"), ids), true);
     // 未配对的 toolCallId 不是回执：不能凭"看起来像回执"排除。
     assert.equal(isSubagentReceipt(toolResult("call_unknown"), ids), false);
     assert.equal(isSubagentReceipt(subagentCall("call_sub_1"), ids), false);
+    assert.equal(isSubagentReceipt(subagentForkCall("call_fork_1"), ids), false);
     // 回执默认不可见，普通工具结果默认可见。
     assert.equal(isVisibleEvent(toolResult("call_sub_1"), ids), false);
+    assert.equal(isVisibleEvent(toolResult("call_fork_1"), ids), false);
     assert.equal(isVisibleEvent(toolResult("call_read_1"), ids), true);
   });
 
@@ -156,13 +182,18 @@ describe("默认可见性判定", () => {
       userMessage({ kind: "skill-catalog" }),
       subagentCall("call_sub_1"),
       toolResult("call_sub_1"),
+      subagentForkCall("call_fork_1"),
+      toolResult("call_fork_1"),
+      sendMessageCall("call_send_1"),
+      toolResult("call_send_1"),
       toolResult("call_read_1"),
       { type: "assistant/message", seq: 9, time: 9, data: {} },
     ];
     const ids = collectSubagentReplyCallIds(events);
+    // `send_message` 的结果不计入创建回执：两个创建工具各一条，合计 2。
     assert.deepEqual(countExcludedInjections(events, ids), {
       userMessages: 3,
-      subagentReceipts: 1,
+      subagentReceipts: 2,
     });
   });
 

@@ -17,6 +17,7 @@ import {
   type ContextAnalysis,
   type ContextCheckpoint,
   checkpointSeqsOf,
+  extractSubagentCallContent,
   HANDOFF_NOTICE_LABEL,
   HANDOFF_PROMPT_LABEL,
   type HandoffNoticeEntry,
@@ -63,8 +64,6 @@ import {
   collectSubagentReplyCallIds,
   isInjectedUserMessage,
   isSubagentReceipt,
-  SEND_MESSAGE_TOOL_NAME,
-  SUBAGENT_TOOL_NAME,
 } from "./visibility.ts";
 
 // ------------------------- show -------------------------
@@ -282,62 +281,25 @@ function filterSummaryMd(
 }
 
 /**
- * 子代理调度工具的专用条目：解析调用实参，给出任务正文或后续消息正文。
+ * 子代理相关工具调用的专用条目：正文由 `context-checkpoint.ts` 抽取，本函数只套既有格式。
  *
  * 与"原样转储整个实参"的分工（问答条目同一思路）：实参里的 `provider`、`model`、
  * `reasoning_effort`、`run_in_background` 是调度参数，不是交流内容，默认产物只呈现正文；
  * 需要逐字核对完整实参时用 `--format jsonl`。
  *
- * `arguments` 解析失败时返回 null 而不是兜底显示：官方库解码出的实参是 JSON 字符串，
- * 解析失败意味着日志结构已偏离契约，此时回落到原样转储会把"结构异常"伪装成一条正常消息。
- * 返回 null 后该事件按普通工具调用处理（`--tools` 可看到原始实参），异常因此仍可定位。
+ * 抽取失败（实参缺失、非法 JSON、正文为空）时返回 null 而不是兜底显示：官方库解码出的实参是
+ * JSON 字符串，解析失败意味着日志结构已偏离契约，此时回落到原样转储会把"结构异常"伪装成一条
+ * 正常消息。返回 null 后该事件按普通工具调用处理（`--tools` 可看到原始实参），异常因此仍可定位。
  */
 function subagentCallEntry(event: EventRecord, options: ShowMdOptions): string[] | null {
-  const data = asRecord(event.data) ?? {};
-  const name = readString(data, "name");
-  if (name !== SUBAGENT_TOOL_NAME && name !== SEND_MESSAGE_TOOL_NAME) return null;
-  const raw = readString(data, "arguments");
-  if (raw === undefined || raw.length === 0) return null;
-  let parsed: Record<string, unknown>;
-  try {
-    const value: unknown = JSON.parse(raw);
-    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-    parsed = value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-  if (name === SUBAGENT_TOOL_NAME) {
-    const prompt = readString(parsed, "prompt") ?? "";
-    if (prompt.length === 0) return null;
-    const description = readString(parsed, "description") ?? EMPTY_VALUE;
-    return fencedItem(
-      `**子代理任务**（${inlineValue(description)}）`,
-      event,
-      options,
-      truncateText(prompt, options.truncate),
-    );
-  }
-  const message = readString(parsed, "message") ?? "";
-  if (message.length === 0) return null;
-  const agentId = readString(parsed, "agent_id") ?? EMPTY_VALUE;
+  const content = extractSubagentCallContent(event);
+  if (content === null) return null;
   return fencedItem(
-    `**发往子代理**（${inlineValue(agentId)}）`,
+    `**${content.label}**（${inlineValue(content.annotation ?? EMPTY_VALUE)}）`,
     event,
     options,
-    truncateText(message, options.truncate),
+    truncateText(content.text, options.truncate),
   );
-}
-
-/**
- * 交接条目的围栏载荷：结构事实恒不截断，交接正文按 `--truncate` 处理。
- *
- * 结构事实（轮次、替换区间、投递目标与正文定位）是调用方回溯用的坐标，截断它等于交出一个
- * 读不出位置的行；正文属会话内容，必须与其它正文载体同一口径（`--truncate 0` 即不截断）。
- * 正文为空时不输出空的"交接正文："段，避免产物里出现没有内容的标题行。
- */
-function handoffPayload(entry: HandoffEntry, options: ShowMdOptions): string {
-  if (entry.body.length === 0) return entry.structure;
-  return `${entry.structure}\n\n交接正文：\n${truncateText(entry.body, options.truncate)}`;
 }
 
 /**
@@ -369,15 +331,11 @@ function timelineItem(
   handoffNotice: HandoffNoticeEntry | null,
   handoffPrompt: HandoffPromptEntry | null,
   isSubagentTask: boolean,
-  suppressed: boolean,
 ): string[] | null {
   const type = eventType(event);
   const data = asRecord(event.data) ?? {};
-  // 由上下文摘要条目承载正文的助手副本：不呈现、不计入隐藏计数（它不是被开关藏起来的，
-  // 而是同一段正文的另一种承载形态；原始事件仍在 jsonl 中）。
-  if (suppressed) return null;
   if (checkpoint !== null) {
-    // 摘要条目的标签本身已表达来源（标准压缩检查点或旧格式普通消息交接），不再追加 `来源` 标注；
+    // 摘要条目的标签本身已表达来源（标准模式的压缩检查点），不再追加 `来源` 标注；
     // 它与 `**交接**` 一样不受 `--thinking`/`--tools`/`--events`/`--role` 控制。
     return fencedItem(
       `**${CONTEXT_CHECKPOINT_LABEL}**`,
@@ -388,7 +346,7 @@ function timelineItem(
     );
   }
   if (handoffNotice !== null) {
-    // 新格式交接通知只含投影层路径与读取要求，不是用户输入，也不与交接正文重复。
+    // 交接通知给出交接文件的位置与读取要求，不是用户输入，也不是交接内容本身。
     return fencedItem(
       `**${HANDOFF_NOTICE_LABEL}**`,
       event,
@@ -398,7 +356,7 @@ function timelineItem(
     );
   }
   if (handoffPrompt !== null) {
-    // 交接生成指令是协议提示词，不是用户输入；与 `**交接**` 同一可见性。
+    // 交接维护指令是协议提示词，不是用户输入；与 `**交接**` 同一可见性。
     return fencedItem(
       `**${HANDOFF_PROMPT_LABEL}**`,
       event,
@@ -420,7 +378,10 @@ function timelineItem(
     );
   }
   if (handoff !== null) {
-    return fencedItem(`**${HANDOFF_LABEL}**`, event, options, handoffPayload(handoff, options));
+    // 交接条目只给三行结构事实（轮次、历史替换区间、前置助手消息与交接通知的定位）。交接内容以通知
+    // 所指的文件为准，交接事件与通知都不承载文件全文，因此这里不复述正文、也不据结构推断文件内容；
+    // 结构行是回溯坐标，属于固定词表的元数据，不参与 `--truncate`。
+    return fencedItem(`**${HANDOFF_LABEL}**`, event, options, handoff.structure);
   }
   const items: string[] = [];
   if (type === "user/message") {
@@ -451,8 +412,9 @@ function timelineItem(
     return items.length > 0 ? items : null;
   }
   if (type === "tool/call") {
-    // 子代理调度工具产出**专用条目**（任务正文），不再产出原始工具条目：同一调用只呈现一次，
-    // 且呈现的是调用方要读的内容。因此该分支不受 `--tools` 控制，与问答条目的处理同构。
+    // 子代理相关工具（创建工具的 `subagent`/`subagent_fork`、发消息的 `send_message`）产出**专用条目**
+    // （任务正文或消息正文），不再产出原始工具条目：同一调用只呈现一次，且呈现的是调用方要读的内容。
+    // 因此该分支不受 `--tools`/`--role` 控制，与问答条目的处理同构。
     const subagentEntry = subagentCallEntry(event, options);
     if (subagentEntry !== null) return subagentEntry;
     if (options.tools) {
@@ -551,7 +513,6 @@ function renderTimelineMd(
   const hidden: HiddenCounts = { reasoning: 0, tools: 0, events: 0, injections: 0, receipts: 0 };
   const items: string[][] = [];
   for (const event of events) {
-    const seq = eventSeq(event);
     // 计数与呈现必须用同一判据，否则摘要行会与实物矛盾：
     // - 注入消息：默认排除，`--events` 恢复（与 `system/message` 的显示开关同一入口）；
     // - 调度回执：默认不呈现（它不是子代理的回答），`--tools` 下作为工具结果显示，
@@ -574,7 +535,6 @@ function renderTimelineMd(
       context.handoffNotices.get(event) ?? null,
       context.handoffPrompts.get(event) ?? null,
       context.subagentTask === event,
-      seq !== undefined && context.suppressedAssistantSeqs.has(seq),
     );
     if (item !== null) items.push(item);
   }
@@ -660,7 +620,6 @@ function renderNodeSections(
     handoffNotices: new Map(),
     handoffPrompts: new Map(),
     subagentTask: null,
-    suppressedAssistantSeqs: new Set(),
   };
   let probe: ProbeReadout | null = null;
   // 问答抽取只在"会用到"时进行：时间线模式需要条目；探测模式需要计数（并会连带渲染完整副本，

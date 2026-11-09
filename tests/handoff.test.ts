@@ -1,5 +1,5 @@
-// 交接抽取单元测试：判定口径、结构事实的逐行格式、结构字段缺失时的空值契约，
-// 以及"不复制交接正文"这一设计约束（正文由相邻 assistant/message 承载）。
+// 交接抽取单元测试：判定口径、三行结构事实（含前置助手消息与交接通知定位）、结构字段缺失时的
+// 空值契约，以及"交接条目不承载正文"这一设计约束（紧邻其前的助手回复按普通助手消息呈现）。
 //
 // 事件构造：本文件只用记录级合成事件（`EventRecord`），因为交接抽取是纯函数、不依赖日志写入侧；
 // 需要经真实解码路径验证的行为在 handoff-cli.test.ts 里用合成 DSH_HOME 覆盖。
@@ -51,7 +51,7 @@ function handoffEvent(
   );
 }
 
-/** assistant 消息（交接正文的承载事件）。 */
+/** assistant 消息（普通助手回复）。 */
 function assistantEvent(seq: number, text: string): EventRecord {
   return ev("assistant/message", seq, {
     role: "assistant",
@@ -59,26 +59,10 @@ function assistantEvent(seq: number, text: string): EventRecord {
   });
 }
 
-/** 投递事件（`agent/inbox/spliced`）。 */
-function splicedEvent(seq: number, target: string): EventRecord {
-  return ev("agent/inbox/spliced", seq, {
-    target,
-    start: 0,
-    inserted: [
-      {
-        role: "user",
-        id: `m-${seq}`,
-        source: { kind: "user" },
-        content: [{ type: "text", text: "<compacted-summary>\n正文\n</compacted-summary>" }],
-      },
-    ],
-  });
-}
-
 /**
  * 部署侧注入起点（形态取自 `preset-lib/injection-boundary.mjs`：起点单独成行，正文另起一行）。
  *
- * 新格式交接的两条协议消息都由交接插件自己包裹，来源为 `handoff`；`kind` 是判定合成条目的
+ * 文件式交接的两条协议消息都由交接插件自己包裹，来源为 `handoff`；`kind` 是判定合成条目的
  * 结构锚点，本文件的用例据此区分维护指令与压缩通知。
  */
 function injectionText(kind: string, text: string): string {
@@ -86,7 +70,7 @@ function injectionText(kind: string, text: string): string {
   return `<dsh-injection kind="${kind}" src="handoff" id="abcdef12" ts="${ts}">\n${text}\n</dsh-injection>`;
 }
 
-/** 新格式的维护指令消息（来源 `handoff`）。 */
+/** 文件式交接的维护指令消息（来源 `handoff`）。 */
 function instructionEvent(seq: number, text: string): EventRecord {
   return ev("user/message", seq, {
     role: "user",
@@ -95,7 +79,7 @@ function instructionEvent(seq: number, text: string): EventRecord {
   });
 }
 
-/** 新格式的压缩通知消息（来源 `handoff`）。 */
+/** 文件式交接的压缩通知消息（来源 `handoff`）。 */
 function noticeEvent(seq: number, text: string): EventRecord {
   return ev("user/message", seq, {
     role: "user",
@@ -150,58 +134,56 @@ describe("analyzeHandoffEvents 结构事实", () => {
     assert.notEqual(entry, undefined);
     assert.equal(
       entry?.structure,
-      ["轮次 3／步 7", "历史替换 seq 2-10（3 条事件）", "投递 -；正文 -"].join("\n"),
+      ["轮次 3／步 7", "历史替换 seq 2-10（3 条事件）", "前置助手消息 -；交接通知 -"].join("\n"),
     );
   });
 
-  it("相邻 assistant/message 给出正文定位（seq 与码点字符数）", () => {
-    const body = "交接正文 BODY";
+  it("紧邻其前的 assistant/message 给出前置助手消息定位（seq 与码点字符数）", () => {
+    const body = "助手回复 BODY";
     const assistant = assistantEvent(1, body);
     const handoff = handoffEvent(2, 1, 1);
     const entries = analyzeHandoffEvents([assistant, handoff]).entries;
     const entry = entries.get(handoff);
     assert.notEqual(entry, undefined);
     assert.equal(
-      entry?.structure.endsWith(`投递 -；正文 seq 1（${String([...body].length)} 字符）`),
+      entry?.structure.endsWith(
+        `前置助手消息 seq 1（${String([...body].length)} 字符）；交接通知 -`,
+      ),
       true,
     );
-    // 正文不复制：条目只带结构事实，body 为空串。
-    assert.equal(entry?.body, "");
+    // 条目不承载正文：`body` 字段已随旧摘要投递一并删除。
+    assert.equal(Object.hasOwn(entry ?? {}, "body"), false);
   });
 
-  it("前驱助手消息带消息信封时正文定位按剥离后的正文计字符数", () => {
-    // 无投递时第三行指向紧邻其前的 assistant 正文；部署侧给它套了 `<dsh-message>`，
-    // 字符数必须按剥离后的正文计，否则回溯坐标会带上信封长度。
-    const body = "交接正文 BODY";
+  it("前置助手消息带消息信封时定位按剥净后的正文计字符数", () => {
+    // 部署侧给助手消息套了 `<dsh-message>`；字符数必须按剥离后的正文计，否则回溯坐标会带上信封长度。
+    const body = "助手回复 BODY";
     const open = '<dsh-message role="assistant" id="abcdef12" ts="2026-10-29T22:59:57+08:00">';
     const assistant = assistantEvent(1, `${open}\n${body}\n</dsh-message>`);
     const handoff = handoffEvent(2, 1, 1);
     const entry = analyzeHandoffEvents([assistant, handoff]).entries.get(handoff);
     assert.notEqual(entry, undefined);
     assert.equal(
-      entry?.structure.endsWith(`投递 -；正文 seq 1（${String([...body].length)} 字符）`),
+      entry?.structure.endsWith(
+        `前置助手消息 seq 1（${String([...body].length)} 字符）；交接通知 -`,
+      ),
       true,
     );
   });
 
-  it("相邻 agent/inbox/spliced 给出投递目标", () => {
-    const handoff = handoffEvent(2, 1, 1);
-    const entries = analyzeHandoffEvents([handoff, splicedEvent(3, "next-step")]).entries;
-    assert.equal(entries.get(handoff)?.structure.endsWith("投递 next-step；正文 -"), true);
-  });
-
-  it("三段式完整时同时给出投递目标与正文定位", () => {
-    const assistant = assistantEvent(1, "正文");
+  it("识别到交接通知时第三行给出通知 seq", () => {
+    const body = "正文";
+    const assistant = assistantEvent(1, body);
     const handoff = handoffEvent(2, 5, 2);
-    const entries = analyzeHandoffEvents([
-      assistant,
-      handoff,
-      splicedEvent(3, "next-turn"),
-    ]).entries;
-    const entry = entries.get(handoff);
+    const notice = noticeEvent(4, "通知正文");
+    const entry = analyzeHandoffEvents([assistant, handoff, notice]).entries.get(handoff);
     assert.equal(entry?.structure.startsWith("轮次 5／步 2\n"), true);
-    assert.equal(entry?.structure.endsWith(`（${String([..."正文"].length)} 字符）`), true);
-    assert.equal(entry?.structure.includes("投递 next-turn；正文 seq 1"), true);
+    assert.equal(
+      entry?.structure.endsWith(
+        `前置助手消息 seq 1（${String([...body].length)} 字符）；交接通知 seq 4`,
+      ),
+      true,
+    );
   });
 
   it("surfaceOp 不是 replace 时替换区间显示空值 -", () => {
@@ -234,17 +216,17 @@ describe("analyzeHandoffEvents 结构事实", () => {
     );
   });
 
-  it("前驱不是 assistant/message 时不把更早的普通回答冒充为正文", () => {
+  it("前驱不是 assistant/message 时前置助手消息显示空值，禁止向前搜索更早回答", () => {
     const earlier = assistantEvent(1, "更早的回答");
     const middle = ev("system/message", 2, {
       message: { role: "system", id: "m-2", content: [{ type: "text", text: "系统" }] },
     });
     const handoff = handoffEvent(3, 1, 1);
     const entries = analyzeHandoffEvents([earlier, middle, handoff]).entries;
-    assert.equal(entries.get(handoff)?.structure.endsWith("投递 -；正文 -"), true);
+    assert.equal(entries.get(handoff)?.structure.endsWith("前置助手消息 -；交接通知 -"), true);
   });
 
-  it("message.content 非空时作为 body 返回，不混进结构事实", () => {
+  it("交接事件自身的内容不进入结构事实，条目不携带正文", () => {
     const handoff = ev("developer/message", 2, {
       turn: 1,
       step: 1,
@@ -252,19 +234,20 @@ describe("analyzeHandoffEvents 结构事实", () => {
         role: "developer",
         id: "m-2",
         source: { kind: HANDOFF_SOURCE_KIND },
-        content: [{ type: "text", text: "交接正文 INLINE" }],
+        content: [{ type: "text", text: "助手回复 INLINE" }],
       },
     });
     const entry = analyzeHandoffEvents([handoff]).entries.get(handoff);
-    assert.equal(entry?.body, "交接正文 INLINE");
     assert.equal(entry?.structure.includes("INLINE"), false);
+    assert.equal(entry?.structure.split("\n").length, 3);
+    assert.equal(Object.hasOwn(entry ?? {}, "body"), false);
   });
 
   it("非交接事件不产生条目", () => {
     const entries = analyzeHandoffEvents([
       ev("user/message", 0, { role: "user", content: [], source: { kind: "user" } }),
       assistantEvent(1, "正文"),
-      splicedEvent(3, "next-step"),
+      ev("agent/inbox/spliced", 3, { target: "next-step", start: 0, inserted: [] }),
     ]).entries;
     assert.equal(entries.size, 0);
   });
@@ -348,18 +331,9 @@ describe("analyzeHandoffEvents 结构事实", () => {
     };
     const handoff = handoffEvent(2, 1, 1);
     assert.equal(
-      analyzeHandoffEvents([assistant, handoff]).entries.get(handoff)?.structure.endsWith("正文 -"),
-      true,
-    );
-  });
-
-  it("投递事件的 target 缺失或不是字符串时显示空值 -", () => {
-    const handoff = handoffEvent(2, 1, 1);
-    const numericTarget = ev("agent/inbox/spliced", 3, { target: 42, start: 0, inserted: [] });
-    assert.equal(
-      analyzeHandoffEvents([handoff, numericTarget])
+      analyzeHandoffEvents([assistant, handoff])
         .entries.get(handoff)
-        ?.structure.includes("投递 -"),
+        ?.structure.endsWith("前置助手消息 -；交接通知 -"),
       true,
     );
   });
@@ -374,20 +348,6 @@ describe("analyzeHandoffEvents 结构事实", () => {
   it("message 不是对象时不命中", () => {
     const event = ev("developer/message", 2, { message: ["handoff"] });
     assert.equal(isHandoffEvent(event), false);
-  });
-
-  it("content 不是数组时 body 为空串", () => {
-    const handoff = ev("developer/message", 2, {
-      turn: 1,
-      step: 1,
-      message: {
-        role: "developer",
-        id: "m-2",
-        source: { kind: HANDOFF_SOURCE_KIND },
-        content: "文本",
-      },
-    });
-    assert.equal(analyzeHandoffEvents([handoff]).entries.get(handoff)?.body, "");
   });
 
   it("turn 与 step 不是数字时逐项显示空值 -", () => {
@@ -407,13 +367,17 @@ describe("analyzeHandoffEvents 结构事实", () => {
   });
 });
 
-describe("新格式交接的压缩通知", () => {
+describe("文件式交接的压缩通知", () => {
   const NOTICE = "本会话刚才发生了上下文压缩，你是接续会话。NOTICE-MARK";
 
   it("按来源 handoff 与注入起点的 kind 认定，正文剥离注入信封", () => {
     const handoff = handoffEvent(2, 1, 1);
     const notice = noticeEvent(4, NOTICE);
-    const analysis = analyzeHandoffEvents([handoff, splicedEvent(3, "next-step"), notice]);
+    const analysis = analyzeHandoffEvents([
+      handoff,
+      ev("agent/inbox/spliced", 3, { target: "next-step", start: 0, inserted: [] }),
+      notice,
+    ]);
     const found = analysis.notices.get(handoff);
     assert.notEqual(found, undefined);
     assert.equal(found?.event, notice);
@@ -438,7 +402,7 @@ describe("新格式交接的压缩通知", () => {
     const analysis = analyzeHandoffEvents([
       first,
       noticeEvent(2, NOTICE),
-      splicedEvent(6, "next-step"),
+      ev("agent/inbox/spliced", 6, { target: "next-step", start: 0, inserted: [] }),
       second,
     ]);
     assert.equal(analysis.notices.size, 1);
@@ -452,8 +416,8 @@ describe("新格式交接的压缩通知", () => {
     assert.equal(analysis.notices.size, 0);
   });
 
-  it("新格式没有旧摘要投递，也不抑制助手副本", () => {
-    const body = "交接正文 NEW-BODY";
+  it("文件式交接不产生独立摘要投递，普通助手回复保留在助手条目", () => {
+    const body = "维护完成说明 NEW-BODY";
     const instruction = instructionEvent(0, "维护指令 INSTRUCTION-MARK");
     const assistant = assistantEvent(1, body);
     const handoff = handoffEvent(2, 1, 1, {
@@ -464,20 +428,24 @@ describe("新格式交接的压缩通知", () => {
       instruction,
       assistant,
       handoff,
-      splicedEvent(3, "next-step"),
+      ev("agent/inbox/spliced", 3, { target: "next-step", start: 0, inserted: [] }),
       noticeEvent(4, NOTICE),
     ]);
-    assert.equal(analysis.deliveries.size, 0);
-    assert.equal(analysis.suppressedAssistantSeqs.size, 0);
+    // 旧摘要投递与助手副本抑制相关的字段已随旧自定义交接一并删除，不保留空集合或兼容别名。
+    assert.equal(Object.hasOwn(analysis, "deliveries"), false);
+    assert.equal(Object.hasOwn(analysis, "suppressedAssistantSeqs"), false);
     const entry = analysis.entries.get(handoff);
-    // 无投递时正文定位指向紧邻其前的助手消息，字符数按正文计。
-    assert.equal(entry?.structure.endsWith(`正文 seq 1（${String([...body].length)} 字符）`), true);
-    // 交接事件自身没有正文，因此条目正文为空串。
-    assert.equal(entry?.body, "");
+    assert.equal(
+      entry?.structure.endsWith(
+        `前置助手消息 seq 1（${String([...body].length)} 字符）；交接通知 seq 4`,
+      ),
+      true,
+    );
+    assert.equal(Object.hasOwn(entry ?? {}, "body"), false);
   });
 });
 
-describe("新格式交接的维护指令定位", () => {
+describe("文件式交接的维护指令定位", () => {
   const INSTRUCTION = "从现在起，你唯一的任务是完成对交接文件的维护。INSTRUCTION-MARK";
 
   /** 多步生成中的一步：step/start → assistant（可带工具调用）→ 工具往返 → step/end。 */
@@ -492,12 +460,12 @@ describe("新格式交接的维护指令定位", () => {
   }
 
   it("最终回复与维护指令之间隔着多步工具往返时仍能定位", () => {
-    // 真实新格式的生成阶段必然调用工具（读真值源、改真值源、跑生成器），最终回复与维护指令之间
-    // 因此不是相邻事件；只看前一条事件会让 `**交接指令**` 永不出现。
+    // 维护阶段可跨多步工具往返，最终回复不必与维护指令相邻；只看前一条事件会让
+    // `**交接指令**` 永不出现。
     const instruction = instructionEvent(1, INSTRUCTION);
     const firstStep = stepEvents(2, "");
     const secondStep = stepEvents(7, "");
-    const finalAssistant = assistantEvent(12, "交接正文 FINAL-BODY");
+    const finalAssistant = assistantEvent(12, "维护完成说明 FINAL-BODY");
     const handoff = handoffEvent(13, 1, 3, {
       surfaceOp: { op: "replace", startSeq: 1, endSeq: 12 },
       sourceEventSeqs: [1, 12],
@@ -509,7 +477,7 @@ describe("新格式交接的维护指令定位", () => {
       ...secondStep,
       finalAssistant,
       handoff,
-      splicedEvent(14, "next-step"),
+      ev("agent/inbox/spliced", 14, { target: "next-step", start: 0, inserted: [] }),
       noticeEvent(15, "通知正文"),
     ]);
     const prompt = analysis.prompts.get(handoff);
@@ -543,28 +511,27 @@ describe("新格式交接的维护指令定位", () => {
     assert.equal(analysis.prompts.has(secondHandoff), false);
   });
 
-  it("旧格式紧邻前一条无 rpcId 用户消息仍按结构位置定位", () => {
+  it("不依赖助手正文候选链：交接事件缺少 surfaceOp 与 sourceEventSeqs 时仍定位维护指令", () => {
+    // 维护指令的判据是从交接事件向回扫描到上一个交接边界，而不是从"生成正文"的位置回退。
+    // 生成正文候选（surfaceOp.endSeq 与 sourceEventSeqs）缺失时，旧实现拿不到起点，`**交接指令**` 会消失。
+    const instruction = instructionEvent(1, INSTRUCTION);
+    const assistant = assistantEvent(2, "维护完成说明 FINAL-BODY");
+    const handoff = handoffEvent(3, 1, 1, {
+      surfaceOp: undefined,
+      sourceEventSeqs: undefined,
+    });
+    const analysis = analyzeHandoffEvents([instruction, assistant, handoff]);
+    assert.equal(analysis.prompts.get(handoff)?.event, instruction);
+    assert.equal(analysis.prompts.get(handoff)?.text, INSTRUCTION);
+  });
+
+  it("来源为 user 的紧邻用户消息不再按旧结构位置认作维护指令", () => {
     const prompt = ev("user/message", 0, {
       role: "user",
       content: [{ type: "text", text: "从现在起，你唯一的任务是给出交接指令 PROMPT-MARK" }],
       source: { kind: "user" },
     });
-    const assistant = assistantEvent(1, "旧格式正文");
-    const handoff = handoffEvent(2, 1, 1, {
-      surfaceOp: { op: "replace", startSeq: 0, endSeq: 1 },
-      sourceEventSeqs: [0, 1],
-    });
-    const analysis = analyzeHandoffEvents([prompt, assistant, handoff]);
-    assert.equal(analysis.prompts.get(handoff)?.event, prompt);
-  });
-
-  it("旧格式前一事件带 rpcId 时不认作维护指令", () => {
-    const prompt = ev("user/message", 0, {
-      role: "user",
-      content: [{ type: "text", text: "真实用户输入" }],
-      source: { kind: "user", rpcId: "rpc-1" },
-    });
-    const assistant = assistantEvent(1, "旧格式正文");
+    const assistant = assistantEvent(1, "普通助手正文");
     const handoff = handoffEvent(2, 1, 1, {
       surfaceOp: { op: "replace", startSeq: 0, endSeq: 1 },
       sourceEventSeqs: [0, 1],
