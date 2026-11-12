@@ -243,8 +243,7 @@ function answerTextOf(event: EventRecord): Result<string, string> {
   const where = `回答事件 ${locate(event)}`;
   const message = asRecord(asRecord(event.data)?.message);
   if (message === undefined) return mismatch(where, "message 不是对象");
-  // 结果文本的抽取复用工具结果的统一入口（兼容平铺与嵌套两种内容形态）：
-  // 只认一种形态会让抽取静默返回空串，而空串在这里会被判成"结构不符"，错误位置离根因很远。
+  // 结果文本复用工具结果的统一入口，只抽取平铺内容块中的文本。
   const contentText = textFromBlocks(message.content);
   if (contentText.length === 0) return mismatch(where, "content 中没有非空文本块");
   // 边界信封与正文一起落账：先剥一层再解析，否则起点行让 JSON 解析必然失败。

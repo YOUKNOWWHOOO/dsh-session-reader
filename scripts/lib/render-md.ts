@@ -7,7 +7,7 @@
 // 关键依赖：render-core.ts（载体、归一化、字段值与文档装配）、render-summary.ts（命令级摘要文案）、
 // paths.ts（本地时间）、store-types.ts（outcome 类型）。json/jsonl 与载体的层规则见 render-core.ts 文件头。
 // 设计约束：结构骨架只用固定词表，任意会话来源文本一律经载体承载；覆盖声明必须逐条列出排除项
-// （`N = M + K` 是"未被列出者即为已覆盖"的唯一依据，禁止合并成计数）；摘要文案不在本模块内联，
+// （`N = M + K` 由计数构造，不能独立核对覆盖范围；排除项与归属未知项须逐条列出）；摘要文案不在本模块内联，
 // 统一取自 render-summary.ts，避免 md 与 json 两条路径的措辞漂移。
 
 import { describeSource } from "./message-source.ts";
