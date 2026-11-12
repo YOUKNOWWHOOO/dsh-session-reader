@@ -536,26 +536,30 @@ export function runLint(
       // 该次门禁的对象就是 outDir 内的产物本身。
       cwd: outDir,
     });
+    if (
+      result.error !== undefined ||
+      result.status !== 0 ||
+      result.stdout !== "" ||
+      result.stderr !== ""
+    ) {
+      throw new Error(
+        `markdownlint 失败：启动错误=${String(result.error)}；退出码=${String(result.status)}；stdout=${JSON.stringify(result.stdout)}；stderr=${JSON.stringify(result.stderr)}`,
+      );
+    }
     return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
   };
-  const directory = run([outDir]);
+  run([outDir]);
   const mdFiles = readdirSync(outDir)
     .filter((name) => name.endsWith(".md"))
     .sort();
-  let stdout = directory.stdout;
-  let stderr = directory.stderr;
-  let status = directory.status;
   let processedFiles = 0;
   let batches = 0;
   for (let start = 0; start < mdFiles.length; start += LINT_BATCH_SIZE) {
     const batch = mdFiles.slice(start, start + LINT_BATCH_SIZE);
-    const result = run(batch);
+    run(batch);
     batches += 1;
     processedFiles += batch.length;
-    stdout += result.stdout;
-    stderr += result.stderr;
-    if (result.status !== 0 && (status === 0 || status === null)) status = result.status;
   }
-  writeFileSync(join(workdir, "lint-output.txt"), `${stdout}${stderr}`, "utf8");
-  return { status, stdout, stderr, mdFiles: mdFiles.length, processedFiles, batches };
+  writeFileSync(join(workdir, "lint-output.txt"), "", "utf8");
+  return { status: 0, stdout: "", stderr: "", mdFiles: mdFiles.length, processedFiles, batches };
 }

@@ -108,6 +108,14 @@ function parseContract(
 }
 
 function executeCase(ctx: MatrixContext, item: MatrixCase): void {
+  const problemStart = ctx.problems.length;
+  executeCaseBody(ctx, item);
+  if (ctx.problems.length > problemStart) {
+    throw new Error(ctx.problems.slice(problemStart).join("\n"));
+  }
+}
+
+function executeCaseBody(ctx: MatrixContext, item: MatrixCase): void {
   const resolved = item.args.map((arg) => ctx.homes.get(arg) ?? arg);
   const args = item.omitOutputDir ? resolved : withOutputDir(resolved, ctx.outDir);
   const outDir = ctx.outDir;
@@ -287,8 +295,8 @@ async function main(argv: readonly string[]): Promise<number> {
     "--output-dir",
     outDir,
   ];
-  const firstList = runRaw(listArgs);
-  const secondList = runRaw(listArgs);
+  const firstList = runDeterministic("determinism-list-首次", listArgs);
+  const secondList = runDeterministic("determinism-list-重复", listArgs);
   compareDeterministic(
     "determinism-list",
     firstList.stdout,
@@ -306,8 +314,8 @@ async function main(argv: readonly string[]): Promise<number> {
     "--output-dir",
     outDir,
   ];
-  const firstShow = runRaw(showArgs);
-  const secondShow = runRaw(showArgs);
+  const firstShow = runDeterministic("determinism-show-首次", showArgs);
+  const secondShow = runDeterministic("determinism-show-重复", showArgs);
   compareDeterministic(
     "determinism-show",
     firstShow.stdout,
@@ -319,14 +327,6 @@ async function main(argv: readonly string[]): Promise<number> {
   // md 产物 lint：目录整跑 + 显式文件分批（后者给出实际处理文件数）。
   const markdownlintJs = resolveMarkdownlintJs(options);
   const lint = runLint(markdownlintJs, options.lintConfig, outDir, options.workdir);
-  if (lint.status !== 0) {
-    ctx.problems.push(`markdownlint 退出码 ${String(lint.status)}`);
-    const detail = `${lint.stdout}${lint.stderr}`.trim().split("\n").slice(0, 60).join("\n");
-    if (detail.length > 0) ctx.problems.push(`markdownlint 输出（截断 60 行）:\n${detail}`);
-  }
-  if (lint.stdout.trim() !== "" || lint.stderr.trim() !== "") {
-    ctx.problems.push("markdownlint 输出非空（要求无 stdout/stderr）");
-  }
 
   const mdCount = ctx.results.filter((entry) => entry.outputPath?.endsWith(".md") === true).length;
   const jsonCount = ctx.results.filter(
@@ -361,6 +361,8 @@ async function main(argv: readonly string[]): Promise<number> {
       ctx.problems.push(`跨行敌意标记未出现在任何 md 产物: ${JSON.stringify(marker)}`);
     }
   }
+
+  if (ctx.problems.length > 0) throw new Error(ctx.problems.join("\n"));
 
   const summary = {
     generatedAt: new Date().toISOString(),
@@ -403,6 +405,16 @@ async function main(argv: readonly string[]): Promise<number> {
   return ctx.problems.length === 0 ? 0 : 1;
 }
 
+function runDeterministic(id: string, args: readonly string[]): ReturnType<typeof runRaw> {
+  const result = runRaw(args);
+  if (result.spawnError !== null || result.status !== 0 || result.stderr !== "") {
+    throw new Error(
+      `${id}: 启动错误=${String(result.spawnError)}；退出码=${String(result.status)}；stdout=${JSON.stringify(result.stdout)}；stderr=${JSON.stringify(result.stderr)}`,
+    );
+  }
+  return result;
+}
+
 function compareDeterministic(
   id: string,
   firstStdout: string,
@@ -410,13 +422,14 @@ function compareDeterministic(
   outDir: string,
   problems: string[],
 ): void {
+  const problemStart = problems.length;
   const first = parseContract(id, firstStdout, problems);
   const second = parseContract(`${id}-重复`, secondStdout, problems);
-  if (first === null || second === null) return;
+  if (first === null || second === null) throw new Error(problems.slice(problemStart).join("\n"));
   const firstContent = readFileSync(first.path, "utf8");
   const secondContent = readFileSync(second.path, "utf8");
   if (firstContent !== secondContent) {
-    problems.push(`${id}: 两次渲染内容不一致（输出目录 ${outDir}）`);
+    throw new Error(`${id}: 两次渲染内容不一致（输出目录 ${outDir}）`);
   }
 }
 
@@ -432,8 +445,7 @@ async function runRealCases(ctx: MatrixContext, options: MatrixOptions): Promise
   executeCase(ctx, listCase);
   const listResult = ctx.results[ctx.results.length - 1];
   if (listResult.outputPath === null) {
-    ctx.problems.push("real-list-json: 无法获取真实会话清单，跳过真实会话组合");
-    return;
+    throw new Error("real-list-json: 无法获取真实会话清单");
   }
   const doc = asRecord(JSON.parse(readFileSync(listResult.outputPath, "utf8")));
   const sessions = Array.isArray(doc?.sessions) ? doc.sessions : [];
@@ -443,8 +455,7 @@ async function runRealCases(ctx: MatrixContext, options: MatrixOptions): Promise
     .map((entry) => entry.id)
     .filter((id): id is string => typeof id === "string");
   if (ids.length === 0) {
-    ctx.problems.push("real-list-json: 真实会话清单为空");
-    return;
+    throw new Error("real-list-json: 真实会话清单为空");
   }
   const realCases: MatrixCase[] = [
     mcase("real-list-md", ["list", ...base], "md", null, 0),
