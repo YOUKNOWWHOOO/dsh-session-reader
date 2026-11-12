@@ -22,7 +22,6 @@ import {
   modelText,
   type RenderedOutput,
   tableCellValue,
-  tokenTotalsText,
   truncateText,
 } from "./render-core.ts";
 import { checkSummary, formatStatsSummary, listSummary, searchSummary } from "./render-summary.ts";
@@ -130,7 +129,6 @@ export function renderListMd(
         titleCell(entry),
         entry.workspaceTitle === null ? EMPTY_VALUE : tableCellValue(entry.workspaceTitle),
         formatLocalIso(entry.lastActivityAt),
-        fieldValueText(entry.metadata.turns, String),
         entry.type === "subagent" ? "子" : "主",
         formatSize(entry.sizeBytes),
       ];
@@ -138,8 +136,8 @@ export function renderListMd(
     });
     sections.push(
       [
-        "| ID | 标题 | 工作区 | 最近活动 | 轮次 | 类型 | 大小 |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| ID | 标题 | 工作区 | 最近活动 | 类型 | 大小 |",
+        "| --- | --- | --- | --- | --- | --- |",
         ...rows,
       ].join("\n"),
     );
@@ -155,13 +153,11 @@ export function renderListMd(
       const detailLines = [
         `  **工作区**：${entry.workspaceTitle === null ? EMPTY_VALUE : inlineValue(entry.workspaceTitle)}`,
         `  **最近活动**：${formatLocalIso(entry.lastActivityAt)}`,
-        `  **轮次**：${fieldValueText(entry.metadata.turns, String)}`,
         `  **大小**：${formatSize(entry.sizeBytes)}`,
         `  **创建**：${formatLocalIso(entry.createdAt)}`,
         `  **cwd**：${entry.cwd === null ? EMPTY_VALUE : inlineValue(entry.cwd)}`,
         `  **预设**：${fieldValueText(entry.metadata.agentPreset, (value) => inlineValue(value))}`,
         `  **模型**：${fieldValueText(entry.metadata.model, (model) => inlineValue(modelText(model)))}`,
-        `  **令牌**：${fieldValueText(entry.metadata.tokens, tokenTotalsText)}`,
         `  **元数据**：${
           entry.metadata.available
             ? entry.metadata.reasons.length > 0
@@ -263,17 +259,14 @@ export function renderSearchMd(outcome: SearchOutcome): RenderedOutput {
 
 /** stats Markdown：全局=KV 列表；单会话=KV 列表。 */
 export function renderStatsMd(outcome: StatsOutcome): RenderedOutput {
-  const sections = ["# 统计"];
+  const sections = ["# 会话概况"];
   if (outcome.single !== null) {
     const single: SingleSessionStats = outcome.single;
     sections.push(
       [
         `- 会话：${inlineValue(single.id)}`,
         `- 空会话：${fieldValueText(single.blank, (value) => (value ? "是" : "否"))}`,
-        `- 轮次：${fieldValueText(single.turns, String)}`,
-        `- 步数：${fieldValueText(single.steps, String)}`,
-        `- 工具调用：${single.toolCalls}`,
-        `- 令牌：未缓存输入 ${fieldValueText(single.tokens, (tokens) => String(tokens.uncachedInputTokens))}；输出 ${fieldValueText(single.tokens, (tokens) => String(tokens.outputTokens))}；缓存读 ${fieldValueText(single.tokens, (tokens) => String(tokens.cacheReadTokens))}；缓存写 ${fieldValueText(single.tokens, (tokens) => String(tokens.cacheWriteTokens))}`,
+        `- 包含工具调用：${single.hasToolCalls ? "是" : "否"}`,
         `- 创建：${formatLocalIso(single.createdAt)}`,
         `- 最近活动：${formatLocalIso(single.lastActivityAt)}`,
         `- 标题：${fieldValueText(single.title, (value) => inlineValue(value))}`,
@@ -304,13 +297,7 @@ export function renderStatsMd(outcome: StatsOutcome): RenderedOutput {
     [
       `- 会话数：${outcome.sessionCount}`,
       `- 空会话数：${outcome.blankCount}`,
-      `- 总轮次：${outcome.turns}`,
-      `- 总步数：${outcome.steps}`,
-      `- 工具调用总数：${outcome.toolCalls}`,
-      `- 令牌-未缓存输入：${outcome.tokens.uncachedInputTokens}`,
-      `- 令牌-输出：${outcome.tokens.outputTokens}`,
-      `- 令牌-缓存读：${outcome.tokens.cacheReadTokens}`,
-      `- 令牌-缓存写：${outcome.tokens.cacheWriteTokens}`,
+      `- 包含工具调用：${outcome.hasToolCalls ? "是" : "否"}`,
       `- 时间跨度：${earliest} ~ ${latest}`,
       `- 日志总大小：${formatSize(outcome.totalSizeBytes)}`,
     ].join("\n"),

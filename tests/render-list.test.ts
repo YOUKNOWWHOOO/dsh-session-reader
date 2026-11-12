@@ -34,7 +34,7 @@ describe("renderListMd / renderListJson", () => {
     assert.equal(rendered.content.startsWith("# 会话列表\n\n"), true);
     assert.equal(
       rendered.content.includes(
-        "| ID | 标题 | 工作区 | 最近活动 | 轮次 | 类型 | 大小 |\n| --- | --- | --- | --- | --- | --- | --- |",
+        "| ID | 标题 | 工作区 | 最近活动 | 类型 | 大小 |\n| --- | --- | --- | --- | --- | --- |",
       ),
       true,
     );
@@ -93,10 +93,10 @@ describe("renderListMd / renderListJson", () => {
     assert.equal(rendered.content.includes("- `session-aaa-01`：`测试标题`（主）"), true);
     assert.equal(rendered.content.includes("  **工作区**：`user_projects`"), true);
     assert.match(rendered.content, /^ {2}\*\*最近活动\*\*：\d{4}-\d{2}-\d{2}T/mu);
-    assert.equal(rendered.content.includes("  **轮次**：3"), true);
+    assert.equal(rendered.content.includes("  **轮次**："), false);
     assert.equal(rendered.content.includes("  **大小**：2.0 KB"), true);
     assert.equal(rendered.content.includes("  **模型**：`provider-x/model-y`"), true);
-    assert.equal(rendered.content.includes("  **令牌**：10/20/30/40"), true);
+    assert.equal(rendered.content.includes("  **令牌**："), false);
     assert.equal(rendered.content.includes("  **元数据**：projcache"), true);
   });
 

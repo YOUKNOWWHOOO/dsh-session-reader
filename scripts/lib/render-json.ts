@@ -16,25 +16,23 @@ import {
   eventSeq,
   eventTime,
   eventType,
+  hasToolCalls,
+  isToolCallEvent,
+  isToolResultEvent,
   messageTextFromBlocks,
   readNumber,
   readString,
   reasoningFromBlocks,
   textFromBlocks,
+  toolCallArgumentsText,
+  toolEventCallId,
   toolResultIsError,
   toolResultText,
   userMessageText,
 } from "./decode.ts";
 import { analyzeHandoffEvents } from "./handoff.ts";
 import { attributeSource } from "./message-source.ts";
-import {
-  computeEventStats,
-  computeTurns,
-  countNodes,
-  findSessionTitle,
-  type RenderedOutput,
-  sumUsage,
-} from "./render-core.ts";
+import { computeTurns, countNodes, findSessionTitle, type RenderedOutput } from "./render-core.ts";
 import {
   checkSummary,
   formatStatsSummary,
@@ -67,12 +65,9 @@ function entryToJson(entry: ListEntry): Record<string, unknown> {
     createdAt: entry.createdAt,
     lastActivityAt: entry.lastActivityAt,
     lastPromptAt: entry.metadata.lastPromptAt.value,
-    turns: entry.metadata.turns.value,
-    steps: entry.metadata.steps.value,
     blank: entry.metadata.blank.value,
     agentPreset: entry.metadata.agentPreset.value,
     model: entry.metadata.model.value,
-    tokens: entry.metadata.tokens.value,
     sizeBytes: entry.sizeBytes,
     metadata: { available: entry.metadata.available, reasons: entry.metadata.reasons },
   };
@@ -95,7 +90,6 @@ export function renderListJson(outcome: ListOutcome): RenderedOutput {
  * 框架与插件注入的消息、子代理调度回执。排除而非降级呈现：调用方要完整消息历史时用
  * `--format jsonl`（逐事件穷尽），它是唯一不被可见性过滤的导出形态。
  *
- * 注意 `meta` 的统计口径不受影响，`userMessages` 等计数描述整会话，不是本数组的条数。
  */
 function buildMessageEntries(file: DecodedSessionFile): Record<string, unknown>[] {
   const entries: Record<string, unknown>[] = [];
@@ -127,28 +121,36 @@ function buildMessageEntries(file: DecodedSessionFile): Record<string, unknown>[
         reasoning: reasoningFromBlocks(message.content),
         toolCalls: readToolCallBlocks(message.content),
       });
-    } else if (type === "tool/call") {
+    } else if (isToolCallEvent(event)) {
       entries.push({
         seq: seq ?? null,
         time: eventTime(event) ?? null,
         type,
         role: "tool",
-        callId: readString(data, "callId") ?? null,
+        callId: toolEventCallId(event) ?? null,
+        ...(type === "tool/ptc-dispatch-start"
+          ? { rootCallId: data.rootCallId, parentCallId: data.parentCallId }
+          : {}),
         name: readString(data, "name") ?? null,
-        arguments: readString(data, "arguments") ?? null,
+        arguments: toolCallArgumentsText(event) ?? null,
       });
-    } else if (type === "tool/result") {
-      const message = asRecord(data.message) ?? {};
-      const source = asRecord(message.source) ?? {};
+    } else if (isToolResultEvent(event)) {
       entries.push({
         seq: seq ?? null,
         time: eventTime(event) ?? null,
         type,
         role: "tool",
-        callId: readString(source, "callId") ?? null,
-        // 错误态判据只有一处实现（decode.ts 的 toolResultIsError）：`data.error` 与
-        // `message.isError` 任一成立即为错误态。只认前者会把只带 `message.isError` 的真实
-        // 结果写成 `isError: false`，调用方据此判断调用成败时会读反。
+        callId: toolEventCallId(event) ?? null,
+        ...(type === "tool/ptc-dispatch"
+          ? {
+              rootCallId: data.rootCallId,
+              parentCallId: data.parentCallId,
+              name: readString(data, "name") ?? null,
+              arguments: toolCallArgumentsText(event) ?? null,
+            }
+          : {}),
+        // 普通结果按 data.error 与 message.isError 判错，PTC 结果按 data.isError 判错；
+        // 统一由 decode.ts 的 toolResultIsError 实现，避免与 Markdown 和问答处理分歧。
         isError: toolResultIsError(event),
         text: toolResultText(event),
       });
@@ -182,8 +184,6 @@ function readToolCallBlocks(content: unknown): Record<string, unknown>[] {
 
 function nodeToJson(node: SessionNode, includeMessages: boolean): Record<string, unknown> {
   const header = node.file.decoded.header;
-  const usage = sumUsage(node.file);
-  const stats = computeEventStats(node.file);
   const handoff = analyzeHandoffEvents(node.file.decoded.events);
   const context = analyzeContextCheckpoints(
     node.file.decoded.header,
@@ -212,15 +212,7 @@ function nodeToJson(node: SessionNode, includeMessages: boolean): Record<string,
       frames: node.file.frames,
       lines: node.file.decoded.lineCount,
       eventCount: node.file.decoded.events.length,
-      turns: stats.turns,
-      steps: stats.steps,
-      toolCalls: stats.toolCalls,
-      tokens: {
-        inputTokens: usage.input,
-        outputTokens: usage.output,
-        cacheReadTokens: usage.cacheRead,
-        reasoningTokens: usage.reasoning,
-      },
+      hasToolCalls: hasToolCalls(node.file.decoded.events),
       anomalies: node.file.decoded.anomalies.map((anomaly) => anomaly.detail),
     },
     turns: computeTurns(node.file, checkpointSeqsOf(context)).map((turn) => ({
@@ -261,7 +253,7 @@ export function renderShowJson(
   };
   return {
     content: `${JSON.stringify(document, null, 2)}\n`,
-    summary: showSummary(node, options, computeEventStats(node.file)),
+    summary: showSummary(node, options),
   };
 }
 
@@ -318,10 +310,7 @@ export function renderStatsJson(outcome: StatsOutcome): RenderedOutput {
         id: single.id,
         title: single.title.value,
         blank: single.blank.value,
-        turns: single.turns.value,
-        steps: single.steps.value,
-        toolCalls: single.toolCalls,
-        tokens: single.tokens.value,
+        hasToolCalls: single.hasToolCalls,
         agentPreset: single.agentPreset.value,
         model: single.model.value,
         createdAt: single.createdAt,
@@ -332,9 +321,6 @@ export function renderStatsJson(outcome: StatsOutcome): RenderedOutput {
         sizeBytes: single.sizeBytes,
         metadata: { available: single.metadataAvailable, reasons: single.metadataReasons },
       },
-      // 摘要行的未计入会话数必须同时出现在 json 里：md 摘要说了"N 个会话未计入"，
-      // machine 侧却拿不到同一个数，调用方只能去读 md 或自行重算。
-      excludedMetricSessions: outcome.excludedMetricSessions,
       coverage: outcome.coverage,
       scan: outcome.scan,
     };
@@ -344,15 +330,11 @@ export function renderStatsJson(outcome: StatsOutcome): RenderedOutput {
     kind: "global",
     sessionCount: outcome.sessionCount,
     blankCount: outcome.blankCount,
-    turns: outcome.turns,
-    steps: outcome.steps,
-    toolCalls: outcome.toolCalls,
-    tokens: outcome.tokens,
+    hasToolCalls: outcome.hasToolCalls,
     earliestCreatedAt: outcome.earliestCreatedAt,
     latestActivityAt: outcome.latestActivityAt,
     totalSizeBytes: outcome.totalSizeBytes,
     unavailable: outcome.unavailable,
-    excludedMetricSessions: outcome.excludedMetricSessions,
     coverage: outcome.coverage,
     scan: outcome.scan,
   };

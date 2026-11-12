@@ -14,7 +14,7 @@ import type { JsonShape } from "./matrix-cases.ts";
 // ------------------------- 结构白名单（手写解析） -------------------------
 
 const HEADING_WHITELIST =
-  /^(会话列表|会话列表（完整）|会话记录|检索结果|统计|完整性校验|时间线|轮次大纲|每会话命中分布|子代理 \d+(\.\d+)*)$/u;
+  /^(会话列表|会话列表（完整）|会话记录|检索结果|会话概况|完整性校验|时间线|轮次大纲|每会话命中分布|子代理 \d+(\.\d+)*)$/u;
 /**
  * 时间线标签词表。
  *
@@ -306,12 +306,9 @@ export function checkJsonStructure(
           "createdAt",
           "lastActivityAt",
           "lastPromptAt",
-          "turns",
-          "steps",
           "blank",
           "agentPreset",
           "model",
-          "tokens",
           "sizeBytes",
           "metadata",
         ],
@@ -330,6 +327,9 @@ export function checkJsonStructure(
     }
     const session = asRecord(record?.session);
     if (typeof session?.id !== "string") problems.push(`${caseId}: session.id 缺失`);
+    const meta = asRecord(record?.meta);
+    if (typeof meta?.hasToolCalls !== "boolean")
+      problems.push(`${caseId}: meta.hasToolCalls 不是布尔`);
   } else if (shape === "search") {
     if (
       !requireKeys(
@@ -352,9 +352,13 @@ export function checkJsonStructure(
     const kind = record?.kind;
     if (kind === "global") {
       if (typeof record?.sessionCount !== "number") problems.push(`${caseId}: sessionCount 缺失`);
+      if (typeof record?.hasToolCalls !== "boolean")
+        problems.push(`${caseId}: hasToolCalls 不是布尔`);
     } else if (kind === "single") {
       const session = asRecord(record?.session);
       if (typeof session?.id !== "string") problems.push(`${caseId}: single.session.id 缺失`);
+      if (typeof session?.hasToolCalls !== "boolean")
+        problems.push(`${caseId}: single.session.hasToolCalls 不是布尔`);
     } else {
       problems.push(`${caseId}: stats.kind 非法`);
     }

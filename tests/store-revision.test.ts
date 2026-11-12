@@ -76,22 +76,21 @@ describe("审查修订补充：不可用口径 / 码点切片 / 边界分支", (
     return buffer;
   }
 
-  it("stats：不可用指标不静默显 0；全局附未计入会话数", () => {
+  it("stats：元数据不可用仍保留工具调用存在性", () => {
     const partial = runStats(contextOf(HEALTHY_HOME), "session-fixture-partial-06", {
       origin: "all",
     });
     assert.equal(partial.success, true);
     if (!partial.success) return;
     assert.equal(partial.data.single?.blank.unavailable, true);
-    assert.equal(partial.data.single?.turns.unavailable, true);
-    assert.equal(partial.data.excludedMetricSessions, 0);
+    assert.equal(typeof partial.data.single?.hasToolCalls, "boolean");
 
     const nocache = runStats(contextOf(HEALTHY_HOME), "session-fixture-nocache-09", {
       origin: "all",
     });
     assert.equal(nocache.success, true);
     if (!nocache.success) return;
-    assert.equal(nocache.data.single?.tokens.unavailable, true);
+    assert.equal(nocache.data.single?.metadataAvailable, false);
 
     const blank = runStats(contextOf(HEALTHY_HOME), "session-fixture-blank-05", {
       origin: "all",
@@ -103,9 +102,7 @@ describe("审查修订补充：不可用口径 / 码点切片 / 边界分支", (
     const global = runStats(contextOf(HEALTHY_HOME), undefined, { origin: "all" });
     assert.equal(global.success, true);
     if (!global.success) return;
-    // partial-06 / identity-07 / version-08 / nocache-09 的轮次或步数不可用 → 未计入总和。
-    assert.equal(global.data.excludedMetricSessions, 4);
-    assert.equal(global.data.turns, 3);
+    assert.equal(global.data.hasToolCalls, true);
   });
 
   it("workspace.json 不可解析时返回空表", () => {

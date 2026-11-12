@@ -12,7 +12,6 @@ import type {
   SearchOutcome,
   SessionNode,
   StatsOutcome,
-  TokenTotals,
 } from "../scripts/lib/store-types.ts";
 import {
   assertDocumentShape,
@@ -57,16 +56,15 @@ describe("render 边界与分支", () => {
     assert.throws(() => renderShowMd(node([], events), showOptions({ events: true })));
   });
 
-  it("list 全量模式：模型/令牌不可用列显示元数据不可用", () => {
+  it("list 全量模式：模型不可用时显示元数据不可用", () => {
     const outcome: ListOutcome = {
       entries: [
         listEntry(
           "session-aaa-01",
           {},
           metadata({
-            reasons: ["tokenUsage 结构无效"],
+            reasons: ["modelSelection 结构无效"],
             model: field<ModelView>(null, true),
-            tokens: field<TokenTotals>(null, true),
           }),
         ),
       ],
@@ -85,27 +83,20 @@ describe("render 边界与分支", () => {
       kind: "single",
       sessionCount: 1,
       blankCount: 0,
-      turns: 1,
-      steps: 0,
-      toolCalls: 0,
-      tokens: { uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      hasToolCalls: false,
       earliestCreatedAt: 0,
       latestActivityAt: 0,
       totalSizeBytes: 0,
       unavailable: [],
-      excludedMetricSessions: 0,
       coverage: coverage({ includedCount: 1 }),
       scan: scanSummary(),
       single: {
         id: "session-aaa-01",
         title: field<string>(null, true),
         blank: field<boolean>(null, true),
-        turns: field<number>(null, true),
-        steps: field<number>(null, true),
         agentPreset: field<string>(null, true),
         model: field<ModelView>(null, true),
-        tokens: field<TokenTotals>(null, true),
-        toolCalls: 0,
+        hasToolCalls: false,
         createdAt: 0,
         lastActivityAt: 0,
         metadataAvailable: false,
@@ -265,15 +256,11 @@ describe("render 边界与分支", () => {
       kind: "global",
       sessionCount: 1,
       blankCount: 0,
-      turns: 0,
-      steps: 0,
-      toolCalls: 0,
-      tokens: { uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      hasToolCalls: false,
       earliestCreatedAt: null,
       latestActivityAt: null,
       totalSizeBytes: 0,
       unavailable: [],
-      excludedMetricSessions: 0,
       coverage: coverage({ includedCount: 1 }),
       scan: scanSummary({ logsDecoded: 1, eventsRead: 7 }),
       single: null,
@@ -294,7 +281,7 @@ describe("render 边界与分支", () => {
     const probed = showMd(node(), showOptions({ probe: true }));
     assertDocumentShape(probed.content);
     assert.equal(probed.content.includes("- 预计字节数："), true);
-    assert.equal(probed.content.includes("- 消息数：1 用户 / 1 助手"), true);
+    assert.equal(probed.content.includes("- 消息数："), false);
     assert.equal(probed.content.includes("## 时间线"), false);
     assert.equal(probed.content.includes("用户内容 USER-TEXT"), false);
     assert.equal(

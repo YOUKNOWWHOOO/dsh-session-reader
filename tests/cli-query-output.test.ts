@@ -193,14 +193,14 @@ describe("CLI stats", () => {
     const result = runCli(["stats", ...baseArgs(HEALTHY_HOME)]);
     assert.equal(result.status, 0);
     const content = readOutput(result.stdout);
-    assert.equal(content.startsWith("# 统计\n\n"), true);
+    assert.equal(content.startsWith("# 会话概况\n\n"), true);
     assert.match(content, /- 会话数：5/u);
     assert.match(content, /- 空会话数：1/u);
-    assert.match(content, /- 工具调用总数：1/u);
+    assert.equal(content.includes("- 包含工具调用：是"), true);
     assert.match(content, /- 时间跨度：/u);
   });
 
-  it("单会话统计与 JSON（两种 kind 都带 excludedMetricSessions）", () => {
+  it("单会话概况与 JSON 工具调用存在性", () => {
     const single = runCli(["stats", "fixture-main-01", ...baseArgs(HEALTHY_HOME)]);
     assert.equal(single.status, 0);
     const content = readOutput(single.stdout);
@@ -210,8 +210,8 @@ describe("CLI stats", () => {
     const document = JSON.parse(readOutput(json.stdout)) as Record<string, unknown>;
     assert.equal(document.kind, "global");
     assert.equal(document.sessionCount, 5);
-    // md 摘要行说"未计入"时必须能在 json 里读到同一个数。
-    assert.equal(document.excludedMetricSessions, 0);
+    assert.equal(document.hasToolCalls, true);
+    assert.equal(Object.hasOwn(document, "excludedMetricSessions"), false);
 
     const singleJson = runCli([
       "stats",
@@ -222,7 +222,7 @@ describe("CLI stats", () => {
     ]);
     const singleDocument = JSON.parse(readOutput(singleJson.stdout)) as Record<string, unknown>;
     assert.equal(singleDocument.kind, "single");
-    assert.equal(singleDocument.excludedMetricSessions, 0);
+    assert.equal(Object.hasOwn(singleDocument, "excludedMetricSessions"), false);
   });
 
   it("单会话拒绝范围过滤（参数无效，退出 2）；全局聚合可用", () => {
@@ -236,7 +236,7 @@ describe("CLI stats", () => {
       assert.equal(result.status, 2, `期望拒绝: ${extra.join(" ")}`);
       assert.equal(
         result.stderr,
-        `错误: 参数无效（单会话统计不接受范围过滤选项 ${extra[0]}；去掉 ${extra[0]}，或去掉会话目标改用全局聚合）\n`,
+        `错误: 参数无效（单会话概况不接受范围过滤选项 ${extra[0]}；去掉 ${extra[0]}，或去掉会话目标改用全局概况）\n`,
       );
       assert.equal(result.stdout, "");
     }

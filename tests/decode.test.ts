@@ -12,6 +12,7 @@ import {
   eventSeq,
   eventTime,
   eventType,
+  hasToolCalls,
   loadCatalog,
   messageTextFromBlocks,
   readBoolean,
@@ -29,6 +30,16 @@ import { defaultLibRoot } from "../scripts/lib/paths.ts";
 import { createFakeCatalog, resetTempDir } from "./fixtures.ts";
 
 const TEMP_ROOT = fileURLToPath(new URL("./.tmp/decode", import.meta.url));
+
+describe("hasToolCalls", () => {
+  it("只按原生调用或 PTC 开始事件判断存在性", () => {
+    assert.equal(hasToolCalls([]), false);
+    assert.equal(hasToolCalls([{ type: "tool/result" }]), false);
+    assert.equal(hasToolCalls([{ type: "tool/ptc-dispatch" }]), false);
+    assert.equal(hasToolCalls([{ type: "tool/call" }]), true);
+    assert.equal(hasToolCalls([{ type: "tool/ptc-dispatch-start" }]), true);
+  });
+});
 
 const HEADER_LINE = JSON.stringify({
   type: "session",
@@ -496,9 +507,10 @@ describe("审查修订补充：加载/分类/抛出物边界", () => {
     assert.equal(calls[0].name, undefined);
     assert.deepEqual(toolCallsFromBlocks(undefined), []);
     assert.equal(toolResultText({}), "");
-    assert.equal(toolResultText({ data: { message: {} } }), "");
+    assert.equal(toolResultText({ type: "tool/result", data: { message: {} } }), "");
     assert.equal(
       toolResultText({
+        type: "tool/result",
         data: {
           message: {
             content: [
@@ -516,6 +528,7 @@ describe("审查修订补充：加载/分类/抛出物边界", () => {
     // 旧格式的嵌套 tool-result 块已整体删除：只认平铺文本块，抽不到就是空串，不会换一种解释去猜。
     assert.equal(
       toolResultText({
+        type: "tool/result",
         data: {
           message: {
             content: [{ type: "tool-result", content: [{ type: "text", text: "旧形态" }] }],
@@ -527,6 +540,7 @@ describe("审查修订补充：加载/分类/抛出物边界", () => {
     // 工具结果正文里内层引用的消息标记行对同样被清理（与对话正文同一出口规则）。
     assert.equal(
       toolResultText({
+        type: "tool/result",
         data: {
           message: {
             content: [

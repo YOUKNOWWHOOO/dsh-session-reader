@@ -16,7 +16,6 @@ import type {
   ModelView,
   ProjCacheState,
   SessionEntry,
-  TokenTotals,
   WorkspaceEntry,
 } from "./store-types.ts";
 
@@ -92,26 +91,6 @@ function readProjCacheRow(cache: ProjCacheState, rowName: string): RowRead {
   return { ok: true, value: row.val, reason: "" };
 }
 
-function parseTokenTotals(value: unknown): TokenTotals | undefined {
-  const record = asRecord(value);
-  if (record === undefined) return undefined;
-  const totals = asRecord(record.totals);
-  if (totals === undefined) return undefined;
-  const uncachedInputTokens = readNumber(totals, "uncachedInputTokens");
-  const outputTokens = readNumber(totals, "outputTokens");
-  const cacheReadTokens = readNumber(totals, "cacheReadTokens");
-  const cacheWriteTokens = readNumber(totals, "cacheWriteTokens");
-  if (
-    uncachedInputTokens === undefined ||
-    outputTokens === undefined ||
-    cacheReadTokens === undefined ||
-    cacheWriteTokens === undefined
-  ) {
-    return undefined;
-  }
-  return { uncachedInputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };
-}
-
 function parseModelView(value: unknown): ModelView | null | undefined {
   const record = asRecord(value);
   if (record === undefined) return undefined;
@@ -163,21 +142,6 @@ export function buildMetadata(cache: ProjCacheState): MetadataView {
     if (blankValue === undefined) collect(true, "缺少 sessionListMetadata.blank 字段");
     if (lastPromptValue === undefined) collect(true, "缺少 sessionListMetadata.lastPromptAt 字段");
   }
-  const statsRow = readProjCacheRow(cache, "sessionStats");
-  collect(!statsRow.ok, statsRow.reason);
-  const statsRecord = statsRow.ok ? asRecord(statsRow.value) : undefined;
-  const turnsValue = statsRecord === undefined ? undefined : readNumber(statsRecord, "turns");
-  const stepsValue = statsRecord === undefined ? undefined : readNumber(statsRecord, "steps");
-  if (statsRow.ok && turnsValue === undefined) collect(true, "缺少 sessionStats.turns 字段");
-  if (statsRow.ok && stepsValue === undefined) collect(true, "缺少 sessionStats.steps 字段");
-  const turns: FieldValue<number> =
-    turnsValue === undefined
-      ? { value: null, unavailable: true }
-      : { value: turnsValue, unavailable: false };
-  const steps: FieldValue<number> =
-    stepsValue === undefined
-      ? { value: null, unavailable: true }
-      : { value: stepsValue, unavailable: false };
   const presetRow = readProjCacheRow(cache, "agentPreset");
   collect(!presetRow.ok, presetRow.reason);
   const agentPreset: FieldValue<string> = presetRow.ok
@@ -193,25 +157,14 @@ export function buildMetadata(cache: ProjCacheState): MetadataView {
     modelValue === undefined
       ? { value: null, unavailable: true }
       : { value: modelValue, unavailable: false };
-  const tokenRow = readProjCacheRow(cache, "tokenUsage");
-  collect(!tokenRow.ok, tokenRow.reason);
-  const tokenValue = tokenRow.ok ? parseTokenTotals(tokenRow.value) : undefined;
-  if (tokenRow.ok && tokenValue === undefined) collect(true, "tokenUsage 结构无效");
-  const tokens: FieldValue<TokenTotals> =
-    tokenValue === undefined
-      ? { value: null, unavailable: true }
-      : { value: tokenValue, unavailable: false };
   return {
     available: cache.available,
     reasons: [...new Set(reasons)],
     title,
     blank,
     lastPromptAt,
-    turns,
-    steps,
     agentPreset,
     model,
-    tokens,
   };
 }
 

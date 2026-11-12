@@ -1,6 +1,6 @@
 // 用途：show 的 Markdown 渲染，头部 KV 块、时间线（推理/工具/生命周期可见性、问答条目、交接条目、
 // turn/seq 范围筛选、head/tail 首尾截取、按码点截断、隐藏计数摘要）、轮次大纲，以及以 H2 序列 + 路径编号
-// 表达父子关系的子代理块；`--probe` 只落头部 KV 与三项规模数字。
+// 表达父子关系的子代理块；`--probe` 只落头部与预计字节数。
 // 主要入口：renderShowMd（返回 Result：问答载荷结构不符时以错误上抛，由 CLI 映射为 `数据不可读`）；
 // 范围筛选入口 selectEvents（供时间线取"呈现哪些事件"）。
 // 关键依赖：ask-user.ts（问答条目的唯一抽取真值源）、handoff.ts（交接条目的唯一抽取真值源）、
@@ -30,11 +30,15 @@ import {
   eventSeq,
   eventTime,
   eventType,
+  hasToolCalls,
+  isToolCallEvent,
+  isToolResultEvent,
   messageTextFromBlocks,
   readNumber,
   readString,
   reasoningFromBlocks,
   textFromBlocks,
+  toolCallArgumentsText,
   toolResultIsError,
   toolResultText,
   userMessageText,
@@ -44,7 +48,6 @@ import { attributeSource, describeSource } from "./message-source.ts";
 import { formatLocalIso, type Result } from "./paths.ts";
 import {
   assembleDocument,
-  computeEventStats,
   computeTurns,
   countNodes,
   EMPTY_VALUE,
@@ -54,7 +57,6 @@ import {
   inlineValue,
   type RenderedOutput,
   type ShowMdOptions,
-  sumUsage,
   truncateText,
 } from "./render-core.ts";
 import { coverageSections } from "./render-md.ts";
@@ -79,18 +81,11 @@ interface HiddenCounts {
 }
 
 /**
- * 规模探测的三项读数。
- *
- * 三项都由调用方先量或先算后传入，而不是在这里内联求值：`estimatedBytes` 需要真的渲染一份
- * 完整副本（CPU 换确定性），问答计数需要先跑一遍问答抽取，两者都只在探测分支才值得付出。
+ * 规模探测通过渲染同组选项的完整副本取得字节数。
  */
 interface ProbeReadout {
   /** 以同一组选项渲染完整导出的正文字节数（UTF-8）。 */
   readonly estimatedBytes: number;
-  /** 本会话的提问事件数（`P`）。 */
-  readonly askQuestions: number;
-  /** 本会话产出回答条目的结果数（`Q`；未配对或提问被中止/取消时小于 `P`）。 */
-  readonly askAnswers: number;
 }
 
 /**
@@ -112,12 +107,10 @@ function optionalInline(valueText: string | undefined): string {
  * show 头部 KV 块（一个多行段落；值经载体隔离；md 输出格式契约 R2）。
  *
  * `probe` 仅在规模探测时为非 null：探测会先做一次完整渲染来量出正文字节数（以"它自己的完整副本"
- * 为准，而不是估算公式），并给出问答事件计数；常规导出传 null，避免"顺手算一遍完整正文"的隐性成本。
+ * 为准，而不是估算公式）；常规导出传 null。
  */
 function nodeKvBlock(node: SessionNode, probe: ProbeReadout | null): string {
   const header = node.file.decoded.header;
-  const usage = sumUsage(node.file);
-  const stats = computeEventStats(node.file);
   const title = findSessionTitle(node.file);
   const origin = readString(header, "origin");
   const createdAt = readNumber(header, "createdAt");
@@ -141,15 +134,9 @@ function nodeKvBlock(node: SessionNode, probe: ProbeReadout | null): string {
   lines.push(
     `- 规模：${formatSize(node.entry.sizeBytes)}；v${String(node.entry.logVersion)}；${node.file.frames} 帧；${node.file.decoded.lineCount} 行；${node.file.decoded.events.length} 事件`,
   );
-  lines.push(`- 轮次：${stats.turns}；步数：${stats.steps}；工具调用：${stats.toolCalls}`);
-  lines.push(
-    `- 令牌：输入 ${usage.input}；输出 ${usage.output}；缓存读 ${usage.cacheRead}；推理 ${usage.reasoning}`,
-  );
+  lines.push(`- 包含工具调用：${hasToolCalls(node.file.decoded.events) ? "是" : "否"}`);
   if (probe !== null) {
     lines.push(`- 预计字节数：${probe.estimatedBytes}（完整导出正文大小，按 UTF-8 计）`);
-    lines.push(`- 消息数：${stats.userMessages} 用户 / ${stats.assistantMessages} 助手`);
-    // 事件数口径：未配对、或提问被中止/取消时回答数小于提问数。计数只作用于主会话块（探测只作用于根块）。
-    lines.push(`- 问答数：${probe.askQuestions} 提问 / ${probe.askAnswers} 回答`);
   }
   const anomalyDetails = node.file.decoded.anomalies.map((anomaly) => inlineValue(anomaly.detail));
   if (anomalyDetails.length > 0) lines.push(`- 异常：${anomalyDetails.join("；")}`);
@@ -173,6 +160,14 @@ function labelLine(
     const time = eventTime(event);
     items.push(`seq ${seq === undefined ? EMPTY_VALUE : String(seq)}`);
     items.push(time === undefined ? EMPTY_VALUE : formatLocalIso(time));
+    if (
+      eventType(event) === "tool/ptc-dispatch-start" ||
+      eventType(event) === "tool/ptc-dispatch"
+    ) {
+      const data = asRecord(event.data) ?? {};
+      items.push(`调用 ${optionalInline(readString(data, "subCallId"))}`);
+      items.push(`父调用 ${optionalInline(readString(data, "parentCallId"))}`);
+    }
   }
   const source = includeSource ? sourceAnnotationOf(event) : null;
   if (source !== null) items.push(source);
@@ -411,7 +406,7 @@ function timelineItem(
     }
     return items.length > 0 ? items : null;
   }
-  if (type === "tool/call") {
+  if (isToolCallEvent(event)) {
     // 子代理相关工具（创建工具的 `subagent`/`subagent_fork`、发消息的 `send_message`）产出**专用条目**
     // （任务正文或消息正文），不再产出原始工具条目：同一调用只呈现一次，且呈现的是调用方要读的内容。
     // 因此该分支不受 `--tools`/`--role` 控制，与问答条目的处理同构。
@@ -419,7 +414,7 @@ function timelineItem(
     if (subagentEntry !== null) return subagentEntry;
     if (options.tools) {
       const name = readString(data, "name") ?? EMPTY_VALUE;
-      const argumentsText = readString(data, "arguments") ?? "";
+      const argumentsText = toolCallArgumentsText(event) ?? "";
       items.push(
         ...fencedItem(
           `**工具调用**（${inlineValue(name)}）`,
@@ -431,12 +426,12 @@ function timelineItem(
     } else if (ask === null) {
       hidden.tools += 1;
     }
-  } else if (type === "tool/result") {
+  } else if (isToolResultEvent(event)) {
     // 回执的默认排除由 renderTimelineMd 统一判定与计数（那里同时决定它是否被跳过），
     // 这里只负责在它进入渲染时按普通工具结果处理，`--tools` 打开时它作为调度往返的记录出现。
     if (options.tools) {
-      // 错误态判据只有一处实现：`data.error` 与 `message.isError` 任一成立即为错误态，
-      // 只认前者会把只带 `message.isError` 的真实结果渲染成普通结果。
+      // 普通结果按 `data.error` 与 `message.isError` 判错，PTC 结果按 `data.isError` 判错；
+      // 统一由 toolResultIsError 实现，保证各输出路径的错误态一致。
       const isError = toolResultIsError(event);
       items.push(
         ...fencedItem(
@@ -622,8 +617,8 @@ function renderNodeSections(
     subagentTask: null,
   };
   let probe: ProbeReadout | null = null;
-  // 问答抽取只在"会用到"时进行：时间线模式需要条目；探测模式需要计数（并会连带渲染完整副本，
-  // 因此结构不符同样要在探测阶段暴露）。`--summary` 不输出这些条目，但轮次大纲需要摘要事件
+  // 问答抽取只在"会用到"时进行：时间线模式需要条目；探测模式渲染完整副本，
+  // 因此结构不符同样要在探测阶段暴露。`--summary` 不输出这些条目，但轮次大纲需要摘要事件
   // 的 seq 来跳过摘要正文，因此摘要分析在时间线与轮次大纲两条路径上都要做。
   if (timelineMode || probeMode) {
     const computed = analyzeAskUserEvents(node.file.decoded.events);
@@ -631,11 +626,7 @@ function renderNodeSections(
     if (probeMode) {
       const measured = probeSizeOf(node, options);
       if (!measured.success) return measured;
-      probe = {
-        estimatedBytes: measured.data,
-        askQuestions: computed.data.questionCount,
-        askAnswers: computed.data.answerCount,
-      };
+      probe = { estimatedBytes: measured.data };
     }
     if (timelineMode) {
       askEntries = askEntriesByEvent(computed.data);
@@ -709,7 +700,7 @@ export function renderShowMd(
     // 覆盖声明属于"边界可自证"契约，show 同样必须给出（开发规范“覆盖声明契约”）。作用域是本目标
     // 及其子树，纳入数即渲染出的节点数；子代理解码失败会让整条命令显式失败（退出 3），因此可归属的
     // 排除项恒为空，header 不可读的子代理只能以“归属未知”声明。`--probe` 产物按规模探测条款
-    // 只含头部 KV 与三项，故不追加。
+    // 只含头部与预计字节数，故不追加。
     const nodes = countNodes(node);
     sections.push(
       ...coverageSections({
@@ -720,12 +711,11 @@ export function renderShowMd(
       }),
     );
   }
-  const stats = computeEventStats(node.file);
   // 探测分支才量正文字节数：`probeSizeOf` 会再渲染一份完整副本，非探测路径不得提前求值。
   if (!options.probe) {
     return {
       success: true,
-      data: { content: assembleDocument(sections), summary: showSummary(node, options, stats) },
+      data: { content: assembleDocument(sections), summary: showSummary(node, options) },
     };
   }
   const measured = probeSizeOf(node, options);

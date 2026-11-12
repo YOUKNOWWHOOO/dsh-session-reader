@@ -115,12 +115,11 @@ function compareViews(left: SessionView, right: SessionView, sort: ListFilters["
     const rightTitle = (right.metadata.title.value ?? "").toLowerCase();
     result = leftTitle < rightTitle ? -1 : leftTitle > rightTitle ? 1 : 0;
   } else if (sort === "size") result = left.entry.sizeBytes - right.entry.sizeBytes;
-  else result = (left.metadata.turns.value ?? -1) - (right.metadata.turns.value ?? -1);
   if (result !== 0) return result;
   return left.entry.id < right.entry.id ? -1 : left.entry.id > right.entry.id ? 1 : 0;
 }
 
-/** list 命令数据：过滤 → 排序（time/created/size/turns 降序；title 升序）→ limit（0=不限）。 */
+/** list 命令数据：过滤 → 排序（time/created/size 降序；title 升序）→ limit（0=不限）。 */
 export function buildList(
   ctx: StoreContext,
   filters: ListFilters,

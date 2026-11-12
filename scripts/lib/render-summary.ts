@@ -5,12 +5,7 @@
 // 设计约束：摘要只描述产物的规模与口径，不得引入产物未支撑的断言；文案与标点是面向用户的对外契约，
 // 不得改写；本模块不渲染正文，因此对 md 载体零依赖。规模探测的字节数由调用方先量后传（而非传回调）：
 // 只有探测分支需要它，非探测路径若提前求值就会白做一次完整渲染。
-import {
-  countNodes,
-  EMPTY_VALUE,
-  METADATA_UNAVAILABLE_TEXT,
-  type SessionEventStats,
-} from "./render-core.ts";
+import { countNodes } from "./render-core.ts";
 import type {
   CheckOutcome,
   ListOutcome,
@@ -36,12 +31,8 @@ export interface ShowSummaryOptions {
  * `--subagents` 的段落按开关给出而非按实际子代理数给出：开关关闭时子代理不在产物里，
  * 摘要也不得宣称读过它们（0 个子代理同样会出现该段落，与 md 路径逐字一致）。
  */
-export function showSummary(
-  node: SessionNode,
-  options: ShowSummaryOptions,
-  stats: SessionEventStats,
-): string {
-  if (options.summary) return `会话 ${node.entry.id}（摘要）；轮次 ${stats.turns} 个`;
+export function showSummary(node: SessionNode, options: ShowSummaryOptions): string {
+  if (options.summary) return `会话 ${node.entry.id}（摘要）`;
   return (
     `会话 ${node.entry.id}；事件 ${node.file.decoded.events.length} 个` +
     (options.subagents ? `；子代理 ${countNodes(node) - 1} 个` : "")
@@ -70,24 +61,13 @@ export function searchSummary(outcome: SearchOutcome): string {
 
 /**
  * stats 命令级摘要（md 摘要行与 CLI json 路径共用，单一真值源）。
- * 不可用指标不再静默显 0：unavailable → `元数据不可用`、value=null → `-`；
- * 全局聚合的轮次/步数只累计可用值，未计入会话数显式附注（原因见输出文件）。
  */
 export function formatStatsSummary(outcome: StatsOutcome): string {
   if (outcome.single !== null) {
     const single = outcome.single;
-    const turns = single.turns.unavailable
-      ? METADATA_UNAVAILABLE_TEXT
-      : single.turns.value === null
-        ? EMPTY_VALUE
-        : String(single.turns.value);
-    return `会话 ${single.id}；轮次 ${turns}；工具调用 ${single.toolCalls}`;
+    return `会话 ${single.id}；包含工具调用：${single.hasToolCalls ? "是" : "否"}`;
   }
-  const excluded =
-    outcome.excludedMetricSessions > 0
-      ? `（${outcome.excludedMetricSessions} 个会话未计入，原因见输出文件）`
-      : "";
-  return `会话 ${outcome.sessionCount} 个；总轮次 ${outcome.turns}；工具调用 ${outcome.toolCalls}${excluded}`;
+  return `会话 ${outcome.sessionCount} 个；包含工具调用：${outcome.hasToolCalls ? "是" : "否"}`;
 }
 
 /** check 命令级摘要。 */

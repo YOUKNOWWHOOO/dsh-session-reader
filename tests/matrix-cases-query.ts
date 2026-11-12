@@ -254,7 +254,7 @@ export function searchCases(): MatrixCase[] {
   return cases;
 }
 
-/** stats 组合：全局聚合（含来源枚举与零命中）+ 单会话统计 + json 形态 + 范围过滤拒绝路径。 */
+/** stats 组合：全局聚合（含来源枚举与零命中）+ 单会话概况 + json 形态 + 范围过滤拒绝路径。 */
 export function statsCases(): MatrixCase[] {
   const cases: MatrixCase[] = [];
   for (let index = 0; index < 3; index += 1) {
@@ -337,7 +337,7 @@ export function statsCases(): MatrixCase[] {
       2,
       {
         expectStderr:
-          "错误: 参数无效（单会话统计不接受范围过滤选项 --since；去掉 --since，或去掉会话目标改用全局聚合）\n",
+          "错误: 参数无效（单会话概况不接受范围过滤选项 --since；去掉 --since，或去掉会话目标改用全局概况）\n",
       },
     ),
     mcase(
@@ -348,7 +348,7 @@ export function statsCases(): MatrixCase[] {
       2,
       {
         expectStderr:
-          "错误: 参数无效（单会话统计不接受范围过滤选项 --origin；去掉 --origin，或去掉会话目标改用全局聚合）\n",
+          "错误: 参数无效（单会话概况不接受范围过滤选项 --origin；去掉 --origin，或去掉会话目标改用全局概况）\n",
       },
     ),
     mcase(
@@ -359,7 +359,7 @@ export function statsCases(): MatrixCase[] {
       2,
       {
         expectStderr:
-          "错误: 参数无效（单会话统计不接受范围过滤选项 --workspace；去掉 --workspace，或去掉会话目标改用全局聚合）\n",
+          "错误: 参数无效（单会话概况不接受范围过滤选项 --workspace；去掉 --workspace，或去掉会话目标改用全局概况）\n",
       },
     ),
   );

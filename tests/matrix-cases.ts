@@ -41,7 +41,7 @@ export interface MatrixCase {
 /** 歧义前缀 "session-adv-" 可匹配的健康夹具会话数（全部健康夹具会话 id 均以该前缀开头）。 */
 const HEALTHY_SESSION_COUNT = healthySpec().sessions.length;
 
-const LIST_SORTS = ["time", "created", "title", "size", "turns"] as const;
+const LIST_SORTS = ["time", "created", "title", "size"] as const;
 /** 来源枚举：list/search/stats 的 --origin 取值全集。 */
 export const ORIGINS = ["all", "main", "subagent"] as const;
 const SHOW_SWITCHES = [
@@ -106,18 +106,18 @@ export function healthyBase(): string[] {
   return ["--dsh-home", "HEALTHY", "--lib-root", libRoot()];
 }
 
-/** list 组合：20 条开关交叉 + 显式边界 + json 形态 + 错误路径。 */
+/** list 组合：排序与开关交叉 + 显式边界 + json 形态 + 错误路径。 */
 export function listCases(): MatrixCase[] {
   const cases: MatrixCase[] = [];
   const workspaces = [null, "user_projects", MAIN_CWD] as const;
   const bounds = [null, "0", "9999999999999"] as const;
   const titles = [null, "needle", "zzznomatch"] as const;
   const limits = [0, 1, 100] as const;
-  for (let index = 0; index < 20; index += 1) {
+  for (let index = 0; index < 16; index += 1) {
     const args = ["list", ...healthyBase()];
     if (index % 2 === 1) args.push("--include-blank");
-    if (index >= 10) args.push("--full");
-    args.push("--sort", LIST_SORTS[index % 5], "--origin", ORIGINS[index % 3]);
+    if (index >= 8) args.push("--full");
+    args.push("--sort", LIST_SORTS[index % LIST_SORTS.length], "--origin", ORIGINS[index % 3]);
     const workspace = workspaces[index % 3];
     if (workspace !== null) args.push("--workspace", workspace);
     const since = bounds[index % 3];
@@ -356,7 +356,7 @@ export function showCases(): MatrixCase[] {
       },
     ),
   );
-  // 问答：`--probe` 的问答数一行、以及"载荷结构不符即整体失败且不产出文件"。
+  // 问答：`--probe` 的规模与载荷结构不符时的整体失败。
   for (const id of [ASK_PAIRED_ID, ASK_UNPAIRED_ID, ASK_ERROR_ID]) {
     cases.push(
       mcase(`show-md-ask-probe-${id}`, ["show", id, ...healthyBase(), "--probe"], "md", null, 0),

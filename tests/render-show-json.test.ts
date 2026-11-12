@@ -47,7 +47,7 @@ describe("renderShowJson / renderShowJsonl", () => {
     assert.deepEqual(document.messages, []);
   });
 
-  it("摘要与 md 同源：正文带事件数、--summary 带轮次、--subagents 追加子代理数", () => {
+  it("摘要与 md 同源：正文带事件数、--summary 不含轮次总数、--subagents 追加子代理数", () => {
     const base = { unattributable: [] };
     assert.match(
       renderShowJson(node(), { ...base, summary: false, subagents: false }).summary,
@@ -59,7 +59,7 @@ describe("renderShowJson / renderShowJsonl", () => {
     );
     assert.match(
       renderShowJson(node(), { ...base, summary: true, subagents: false }).summary,
-      /^会话 session-render-01（摘要）；轮次 \d+ 个$/u,
+      /^会话 session-render-01（摘要）$/u,
     );
   });
 

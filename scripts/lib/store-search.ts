@@ -31,10 +31,13 @@ import {
   eventSeq,
   eventTime,
   eventType,
+  isToolCallEvent,
+  isToolResultEvent,
   messageTextFromBlocks,
   readString,
   reasoningFromBlocks,
   textFromBlocks,
+  toolCallArgumentsText,
   toolResultText,
   userMessageText,
 } from "./decode.ts";
@@ -145,7 +148,7 @@ function collectSearchUnits(
   } else if (type === "assistant/message") {
     const text = messageTextFromBlocks(messageContent(event));
     if (text.length > 0) units.push({ label: "assistant", text });
-  } else if (type === "tool/call") {
+  } else if (isToolCallEvent(event)) {
     // 子代理相关调用（创建工具的 `prompt`、`send_message` 的 `message`）在三档都建可读正文单元，
     // 与 show 的专用条目同源：否则会出现"呈现里有、检索里没有"的不一致。三档都含它，是
     // `text ⊆ tools ⊆ all` 这一单调包含关系的要求。
@@ -156,14 +159,14 @@ function collectSearchUnits(
     // `tools`/`all` 另保留原始实参：专用正文只是实参里的一段，其余调度参数与逐字实参仍需可检索，
     // 不能因为已经有专用正文就丢掉原参数单元。
     if (scope !== "text") {
-      const argumentsText = readString(asRecord(event.data) ?? {}, "arguments");
+      const argumentsText = toolCallArgumentsText(event);
       if (argumentsText !== undefined && argumentsText.length > 0) {
-        units.push({ label: "tool/call", text: argumentsText });
+        units.push({ label: type, text: argumentsText });
       }
     }
-  } else if (scope !== "text" && type === "tool/result") {
+  } else if (scope !== "text" && isToolResultEvent(event)) {
     const text = toolResultText(event);
-    if (text.length > 0) units.push({ label: "tool/result", text });
+    if (text.length > 0) units.push({ label: type, text });
   }
   // 问答可读文本：单元名即时间线标签（`提问`/`回答`），文本与 md 条目逐字同源。
   if (ask !== null) units.push({ label: ask.label, text: ask.text });

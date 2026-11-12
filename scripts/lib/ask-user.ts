@@ -1,6 +1,5 @@
-// 用途：`ask_user_question`（工具向用户提问）问答事件的判定、提问与回答的配对、可读文本抽取，
-// 以及规模探测所需的提问/回答事件计数。
-// 主要入口：analyzeAskUserEvents（md 时间线条目、默认档检索单元与 `--probe` 计数共用的唯一产出）。
+// 用途：`ask_user_question` 问答事件的判定、配对与可读文本抽取。
+// 主要入口：analyzeAskUserEvents（md 时间线与默认档检索单元共用）。
 // 关键依赖：decode.ts（事件读取基元 asRecord/readString/textFromBlocks/eventType/eventSeq）、
 // render-core.ts（空值显示文案）、paths.ts（Result）。
 // 设计约束：本模块是这类内容在全技能范围内的单一真值源，md 渲染与检索单元都消费同一份产出，
@@ -9,7 +8,7 @@
 // stderr `错误: 数据不可读`、不产出文件），`search` 把该会话逐条列入覆盖声明的排除项并继续。
 // 禁止任何降级形态：不做原样兜底、不做猜测补齐、不静默丢弃，把不可解析的载荷塞进载体或悄悄少算
 // 一条，都会让产物看起来正常却与日志事实不符。
-// 错误态结果（`isError`/`data.error`，即提问被中止或取消）不在此列：它是正常产品形态，
+// 提问被中止或取消时的错误态结果是正常产品形态，
 // 按"没有回答"处理而不是载荷异常，判据见 decode.ts 的 `toolResultIsError`。
 // 回答结果的正文可能被部署侧的边界插件包上 `<dsh-result …>…</dsh-result>` 信封，解析前必须先剥离
 // 一个完整信封（见 deployment-text.ts 的严格版）：信封是传输层标记，不是载荷的一部分。
@@ -19,16 +18,20 @@ import {
   asRecord,
   type EventRecord,
   eventSeq,
-  eventType,
+  isToolCallEvent,
+  isToolResultEvent,
   readString,
   textFromBlocks,
+  toolCallArgumentsText,
+  toolEventCallId,
+  toolResultContent,
   toolResultIsError,
 } from "./decode.ts";
 import { stripResultEnvelope } from "./deployment-text.ts";
 import type { Result } from "./paths.ts";
 import { EMPTY_VALUE } from "./render-core.ts";
 
-/** 提问工具名：`data.name` 等于它的 `tool/call` 事件才是提问。 */
+/** 普通调用或 PTC 子调用开始事件的 `data.name` 等于此名称时为提问。 */
 export const ASK_USER_TOOL_NAME = "ask_user_question";
 
 /** 提问与回答两类时间线条目的标签（取值即对外契约，不得改写）。 */
@@ -44,7 +47,7 @@ export type AskUserLabel = typeof ASK_USER_QUESTION_LABEL | typeof ASK_USER_ANSW
 /**
  * 单个问答事件的可读文本。
  *
- * `event` 是该文本所属的事件对象本身（提问为 `tool/call`，回答为配对的 `tool/result`）：
+ * `event` 是提问调用开始或配对结果的原始事件对象，涵盖普通工具与 PTC 子调用：
  * 渲染层据此按"事件身份"取回条目，因此 `--turn`/`--seq` 的事件级筛选天然同时作用于问答条目，
  * 无需另写一套筛选。`text` 未经 `--truncate` 处理，截断由渲染层与检索层各自按统一口径套用。
  */
@@ -54,20 +57,10 @@ export interface AskUserEntry {
   readonly text: string;
 }
 
-/** 一次会话的问答分析结果（md 条目、检索单元与探测计数共用的产出）。 */
+/** 一次会话的问答分析结果。 */
 export interface AskUserAnalysis {
   /** 按事件顺序排列的条目：每个提问事件一条、每个产出回答的结果事件一条。 */
   readonly entries: readonly AskUserEntry[];
-  /** 提问事件数（`--probe` 的 `P`）。 */
-  readonly questionCount: number;
-  /**
-   * 产出回答条目的结果数（`--probe` 的 `Q`）。
-   *
-   * 它小于 `P` 有两种原因，两者都必须能从产物中区分：提问没有配对结果（未配对），
-   * 或配对结果是错误态（提问被中止或取消）。前者可用 `--tools` 看出该提问没有结果条目，
-   * 后者可用 `--tools` 看出结果的错误态。
-   */
-  readonly answerCount: number;
 }
 
 /**
@@ -119,29 +112,27 @@ function parseJsonRecord(text: string, where: string): Result<Record<string, unk
   return { success: true, data: record };
 }
 
-/** 提问事件判定：`tool/call` 且 `data.name` 为 `ask_user_question`。 */
+/** 普通调用或 PTC 子调用开始事件的工具名为 `ask_user_question` 时判为提问。 */
 function isQuestionEvent(event: EventRecord): boolean {
-  if (eventType(event) !== "tool/call") return false;
+  if (!isToolCallEvent(event)) return false;
   return readString(asRecord(event.data) ?? {}, "name") === ASK_USER_TOOL_NAME;
 }
 
 /**
- * 提问事件的配对标识（`data.callId`）。
+ * 提问事件的配对标识：普通调用取 `data.callId`，PTC 子调用取 `data.subCallId`。
  *
- * 缺失、非字符串或空串时返回 null：此时只是"配对不上"（提问照常呈现，回答数为 0），
+ * 缺失、非字符串或空串时返回 null：此时无法配对，提问照常呈现，
  * 不是结构不符，契约把结构不符限定在载荷内容上，没有把配对标识登记为结构的一部分。
  */
 function questionCallIdOf(event: EventRecord): string | null {
-  const value = readString(asRecord(event.data) ?? {}, "callId");
+  const value = toolEventCallId(event);
   return value === undefined || value.length === 0 ? null : value;
 }
 
-/** 工具结果事件的配对标识（`data.message.toolCallId`），取值语义同 `questionCallIdOf`。 */
+/** 普通结果取 `data.message.toolCallId`，PTC 结果取 `data.subCallId`；空值语义同提问。 */
 function answerCallIdOf(event: EventRecord): string | null {
-  if (eventType(event) !== "tool/result") return null;
-  const message = asRecord(asRecord(event.data)?.message);
-  if (message === undefined) return null;
-  const value = readString(message, "toolCallId");
+  if (!isToolResultEvent(event)) return null;
+  const value = toolEventCallId(event);
   return value === undefined || value.length === 0 ? null : value;
 }
 
@@ -174,7 +165,7 @@ function optionLines(question: Record<string, unknown>, where: string): Result<s
  */
 function questionTextOf(event: EventRecord): Result<string, string> {
   const where = `提问事件 ${locate(event)}`;
-  const argumentsText = readString(asRecord(event.data) ?? {}, "arguments");
+  const argumentsText = toolCallArgumentsText(event);
   if (argumentsText === undefined) return mismatch(where, "arguments 不是字符串");
   const payload = parseJsonRecord(argumentsText, `${where} 的 arguments`);
   if (!payload.success) return payload;
@@ -230,7 +221,7 @@ function customText(answer: Record<string, unknown>, where: string): Result<stri
 }
 
 /**
- * 回答的可读文本：`data.message.content` → `answers[]` → 逐条固定两部分。
+ * 回答的可读文本：普通结果取 `data.message.content`，PTC 结果取 `data.content`，再解析 `answers[]`。
  *
  * 逐条输出 `[<序号>] id：<id>`，随后至多两行：`选择：<label1>、<label2>`（`selected` 非空时）、
  * `自定义：<custom>`（`custom` 为非空字符串时）；两者皆无时输出一行 `未作答`。
@@ -241,10 +232,8 @@ function customText(answer: Record<string, unknown>, where: string): Result<stri
  */
 function answerTextOf(event: EventRecord): Result<string, string> {
   const where = `回答事件 ${locate(event)}`;
-  const message = asRecord(asRecord(event.data)?.message);
-  if (message === undefined) return mismatch(where, "message 不是对象");
   // 结果文本复用工具结果的统一入口，只抽取平铺内容块中的文本。
-  const contentText = textFromBlocks(message.content);
+  const contentText = textFromBlocks(toolResultContent(event));
   if (contentText.length === 0) return mismatch(where, "content 中没有非空文本块");
   // 边界信封与正文一起落账：先剥一层再解析，否则起点行让 JSON 解析必然失败。
   const payloadText = stripResultEnvelope(contentText);
@@ -274,27 +263,25 @@ function answerTextOf(event: EventRecord): Result<string, string> {
 }
 
 /**
- * 分析一批事件中的问答内容：产出可读文本条目（按事件顺序）与提问/回答事件计数。
+ * 分析一批事件中的问答内容，按事件顺序产出可读文本条目。
  *
  * 两遍扫描的理由：配对关系是"提问 → 结果"的前向引用（结果在提问之后，但异常日志里也可能先出现
- * 结果），先把全部提问的 `callId` 登记下来，第二遍才按顺序产出条目，顺序因此恒等于事件顺序，
+ * 结果），先登记提问的配对标识，第二遍才按顺序产出条目，顺序因此恒等于事件顺序，
  * 与 `--head`/`--tail` 的条目口径一致（若边扫边配，条目顺序会依赖配对时机）。
  *
  * Args:
  *   events: 一个会话（或块）的全部已解码逻辑事件。
  *
  * Returns:
- *   Result 成功时给出条目与计数；失败表示某个提问或回答事件的载荷无法解析为登记结构，
+ *   Result 成功时给出条目；失败表示某个提问或回答事件的载荷无法解析为登记结构，
  *   错误文本用于定位（不外显）。
  */
 export function analyzeAskUserEvents(
   events: readonly EventRecord[],
 ): Result<AskUserAnalysis, string> {
   const callIds = new Set<string>();
-  let questionCount = 0;
   for (const event of events) {
     if (!isQuestionEvent(event)) continue;
-    questionCount += 1;
     const callId = questionCallIdOf(event);
     if (callId !== null) callIds.add(callId);
   }
@@ -314,7 +301,7 @@ export function analyzeAskUserEvents(
     // 加一段 `Error: ask_user_question was aborted before the user answered` 纯文本，是正常产品形态
     // 而不是载荷异常；若把它当载荷异常，这类会话会永久读不了（`show` 恒退出 3），聚合检索也会
     // 逐条排除它们。这里直接跳过（不标记已配对）：错误态结果不参与配对，因此不产出条目、
-    // 不计入 `Q`，该提问以"无回答"的形态呈现。判据本身只有一处实现（`toolResultIsError`）。
+    // 该提问以无回答的形态呈现，错误态由 `toolResultIsError` 判定。
     if (toolResultIsError(event)) continue;
     pairedCallIds.add(callId);
     const text = answerTextOf(event);
@@ -323,6 +310,6 @@ export function analyzeAskUserEvents(
   }
   return {
     success: true,
-    data: { entries, questionCount, answerCount: pairedCallIds.size },
+    data: { entries },
   };
 }

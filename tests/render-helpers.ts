@@ -40,16 +40,8 @@ export function metadata(overrides: Partial<MetadataView> = {}): MetadataView {
     title: field("测试标题"),
     blank: field(false),
     lastPromptAt: field(1000),
-    turns: field(3),
-    steps: field(5),
     agentPreset: field("standard"),
     model: field({ provider: "provider-x", model: "model-y", reasoningEffort: "max" }),
-    tokens: field({
-      uncachedInputTokens: 10,
-      outputTokens: 20,
-      cacheReadTokens: 30,
-      cacheWriteTokens: 40,
-    }),
     ...overrides,
   };
 }

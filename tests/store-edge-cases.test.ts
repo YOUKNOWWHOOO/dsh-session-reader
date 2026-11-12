@@ -1,5 +1,5 @@
 // 边界与分支单元测试：发现阶段跳过不可读 header 并记录原因、空 zstd 文件与撕裂 header 帧、
-// buildMetadata 行结构异常、排序 size/turns 分支、runSearch context=0、runStats 目标不存在。
+// buildMetadata 行结构异常、排序 size 分支、runSearch context=0、runStats 目标不存在。
 
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
@@ -119,15 +119,19 @@ describe("边界与分支", () => {
     assert.equal(metadata.title.value, null);
     assert.equal(metadata.title.unavailable, false);
     assert.equal(metadata.blank.unavailable, true);
-    assert.equal(metadata.turns.value, 1);
-    assert.equal(metadata.steps.unavailable, true);
     assert.equal(metadata.agentPreset.value, null);
     assert.equal(metadata.model.unavailable, true);
-    assert.equal(metadata.tokens.unavailable, true);
-    assert.equal(metadata.reasons.length >= 4, true);
+    assert.equal(
+      metadata.reasons.some((reason) => reason.includes("sessionStats")),
+      false,
+    );
+    assert.equal(
+      metadata.reasons.some((reason) => reason.includes("tokenUsage")),
+      false,
+    );
   });
 
-  it("排序 size/turns 分支", () => {
+  it("排序 size 分支", () => {
     const bySize = buildList(contextOf(HEALTHY_HOME), defaultFilters({ sort: "size" }));
     assert.equal(bySize.success, true);
     if (!bySize.success) return;
@@ -136,11 +140,6 @@ describe("边界与分支", () => {
       sizes,
       [...sizes].sort((left, right) => right - left),
     );
-    const byTurns = buildList(contextOf(HEALTHY_HOME), defaultFilters({ sort: "turns" }));
-    assert.equal(byTurns.success, true);
-    if (!byTurns.success) return;
-    assert.equal(byTurns.data.entries[0].id, "session-fixture-main-01");
-    assert.equal(byTurns.data.entries[1].id, "bbbb1111-2222-3333-4444-555566667777");
   });
 
   it("runSearch context=0 无省略号且命中位置正确", () => {

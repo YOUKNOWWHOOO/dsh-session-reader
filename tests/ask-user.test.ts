@@ -163,7 +163,7 @@ describe("analyzeAskUserEvents 回答抽取", () => {
   });
 });
 
-describe("analyzeAskUserEvents 配对与计数", () => {
+describe("analyzeAskUserEvents 配对", () => {
   it("条目顺序等于事件顺序，按 callId 配对", () => {
     const analysis = analyzeOk([
       askQuestionEvent(2, 12, "call-a", [{ id: "qa", header: "A", question: "问 A" }]),
@@ -182,21 +182,22 @@ describe("analyzeAskUserEvents 配对与计数", () => {
     );
     assert.equal(analysis.entries[2].text, "[1] id：qb\n选择：选项 B");
     assert.equal(analysis.entries[3].text, "[1] id：qa\n选择：选项 A");
-    assert.equal(analysis.questionCount, 2);
-    assert.equal(analysis.answerCount, 2);
+    assert.deepEqual(
+      analysis.entries.map((entry) => entry.event.seq),
+      [2, 3, 4, 5],
+    );
   });
 
-  it("未配对提问照常产出条目，answerCount 为 0", () => {
+  it("未配对提问照常产出条目且没有回答", () => {
     const analysis = analyzeOk([
       askQuestionEvent(2, 12, "call-open", [{ id: "q1", header: "H", question: "Q" }]),
     ]);
     assert.equal(analysis.entries.length, 1);
     assert.equal(analysis.entries[0].label, ASK_USER_QUESTION_LABEL);
-    assert.equal(analysis.questionCount, 1);
-    assert.equal(analysis.answerCount, 0);
+    assert.equal(analysis.entries[0].text, "[1] H（id：q1）\n问题：Q");
   });
 
-  it("缺少 callId 的提问不参与配对，但仍产出条目并计入 P", () => {
+  it("缺少 callId 的提问不参与配对，但仍产出条目", () => {
     const analysis = analyzeOk([
       askQuestionRawEvent(2, 12, "", JSON.stringify({ questions: [{ id: "q1", question: "Q" }] })),
       askAnswerEvent(3, 13, "", [{ id: "q1", selected: ["选项 A"] }]),
@@ -205,8 +206,7 @@ describe("analyzeAskUserEvents 配对与计数", () => {
       analysis.entries.map((entry) => entry.label),
       [ASK_USER_QUESTION_LABEL],
     );
-    assert.equal(analysis.questionCount, 1);
-    assert.equal(analysis.answerCount, 0);
+    assert.equal(analysis.entries[0].text, "[1] -（id：q1）\n问题：Q");
   });
 
   it("非问答工具调用与结果不产出条目", () => {
@@ -224,8 +224,6 @@ describe("analyzeAskUserEvents 配对与计数", () => {
       }),
     ]);
     assert.deepEqual(analysis.entries, []);
-    assert.equal(analysis.questionCount, 0);
-    assert.equal(analysis.answerCount, 0);
   });
 
   it("重复结果只认第一条非错误态结果", () => {
@@ -236,7 +234,7 @@ describe("analyzeAskUserEvents 配对与计数", () => {
     ]);
     assert.equal(analysis.entries.length, 2);
     assert.equal(analysis.entries[1].text, "[1] id：q1\n选择：第一次");
-    assert.equal(analysis.answerCount, 1);
+    assert.equal(analysis.entries[1].event.seq, 3);
   });
 });
 
@@ -258,8 +256,7 @@ describe("analyzeAskUserEvents 错误态结果", () => {
       analysis.entries.map((entry) => entry.label),
       [ASK_USER_QUESTION_LABEL],
     );
-    assert.equal(analysis.questionCount, 1);
-    assert.equal(analysis.answerCount, 0);
+    assert.equal(analysis.entries[0].text, "[1] H（id：q1）\n问题：Q");
   });
 
   it("data.error 存在时同样按错误态处理（提问被中止）", () => {
@@ -277,7 +274,7 @@ describe("analyzeAskUserEvents 错误态结果", () => {
       analysis.entries.map((entry) => entry.label),
       [ASK_USER_QUESTION_LABEL],
     );
-    assert.equal(analysis.answerCount, 0);
+    assert.equal(analysis.entries[0].event.seq, 2);
   });
 
   it("错误态结果之后若出现正常的配对结果，仍按回答处理", () => {
@@ -290,7 +287,8 @@ describe("analyzeAskUserEvents 错误态结果", () => {
       analysis.entries.map((entry) => entry.label),
       [ASK_USER_QUESTION_LABEL, ASK_USER_ANSWER_LABEL],
     );
-    assert.equal(analysis.answerCount, 1);
+    assert.equal(analysis.entries[1].text, "[1] id：q1\n选择：选项 A");
+    assert.equal(analysis.entries[1].event.seq, 4);
   });
 });
 
@@ -416,8 +414,11 @@ describe("analyzeAskUserEvents 工具结果边界信封", () => {
       wrapped.entries.map((entry) => entry.text),
       plain.entries.map((entry) => entry.text),
     );
-    assert.equal(wrapped.answerCount, 1);
-    assert.equal(wrapped.questionCount, 1);
+    assert.deepEqual(
+      wrapped.entries.map((entry) => entry.label),
+      [ASK_USER_QUESTION_LABEL, ASK_USER_ANSWER_LABEL],
+    );
+    assert.equal(wrapped.entries[1].text, "[1] id：q1\n选择：选项 1");
   });
 
   it("只切信封，不改写载荷字节（JSON 转义原样交给 JSON.parse）", () => {

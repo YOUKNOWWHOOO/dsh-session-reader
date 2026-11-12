@@ -86,14 +86,6 @@ export interface ModelView {
   readonly reasoningEffort: string | null;
 }
 
-/** 令牌总计视图（projcache tokenUsage.totals 结构）。 */
-export interface TokenTotals {
-  readonly uncachedInputTokens: number;
-  readonly outputTokens: number;
-  readonly cacheReadTokens: number;
-  readonly cacheWriteTokens: number;
-}
-
 /** 字段值：value=null 表示空值；unavailable=true 表示因元数据问题不可用（必须显式标注）。 */
 export interface FieldValue<T> {
   readonly value: T | null;
@@ -156,11 +148,8 @@ export interface MetadataView {
   readonly title: FieldValue<string>;
   readonly blank: FieldValue<boolean>;
   readonly lastPromptAt: FieldValue<number>;
-  readonly turns: FieldValue<number>;
-  readonly steps: FieldValue<number>;
   readonly agentPreset: FieldValue<string>;
   readonly model: FieldValue<ModelView>;
-  readonly tokens: FieldValue<TokenTotals>;
 }
 
 /** 列表过滤条件。 */
@@ -172,7 +161,7 @@ export interface ListFilters {
   readonly origin: "all" | "main" | "subagent";
   readonly includeBlank: boolean;
   readonly limit: number;
-  readonly sort: "time" | "created" | "title" | "size" | "turns";
+  readonly sort: "time" | "created" | "title" | "size";
 }
 
 /** 列表条目。 */
@@ -294,32 +283,24 @@ export interface StatsOutcome {
   readonly kind: "global" | "single";
   readonly sessionCount: number;
   readonly blankCount: number;
-  readonly turns: number;
-  readonly steps: number;
-  readonly toolCalls: number;
-  readonly tokens: TokenTotals;
+  readonly hasToolCalls: boolean;
   readonly earliestCreatedAt: number | null;
   readonly latestActivityAt: number | null;
   readonly totalSizeBytes: number;
   readonly unavailable: { readonly id: string; readonly reasons: string[] }[];
-  /** 全局聚合中轮次或步数不可用（未计入总和）的会话数；单会话恒为 0。摘要行据此显式附注。 */
-  readonly excludedMetricSessions: number;
   readonly coverage: SessionCoverage;
   readonly scan: ScanSummary;
   readonly single: SingleSessionStats | null;
 }
 
-/** 单会话统计。 */
+/** 单会话概况。 */
 export interface SingleSessionStats {
   readonly id: string;
   readonly title: FieldValue<string>;
   readonly blank: FieldValue<boolean>;
-  readonly turns: FieldValue<number>;
-  readonly steps: FieldValue<number>;
   readonly agentPreset: FieldValue<string>;
   readonly model: FieldValue<ModelView>;
-  readonly tokens: FieldValue<TokenTotals>;
-  readonly toolCalls: number;
+  readonly hasToolCalls: boolean;
   readonly createdAt: number;
   readonly lastActivityAt: number;
   readonly metadataAvailable: boolean;

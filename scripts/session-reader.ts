@@ -72,7 +72,7 @@ interface CommandSpec {
 }
 
 const ORIGIN_VALUES = ["all", "main", "subagent"] as const;
-const SORT_VALUES = ["time", "created", "title", "size", "turns"] as const;
+const SORT_VALUES = ["time", "created", "title", "size"] as const;
 const SCOPE_VALUES = ["text", "tools", "all"] as const;
 const ROLE_VALUES = ["user", "assistant"] as const;
 
@@ -183,10 +183,10 @@ export const COMMANDS: readonly CommandSpec[] = [
       {
         name: "--sort",
         kind: "value",
-        valueName: "<time|created|title|size|turns>",
+        valueName: "<time|created|title|size>",
         valueKind: "enum",
         values: SORT_VALUES,
-        description: "排序键（time/created/size/turns 降序；title 升序）",
+        description: "排序键（time/created/size 降序；title 升序）",
         defaultText: "time",
       },
       {
@@ -210,7 +210,7 @@ export const COMMANDS: readonly CommandSpec[] = [
       {
         name: "--summary",
         kind: "switch",
-        description: "仅摘要（头部+统计+轮次大纲；不含提问与回答、交接条目；jsonl 禁止）",
+        description: "仅摘要（头部和轮次大纲；不含提问与回答、交接条目；jsonl 禁止）",
       },
       {
         name: "--role",
@@ -274,7 +274,7 @@ export const COMMANDS: readonly CommandSpec[] = [
       {
         name: "--probe",
         kind: "switch",
-        description: "只给规模摘要（轮次/消息数/问答数/预计字节数），不落正文（仅 md）",
+        description: "只给头部与预计字节数，不落正文（仅 md）",
       },
     ],
   },
@@ -333,11 +333,11 @@ export const COMMANDS: readonly CommandSpec[] = [
   },
   {
     name: "stats",
-    summary: "统计（全局聚合或单会话）",
+    summary: "会话概况（全局或单会话）",
     positional: {
       name: "[<会话标识>]",
       required: false,
-      description: "缺省=全局聚合；提供时=单会话统计",
+      description: "缺省=全局概况；提供时=单会话概况",
     },
     options: [
       ...commonOptions(["md", "json"]),
@@ -426,7 +426,7 @@ export function buildGeneralHelp(): string {
   const lines = [
     `用法: ${USAGE_ENTRY} <命令> [选项]`,
     "",
-    "列出/读取/检索/统计/校验 dsh 会话历史（离线、只读、无模型调用）。",
+    "列出/读取/检索/查看概况/校验 dsh 会话历史（离线、只读、无模型调用）。",
     "",
     DESKTOP_NODE_NOTE,
     "",
@@ -666,7 +666,7 @@ export function validateCommandOptions(parsed: ParsedCommand): RunFailure | null
       return {
         classification: "参数无效",
         exitCode: 2,
-        detail: `单会话统计不接受范围过滤选项 ${present.join("、")}；去掉 ${present.join("、")}，或去掉会话目标改用全局聚合`,
+        detail: `单会话概况不接受范围过滤选项 ${present.join("、")}；去掉 ${present.join("、")}，或去掉会话目标改用全局概况`,
       };
     }
     return null;
@@ -770,8 +770,7 @@ function renderList(parsed: ParsedCommand, ctx: StoreContext, format: "md" | "js
     limit: optionInteger(parsed, "--limit", 100),
     sort: ((): ListFilters["sort"] => {
       const value = optionValue(parsed, "--sort");
-      if (value === "created" || value === "title" || value === "size" || value === "turns")
-        return value;
+      if (value === "created" || value === "title" || value === "size") return value;
       return "time";
     })(),
   };

@@ -304,6 +304,46 @@ export function eventData(event: EventRecord): Record<string, unknown> {
   return asRecord(event.data) ?? {};
 }
 
+/** 普通调用与 PTC 子调用开始事件均代表工具调用。 */
+export function isToolCallEvent(event: EventRecord): boolean {
+  return eventType(event) === "tool/call" || eventType(event) === "tool/ptc-dispatch-start";
+}
+
+/** 普通结果与 PTC 子调用完成事件均代表工具结果。 */
+export function isToolResultEvent(event: EventRecord): boolean {
+  return eventType(event) === "tool/result" || eventType(event) === "tool/ptc-dispatch";
+}
+
+/** 普通调用的参数是 JSON 文本，PTC 的参数是 JSON 值。 */
+export function toolCallArgumentsText(event: EventRecord): string | undefined {
+  const data = eventData(event);
+  return eventType(event) === "tool/call"
+    ? readString(data, "arguments")
+    : JSON.stringify(data.arguments);
+}
+
+/** 普通结果的标识位于 message，PTC 的标识位于 data。 */
+export function toolEventCallId(event: EventRecord): string | undefined {
+  const data = eventData(event);
+  if (eventType(event) === "tool/call") return readString(data, "callId");
+  if (eventType(event) === "tool/result") {
+    const message = asRecord(data.message);
+    return message === undefined ? undefined : readString(message, "toolCallId");
+  }
+  return readString(data, "subCallId");
+}
+
+/** 普通结果内容位于 message，PTC 结果内容直接位于 data。 */
+export function toolResultContent(event: EventRecord): unknown {
+  const data = eventData(event);
+  return eventType(event) === "tool/result" ? asRecord(data.message)?.content : data.content;
+}
+
+/** 判断事件流中是否存在工具调用。 */
+export function hasToolCalls(events: readonly EventRecord[]): boolean {
+  return events.some(isToolCallEvent);
+}
+
 /**
  * 拼接 content 块中的 text 文本；只计 type 为 text 且 text 为非空字符串的块。
  *
@@ -400,7 +440,7 @@ export function toolCallsFromBlocks(blocks: unknown): ToolCallBlock[] {
 }
 
 /**
- * 从 tool/result 事件 data.message.content 中抽取工具结果文本。
+ * 从普通结果的 data.message.content 或 PTC 结果的 data.content 抽取文本。
  *
  * 内容块只认当前格式的平铺形态 `{type:"text", text}`，与消息正文同形。旧版本日志的
  * `{type:"tool-result", content:[…]}` 嵌套块形态已整体删除：技能只支持当前格式，历史形态的读取路径
@@ -414,10 +454,7 @@ export function toolCallsFromBlocks(blocks: unknown): ToolCallBlock[] {
  * 因为 JSON 解析必须区分“裸正文”与“半截信封”。
  */
 export function toolResultText(event: EventRecord): string {
-  const data = eventData(event);
-  const message = asRecord(data.message);
-  if (message === undefined) return "";
-  const content = asArray(message.content);
+  const content = asArray(toolResultContent(event));
   if (content === undefined) return "";
   const parts: string[] = [];
   for (const block of content) {
@@ -430,7 +467,7 @@ export function toolResultText(event: EventRecord): string {
 }
 
 /**
- * 工具结果的错误态判据：`data.error !== undefined` 或 `data.message.isError === true`，任一成立即为错误态。
+ * 普通结果按 `data.error` 与 `data.message.isError` 判错，PTC 结果按 `data.isError` 判错。
  *
  * 两个字段都要看，这不是"双保险"而是两种实际落账形态：本机真实日志里既有只带 `data.error` 的结果，
  * 也有只带 `message.isError: true` 的结果（编辑工具因 `old_string` 与 `new_string` 相同而失败、
@@ -441,13 +478,14 @@ export function toolResultText(event: EventRecord): string {
  * （错误态结果不产出 `**回答**` 条目）都调用本函数。三处各写一份必然漂移，而"呈现"与"检索"
  * 对同一事件给出不同答案正是本技能要避免的缺陷形态。
  *
- * 注意 `message.isError` 只认严格布尔 `true`：缺失、`false` 与非布尔值都不算错误态。
+ * 两种 `isError` 都只认严格布尔 `true`，不根据正文判错。
  *
- * @param event 已解码的逻辑事件（应为 `tool/result`；其它类型按其字段尽力判定）。
+ * @param event 已解码的普通或 PTC 工具结果事件。
  * @returns 该结果是否为错误态。
  */
 export function toolResultIsError(event: EventRecord): boolean {
   const data = eventData(event);
+  if (eventType(event) === "tool/ptc-dispatch") return readBoolean(data, "isError") === true;
   if (data.error !== undefined) return true;
   const message = asRecord(data.message);
   return message !== undefined && readBoolean(message, "isError") === true;

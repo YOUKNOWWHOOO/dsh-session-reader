@@ -1,10 +1,10 @@
 // 用途：渲染基础设施，文本载体（多行动态围栏、单行行内代码跨度、表格单元格）、三条极小归一化
 // （CR/CRLF → LF 与制表符 → 4 空格 MD010、行内值首尾空白去除 MD038、全 `$` 载荷末尾补一行空格 MD014）、
 // 按码点截断、字节大小格式化、文档装配、空值与"元数据不可用"常量、字段值格式化，以及 md/json 两组
-// 渲染器共用的会话派生事实（会话标题、令牌用量、轮次、事件统计、节点计数）。
+// 渲染器共用的会话派生事实（会话标题、轮次大纲、节点计数）。
 // 主要入口：fenceBlock / inlineValue / tableCellValue / truncateText / formatSize / assembleDocument、
-// fieldValueText / modelText / tokenTotalsText，以及 findSessionTitle / sumUsage / computeTurns /
-// computeEventStats / countNodes；RenderedOutput 与 ShowMdOptions 是渲染层的公共契约类型
+// fieldValueText / modelText，以及 findSessionTitle / computeTurns / countNodes；
+// RenderedOutput 与 ShowMdOptions 是渲染层的公共契约类型
 // （md 渲染器的产物形态与输入选项，CLI 与各渲染器共用）。
 // 关键依赖：decode.ts（事件读取基元）、paths.ts（IntegerRange 类型）、store-types.ts（视图与节点类型）。
 // 设计约束：本模块不读命令语义、不产出任何命令级文案；载体与归一化是"实现与测试的单一真值源"，
@@ -36,7 +36,6 @@ import type {
   FieldValue,
   ModelView,
   SessionNode,
-  TokenTotals,
 } from "./store-types.ts";
 import { collectSubagentReplyCallIds, isVisibleEvent } from "./visibility.ts";
 
@@ -102,10 +101,6 @@ export function fieldValueText<T>(field: FieldValue<T>, render: (value: T) => st
 
 export function modelText(model: ModelView): string {
   return `${model.provider}/${model.model}`;
-}
-
-export function tokenTotalsText(tokens: TokenTotals): string {
-  return `${tokens.uncachedInputTokens}/${tokens.outputTokens}/${tokens.cacheReadTokens}/${tokens.cacheWriteTokens}`;
 }
 
 // ------------------------- lint-safe 渲染规则（R1–R5） -------------------------
@@ -196,29 +191,6 @@ export function findSessionTitle(file: DecodedSessionFile): string | null {
   return normalizeSessionTitle(title);
 }
 
-/** 令牌用量汇总：只累计 `assistant/message` 事件自带的 usage。 */
-export function sumUsage(file: DecodedSessionFile): {
-  input: number;
-  output: number;
-  cacheRead: number;
-  reasoning: number;
-} {
-  let input = 0;
-  let output = 0;
-  let cacheRead = 0;
-  let reasoning = 0;
-  for (const event of file.decoded.events) {
-    if (eventType(event) !== "assistant/message") continue;
-    const usage = asRecord(asRecord(event.data)?.usage);
-    if (usage === undefined) continue;
-    input += readNumber(usage, "inputTokens") ?? 0;
-    output += readNumber(usage, "outputTokens") ?? 0;
-    cacheRead += readNumber(usage, "cacheReadTokens") ?? 0;
-    reasoning += readNumber(usage, "reasoningTokens") ?? 0;
-  }
-  return { input, output, cacheRead, reasoning };
-}
-
 interface TurnSummary {
   readonly turn: number;
   readonly seq: number;
@@ -272,33 +244,6 @@ export function computeTurns(
     }
   }
   return turns;
-}
-
-/** 会话事件计数（KV 块、`--probe` 的消息数与摘要行共用同一份口径）。 */
-export interface SessionEventStats {
-  readonly turns: number;
-  readonly steps: number;
-  readonly toolCalls: number;
-  readonly userMessages: number;
-  readonly assistantMessages: number;
-}
-
-/** 会话事件计数：KV 块与 `--probe` 的"消息数"共用，保证头部与探测口径一致。 */
-export function computeEventStats(file: DecodedSessionFile): SessionEventStats {
-  let turns = 0;
-  let steps = 0;
-  let toolCalls = 0;
-  let userMessages = 0;
-  let assistantMessages = 0;
-  for (const event of file.decoded.events) {
-    const type = eventType(event);
-    if (type === "turn/start") turns += 1;
-    else if (type === "step/start") steps += 1;
-    else if (type === "tool/call") toolCalls += 1;
-    else if (type === "user/message") userMessages += 1;
-    else if (type === "assistant/message") assistantMessages += 1;
-  }
-  return { turns, steps, toolCalls, userMessages, assistantMessages };
 }
 
 /** 节点总数（含自身）：覆盖声明的作用域与本目标子树规模共用同一口径。 */

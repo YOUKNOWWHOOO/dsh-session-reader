@@ -1,5 +1,5 @@
 // CLI 集成测试（问答契约）：以子进程跑真实 CLI + 真实官方格式库 + 合成 DSH_HOME，
-// 断言 提问/回答 条目的默认可见性、与 --tools/--role/范围选择的交互、--probe 的问答数、
+// 断言 提问/回答 条目的默认可见性、与 --tools/--role/范围选择的交互、--probe 的规模、
 // 载荷结构不符时的整体失败（退出 3、无产物）与检索侧的排除声明。
 // 事件夹具全部取自 tests\fixtures.ts 的问答构造器，与单元测试、全组合门禁同源。
 import assert from "node:assert/strict";
@@ -172,10 +172,12 @@ describe("CLI 问答条目", () => {
     assert.equal(narrowed.includes("筛选：seq 0-1；显示 1 条时间线条目"), true);
   });
 
-  it("--probe 给出问答数（成对 2/2、未配对 1/0、错误态 1/0）", () => {
-    assert.equal(showMd(PAIRED_ID, ["--probe"]).includes("- 问答数：2 提问 / 2 回答"), true);
-    assert.equal(showMd(UNPAIRED_ID, ["--probe"]).includes("- 问答数：1 提问 / 0 回答"), true);
-    assert.equal(showMd(ERROR_ID, ["--probe"]).includes("- 问答数：1 提问 / 0 回答"), true);
+  it("--probe 保留字节规模且不输出问答数", () => {
+    for (const id of [PAIRED_ID, UNPAIRED_ID, ERROR_ID]) {
+      const content = showMd(id, ["--probe"]);
+      assert.equal(content.includes("- 预计字节数："), true);
+      assert.equal(content.includes("- 问答数："), false);
+    }
   });
 
   it("未配对提问照常呈现；错误态结果只呈现提问且不触发失败", () => {

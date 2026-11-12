@@ -153,7 +153,7 @@ describe("CLI list", () => {
     const content = readFileSync(contract.path, "utf8");
     assert.equal(countLines(content), contract.fileLines);
     assert.equal(content.startsWith("# 会话列表\n\n"), true);
-    assert.equal(content.includes("| ID | 标题 | 工作区 | 最近活动 | 轮次 | 类型 | 大小 |"), true);
+    assert.equal(content.includes("| ID | 标题 | 工作区 | 最近活动 | 类型 | 大小 |"), true);
     // 显示值必须与可传值同源：产物中的 id 可直接交给 show（见下方"显示值即可传值"用例）。
     assert.equal(content.includes("`session-fixture-main-01`"), true);
     assert.equal(content.includes("夹具会话 A"), true);
@@ -183,7 +183,7 @@ describe("CLI list", () => {
     assert.equal(shownContent.includes(`- ID：\`${idMatch[1]}\``), true);
   });
 
-  it("--full 增加 cwd/令牌列；--include-blank 显示空会话", () => {
+  it("--full 显示 cwd；--include-blank 显示空会话", () => {
     const full = runCli(["list", ...baseArgs(HEALTHY_HOME), "--full", "--include-blank"]);
     assert.equal(full.status, 0);
     const contract = readContract(full.stdout);
@@ -192,9 +192,9 @@ describe("CLI list", () => {
     assert.equal(content.includes("- `session-fixture-main-01`："), true);
     assert.equal(content.includes("**工作区**：`user_projects`"), true);
     assert.equal(content.includes("**最近活动**："), true);
-    assert.equal(content.includes("**轮次**：2"), true);
+    assert.equal(content.includes("**轮次**："), false);
     assert.equal(content.includes("**大小**："), true);
-    assert.equal(content.includes("100/50/25/5"), true);
+    assert.equal(content.includes("**令牌**："), false);
     assert.equal(content.includes("**cwd**：`C:\\Users\\Alice\\user_projects`"), true);
     assert.equal(content.includes("session-fixture-blank-05"), true);
   });
@@ -210,10 +210,9 @@ describe("CLI list", () => {
     const main = document.sessions.find((session) => session.id === "session-fixture-main-01");
     assert.notEqual(main, undefined);
     assert.equal(main?.title, "夹具会话 A");
-    assert.equal(main?.turns, 2);
     assert.deepEqual(main?.metadata, { available: true, reasons: [] });
-    const tokens = main?.tokens as Record<string, number>;
-    assert.equal(tokens.uncachedInputTokens, 100);
+    assert.equal(Object.hasOwn(main ?? {}, "turns"), false);
+    assert.equal(Object.hasOwn(main ?? {}, "tokens"), false);
   });
 
   it("工作区/类型/limit 过滤", () => {
@@ -276,7 +275,7 @@ describe("CLI show", () => {
     assert.equal(content.startsWith("# 会话记录\n\n"), true);
     assert.equal(content.includes("- ID：`session-fixture-main-01`"), true);
     assert.equal(content.includes("- 标题：`夹具会话 A`"), true);
-    assert.equal(content.includes("- 轮次：2；步数：1；工具调用：1"), true);
+    assert.equal(content.includes("- 包含工具调用：是"), true);
     assert.equal(content.includes("```text\nhello ALPHA world\n```"), true);
     assert.equal(content.includes("```text\nreply BETA text\n```"), true);
     assert.equal(content.includes("**推理**"), false);

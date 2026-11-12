@@ -27,7 +27,9 @@ import {
   type EventRecord,
   eventSeq,
   eventType,
+  isToolCallEvent,
   readString,
+  toolCallArgumentsText,
   userMessageText,
 } from "./decode.ts";
 import type { HandoffAnalysis } from "./handoff.ts";
@@ -193,16 +195,17 @@ export function checkpointSeqsOf(analysis: ContextAnalysis): ReadonlySet<number>
 }
 
 /**
- * 解析 `tool/call` 的实参 JSON。
+ * 解析普通工具调用或 PTC 子调用开始事件的实参。
  *
- * `arguments` 由官方库解码成 JSON 字符串，解析失败或顶层不是普通对象时返回 null：调用方据此让该
+ * 普通调用的 `arguments` 是 JSON 字符串；PTC 的 JSON 值先由统一入口序列化。解析失败或顶层不是
+ * 普通对象时返回 null：调用方据此让该
  * 调用退回普通工具条目（`--tools` 仍能看到原始实参），异常因此可定位，而不是被伪装成一条正常消息。
  *
- * @param data `tool/call` 事件的 `data`。
+ * @param event 已解码的调用开始事件。
  * @returns 解析出的对象；缺失、空串、非法 JSON 或非普通对象时返回 null。
  */
-function parseCallArguments(data: Record<string, unknown>): Record<string, unknown> | null {
-  const raw = readString(data, "arguments");
+function parseCallArguments(event: EventRecord): Record<string, unknown> | null {
+  const raw = toolCallArgumentsText(event);
   if (raw === undefined || raw.length === 0) return null;
   let value: unknown;
   try {
@@ -227,12 +230,13 @@ function parseCallArguments(data: Record<string, unknown>): Record<string, unkno
  * @returns 标签、展示括号附加信息与正文；不适用时返回 null。
  */
 export function extractSubagentCallContent(event: EventRecord): SubagentCallContent | null {
+  if (!isToolCallEvent(event)) return null;
   const data = asRecord(event.data);
   if (data === undefined) return null;
   const name = readString(data, "name");
   const isCreation = isSubagentCreationTool(name);
   if (!isCreation && name !== SEND_MESSAGE_TOOL_NAME) return null;
-  const parsed = parseCallArguments(data);
+  const parsed = parseCallArguments(event);
   if (parsed === null) return null;
   if (isCreation) {
     const prompt = readString(parsed, "prompt") ?? "";

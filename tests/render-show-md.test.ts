@@ -303,14 +303,14 @@ describe("renderShowMd 的问答条目", () => {
     assert.equal(rendered.content.includes("**提问**"), false);
     assert.equal(rendered.content.includes("**回答**"), false);
   });
-  it("--probe 给出问答数（未配对与错误态时回答数小于提问数）", () => {
+  it("--probe 保留字节规模且不输出问答数", () => {
     const paired = showMd(node([], askSamplePaired()), showOptions({ probe: true }));
-    assert.equal(paired.content.includes("- 问答数：2 提问 / 2 回答"), true);
+    assert.equal(paired.content.includes("- 问答数："), false);
     assert.equal(paired.content.includes("时间线"), false);
     const unpaired = showMd(node([], askSampleUnpaired()), showOptions({ probe: true }));
-    assert.equal(unpaired.content.includes("- 问答数：1 提问 / 0 回答"), true);
+    assert.equal(unpaired.content.includes("- 预计字节数："), true);
     const errored = showMd(node([], askSampleErrorResult()), showOptions({ probe: true }));
-    assert.equal(errored.content.includes("- 问答数：1 提问 / 0 回答"), true);
+    assert.equal(errored.content.includes("- 问答数："), false);
   });
 
   it("载荷结构不符时整体失败（不产出任何降级内容）", () => {
@@ -415,6 +415,6 @@ describe("renderShowMd 的工具结果错误态", () => {
       analysis.data.entries.map((entry) => entry.label),
       [ASK_USER_QUESTION_LABEL],
     );
-    assert.equal(analysis.data.answerCount, 0);
+    assert.equal(analysis.data.entries[0].event.seq, 1);
   });
 });

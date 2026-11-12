@@ -87,8 +87,8 @@ describe("loadProjCache / buildMetadata", () => {
     const metadata = buildMetadata(cache);
     assert.equal(metadata.title.value, "夹具标题 A");
     assert.equal(metadata.title.unavailable, false);
-    assert.equal(metadata.turns.value, 2);
-    assert.equal(metadata.tokens.value?.uncachedInputTokens, 100);
+    assert.equal(Object.hasOwn(metadata, "turns"), false);
+    assert.equal(Object.hasOwn(metadata, "tokens"), false);
     assert.equal(metadata.model.value?.provider, "fixture-provider");
     assert.deepEqual(metadata.reasons, []);
   });
@@ -126,11 +126,10 @@ describe("loadProjCache / buildMetadata", () => {
     const cache = loadProjCache(HEALTHY_HOME, entry.id, entry.header);
     const metadata = buildMetadata(cache);
     assert.equal(metadata.available, true);
-    assert.equal(metadata.turns.unavailable, true);
-    assert.equal(metadata.tokens.unavailable, false);
+    assert.equal(metadata.blank.unavailable, true);
     assert.equal(
       metadata.reasons.some((reason) => /sessionStats/u.test(reason)),
-      true,
+      false,
     );
   });
 });

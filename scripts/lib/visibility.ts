@@ -4,15 +4,23 @@
 // isSubagentCreationTool（子代理创建工具名判定）、collectSubagentReplyCallIds（子代理调用回执的
 // 识别集合）、countExcludedInjections（排除计数）。
 // 设计约束：
-// 1. 判据只能是日志字段（`user/message` 的 `data.source.kind`、事件 type、`tool/call` 的 `name` 与
-//    `callId`），禁止任何文本匹配。理由：同一注入换个文案就会漏；`<dsh-injection …>` 由多种注入
+// 1. 判据只能是日志字段（`user/message` 的 `data.source.kind`、事件 type、普通工具与 PTC 子调用的
+//    名称和配对标识），禁止任何文本匹配。理由：同一注入换个文案就会漏；`<dsh-injection …>` 由多种注入
 //    共用（类别集合随部署扩展），`<dsh-result …>` 只出现在工具结果上；`<system-reminder>` 也可能
 //    出现在用户本人输入里。凭标签或文案判定必然误判。
 // 2. 保留名单是"白名单"：名单外的 `source.kind` 一律排除。框架与插件的来源种类是合并可扩展的
 //    联合，黑名单必然漏掉未来新增的注入；白名单的失效方向是"新种类默认不显示"，属于安全方向。
 // 3. 本模块只判定"默认是否可见"，不决定用户显式要求查看时（`--events`）是否出现，那是渲染层
 //    与检索层的开关语义，两者都必须以本模块的判定为唯一依据，禁止各自另行判别。
-import { asRecord, type EventRecord, eventType, readString } from "./decode.ts";
+import {
+  asRecord,
+  type EventRecord,
+  eventType,
+  isToolCallEvent,
+  isToolResultEvent,
+  readString,
+  toolEventCallId,
+} from "./decode.ts";
 
 /**
  * 默认保留的 `user/message` 来源种类。
@@ -32,7 +40,7 @@ import { asRecord, type EventRecord, eventType, readString } from "./decode.ts";
  *   由 `dsh-user-questions` 以答案批次注入。保留的理由是它可能承载**唯一**的答案记录：
  *   官方契约里这个消息的内容与当场答复的工具结果同格式（`{ answers: [{ id, selected, custom }] }`，
  *   见 dsh-user-questions 的 `answerBatchSchema`），而提问在等待中被中止、取消或超时时不会产生
- *   配对的 `tool/result`，此时本技能不产出 `**回答**` 条目，答案只在这条消息里。代价是当配对结果
+ *   可用的配对回答结果，此时本技能不产出 `**回答**` 条目，答案只在这条消息里。代价是当配对结果
  *   确实存在时，同一答案会在产物中出现两次（回答条目一次、本条消息一次），重复是可接受的代价，
  *   丢失不可接受。
  *
@@ -63,7 +71,7 @@ export const KEPT_USER_MESSAGE_KINDS: readonly string[] = [
 /**
  * 创建子代理的工具名（`subagent` 与 `subagent_fork`）。
  *
- * 两个工具的调用实参都携带任务正文（`prompt`），它们的配对的 `tool/result` 都是调度回执，
+ * 两个工具的调用实参都携带任务正文（`prompt`），它们的配对结果都是调度回执，
  * 不是子代理的回答。名单只有这两个取值：`send_message` 是把消息发给**已存在**的子代理，
  * 它不创建子代理，其配对结果因而不是创建回执。
  */
@@ -78,7 +86,7 @@ export const SEND_MESSAGE_TOOL_NAME = "send_message";
  * 渲染层与检索层都只经本函数判定创建工具，禁止各自维护工具名字面量：两处判据一旦分叉，
  * 同一调用会出现"呈现有专用条目、检索不覆盖"这类不一致。`send_message` 不在此列。
  *
- * @param name `tool/call` 事件的 `data.name`；缺失时为 undefined。
+ * @param name 普通调用或 PTC 子调用开始事件的 `data.name`；缺失时为 undefined。
  * @returns 属于 `subagent` 或 `subagent_fork` 时为 true。
  */
 export function isSubagentCreationTool(name: string | undefined): boolean {
@@ -107,7 +115,8 @@ export function isInjectedUserMessage(event: EventRecord): boolean {
 }
 
 /**
- * 子代理创建工具调用的 `callId` 集合：其配对的 `tool/result` 是调度回执，不是子代理的回答。
+ * 子代理创建调用的配对标识集合：普通调用取 `callId`，PTC 子调用取 `subCallId`。
+ * 配对结果是调度回执，不是子代理的回答。
  *
  * 回执判定必须与专用条目的识别同源（同用 `isSubagentCreationTool`）：`subagent_fork` 的回执
  * 若漏在这里，它会被当作子代理的回答显示出来。
@@ -115,25 +124,24 @@ export function isInjectedUserMessage(event: EventRecord): boolean {
 export function collectSubagentReplyCallIds(events: readonly EventRecord[]): ReadonlySet<string> {
   const callIds = new Set<string>();
   for (const event of events) {
-    if (eventType(event) !== "tool/call") continue;
+    if (!isToolCallEvent(event)) continue;
     const data = asRecord(event.data);
     if (data === undefined || !isSubagentCreationTool(readString(data, "name"))) continue;
-    const callId = readString(data, "callId");
+    const callId = toolEventCallId(event);
     if (callId !== undefined && callId.length > 0) callIds.add(callId);
   }
   return callIds;
 }
 
 /**
- * 该 `tool/result` 是否为子代理调度回执（正文形如 `started subagent <id>`）。
+ * 该普通工具结果或 PTC 子调用结果是否为子代理调度回执。
  *
- * 识别方式是 `toolCallId` 与某个子代理创建调用配对，而不是正文文案：文案随产品变化，
- * 配对关系是日志的结构事实。
+ * 普通结果以 `message.toolCallId` 与创建调用的 `callId` 配对，PTC 结果以 `subCallId` 配对。
+ * 判定不依赖正文文案，因为配对关系是日志的结构事实。
  */
 export function isSubagentReceipt(event: EventRecord, replyCallIds: ReadonlySet<string>): boolean {
-  if (eventType(event) !== "tool/result") return false;
-  const message = asRecord(asRecord(event.data)?.message);
-  const callId = message === undefined ? undefined : readString(message, "toolCallId");
+  if (!isToolResultEvent(event)) return false;
+  const callId = toolEventCallId(event);
   return callId !== undefined && replyCallIds.has(callId);
 }
 

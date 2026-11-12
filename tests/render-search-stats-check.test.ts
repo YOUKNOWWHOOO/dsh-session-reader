@@ -10,7 +10,6 @@ import type {
   SessionCoverage,
   SingleSessionStats,
   StatsOutcome,
-  TokenTotals,
 } from "../scripts/lib/store-types.ts";
 import { assertDocumentShape, coverage, field, scanSummary } from "./render-helpers.ts";
 
@@ -116,53 +115,31 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
       kind: "global",
       sessionCount: 3,
       blankCount: 1,
-      turns: 5,
-      steps: 7,
-      toolCalls: 9,
-      tokens: {
-        uncachedInputTokens: 11,
-        outputTokens: 22,
-        cacheReadTokens: 33,
-        cacheWriteTokens: 44,
-      },
+      hasToolCalls: true,
       earliestCreatedAt: 1000,
       latestActivityAt: 2000,
       totalSizeBytes: 2048,
       unavailable: [{ id: "session-bbb-02", reasons: ["projcache 记录缺失"] }],
-      excludedMetricSessions: 0,
       coverage: coverage({ includedCount: 3 }),
       scan: scanSummary(),
       single: null,
     };
     const md = renderStatsMd(global);
     assertDocumentShape(md.content);
-    assert.equal(md.content.startsWith("# 统计\n\n"), true);
+    assert.equal(md.content.startsWith("# 会话概况\n\n"), true);
     assert.equal(md.content.includes("- 会话数：3"), true);
-    assert.equal(md.content.includes("- 工具调用总数：9"), true);
+    assert.equal(md.content.includes("- 包含工具调用：是"), true);
     assert.equal(
       md.content.includes("元数据不完整：`session-bbb-02`（`projcache 记录缺失`）"),
       true,
     );
-    assert.equal(md.summary, "会话 3 个；总轮次 5；工具调用 9");
-    const globalExcluded = renderStatsMd({ ...global, excludedMetricSessions: 2 });
-    assert.equal(
-      globalExcluded.summary,
-      "会话 3 个；总轮次 5；工具调用 9（2 个会话未计入，原因见输出文件）",
-    );
+    assert.equal(md.summary, "会话 3 个；包含工具调用：是");
     const globalJson = renderStatsJson(global);
     const json = JSON.parse(globalJson.content) as Record<string, unknown>;
     assert.equal(json.kind, "global");
     assert.equal(json.sessionCount, 3);
-    // 摘要里出现的"未计入会话数"必须同时进入 json：md 说了 N 个，machine 侧要拿到同一个数。
-    assert.equal(json.excludedMetricSessions, 0);
-    assert.equal(
-      (
-        JSON.parse(renderStatsJson({ ...global, excludedMetricSessions: 2 }).content) as {
-          excludedMetricSessions: number;
-        }
-      ).excludedMetricSessions,
-      2,
-    );
+    assert.equal(json.hasToolCalls, true);
+    assert.equal(Object.hasOwn(json, "excludedMetricSessions"), false);
     // 摘要与 md 同源：json 形态的 stdout 第二行必须与 md 摘要逐字一致。
     assert.equal(globalJson.summary, md.summary);
 
@@ -173,17 +150,9 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
         id: "session-aaa-01",
         title: field("单会话标题"),
         blank: field(false),
-        turns: field(2),
-        steps: field(3),
         agentPreset: field("standard"),
         model: field({ provider: "p", model: "m", reasoningEffort: null }),
-        tokens: field({
-          uncachedInputTokens: 1,
-          outputTokens: 2,
-          cacheReadTokens: 3,
-          cacheWriteTokens: 4,
-        }),
-        toolCalls: 1,
+        hasToolCalls: true,
         createdAt: 1000,
         lastActivityAt: 2000,
         metadataAvailable: true,
@@ -197,29 +166,24 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
     const singleMd = renderStatsMd(single);
     assertDocumentShape(singleMd.content);
     assert.equal(singleMd.content.includes("- 标题：`单会话标题`"), true);
-    assert.equal(singleMd.summary, "会话 session-aaa-01；轮次 2；工具调用 1");
+    assert.equal(singleMd.summary, "会话 session-aaa-01；包含工具调用：是");
     const singleJsonRendered = renderStatsJson(single);
     const singleJson = JSON.parse(singleJsonRendered.content) as {
       session: Record<string, unknown>;
-      excludedMetricSessions: number;
     };
     assert.equal(singleJson.session.id, "session-aaa-01");
-    // 单会话恒为 0，但字段必须存在，否则两种 kind 的 json 形状不一致。
-    assert.equal(singleJson.excludedMetricSessions, 0);
+    assert.equal(singleJson.session.hasToolCalls, true);
     assert.equal(singleJsonRendered.summary, singleMd.summary);
   });
 
-  it("stats 单会话：blank/turns 不可用与空值口径（不静默显 -/0）", () => {
+  it("stats 单会话：blank 不可用与空值口径", () => {
     const singleStats: SingleSessionStats = {
       id: "session-aaa-01",
       title: field<string>(null, true),
       blank: field<boolean>(null, true),
-      turns: field<number>(null, true),
-      steps: field<number>(null, true),
       agentPreset: field<string>(null, true),
       model: field<ModelView>(null, true),
-      tokens: field<TokenTotals>(null, true),
-      toolCalls: 0,
+      hasToolCalls: false,
       createdAt: 0,
       lastActivityAt: 0,
       metadataAvailable: false,
@@ -233,31 +197,26 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
       kind: "single",
       sessionCount: 1,
       blankCount: 0,
-      turns: 0,
-      steps: 0,
-      toolCalls: 0,
-      tokens: { uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      hasToolCalls: false,
       earliestCreatedAt: 0,
       latestActivityAt: 0,
       totalSizeBytes: 0,
       unavailable: [],
-      excludedMetricSessions: 0,
       coverage: coverage({ includedCount: 1 }),
       scan: scanSummary(),
       single: singleStats,
     };
     const unavailableMd = renderStatsMd(base);
     assert.equal(unavailableMd.content.includes("- 空会话：元数据不可用"), true);
-    assert.equal(unavailableMd.summary, "会话 session-aaa-01；轮次 元数据不可用；工具调用 0");
+    assert.equal(unavailableMd.summary, "会话 session-aaa-01；包含工具调用：否");
 
     const nullStats: SingleSessionStats = {
       ...singleStats,
       blank: field<boolean>(null, false),
-      turns: field<number>(null, false),
     };
     const nullMd = renderStatsMd({ ...base, single: nullStats });
     assert.equal(nullMd.content.includes("- 空会话：-"), true);
-    assert.equal(nullMd.summary, "会话 session-aaa-01；轮次 -；工具调用 0");
+    assert.equal(nullMd.summary, "会话 session-aaa-01；包含工具调用：否");
   });
 
   it("check md 与 JSON（含异常展开与结论行）", () => {
