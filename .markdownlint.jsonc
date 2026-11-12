@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/DavidAnson/markdownlint/main/schema/markdownlint-config-schema.json",
-  "comment": "session-reader 技能基线——与 dsh 全局基线（~/.dsh/全局规范/配置文件模板/.markdownlint.jsonc）逐条一致，只允许在此基础上更严格；本技能全部 md 产物必须真实通过本配置（无文件内豁免、无配置放宽）。",
+  "comment": "session-reader 技能基线——与 dsh 全局基线（~/.dsh/preset-plugins/全局规范/配置文件模板/.markdownlint.jsonc）逐条一致，只允许在此基础上更严格；本技能全部 md 产物必须真实通过本配置（无文件内豁免、无配置放宽）。",
   "default": true,
   "MD001": true,
   "MD003": { "style": "atx" },

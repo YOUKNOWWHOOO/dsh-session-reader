@@ -22,6 +22,7 @@
 
 ### Changed
 
+- 完善调用说明，区分 PowerShell 与外层程序调用环境，说明 `String.raw` 和路径参数引用。
 - 目标 dsh 基线更新为 `0.2.2-rc.1`：会话日志格式 `currentVersion` 仍为 4、投影缓存记录版本仍为 7，`readHeader` 与 `createRestore` 的签名与返回形态未变，因此读取方式不变。上游在该版本把 Session 投影注册改为异步句柄，那只影响注册方，不改变本技能读取投影缓存行的方式。
 - 运行载体改为技能自带的统一入口 `scripts/session-reader.ps1`：调用方不再设置 `DSH_DESKTOP_NODE_EXECUTABLE`、不再手写桌面版安装路径，也不需要知道产品目录名。入口脚本按结构定位唯一的桌面版安装，以 Electron-as-Node 方式启动桌面可执行文件，并用参数数组把全部参数逐字转发给 CLI。定位不到或候选不唯一时以 `错误: 内部错误（…）`、退出 3 显式失败，不回退到系统 Node、`.cmd` 垫片或其它目录。
 - 官方格式库的默认锚点改为按结构定位：在 `%LOCALAPPDATA%\Programs` 的直接子目录中取 `resources\app.asar\dsh\node_modules` 同时含 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-session-format-catalog` 的那一棵，必须恰好一棵；文档与错误文案都不再写死桌面版安装目录名。理由不变，即桌面安装归档是库的唯一权威位置，npm 缓存的 npx 安装树与 `<dsh-home>\profiles\node_modules` 只取决于某次安装或运行的历史痕迹，存在性与版本都随本机状态漂移。锚点不成立或候选不唯一时退出 3 并说明。`--lib-root` 仍是显式覆盖入口，语义与取值约束不变。

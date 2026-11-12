@@ -16,16 +16,30 @@ description: 当需要查看、列出、检索、查看概况或校验本机 dsh
 入口 `scripts/session-reader.ps1` 自动定位桌面安装，调用方无需设置环境变量。下面的 `<skill_dir>` 是技能目录的绝对路径，`<project_tmp>` 是项目临时目录。先定位会话，再查看导出规模和正文：
 
 ```powershell
-& "<skill_dir>\scripts\session-reader.ps1" list --output-dir <project_tmp>
-& "<skill_dir>\scripts\session-reader.ps1" show last --output-dir <project_tmp> --probe
-& "<skill_dir>\scripts\session-reader.ps1" show last --output-dir <project_tmp>
+& "<skill_dir>\scripts\session-reader.ps1" list --output-dir "<project_tmp>"
+& "<skill_dir>\scripts\session-reader.ps1" show last --output-dir "<project_tmp>" --probe
+& "<skill_dir>\scripts\session-reader.ps1" show last --output-dir "<project_tmp>"
 ```
 
-用户未指定参数时优先使用默认值。PowerShell 特殊字符须按 PowerShell 规则引用。
+可在 PowerShell 终端、脚本或当前可用的 PowerShell 执行工具中调用入口。用户未指定选项时使用默认值，脚本路径和路径参数须按 PowerShell 规则引用。
+
+通过 JavaScript 或 TypeScript 构造命令文本时，用 `String.raw` 模板字面量保留反斜杠；其它语言按自身字符串规则保留命令原文。
+
+例如，在 `run_code` 中通过 `tools.pwsh` 调用：
+
+```typescript
+const result = await tools.pwsh({
+  description: "读取指定会话的默认历史",
+  command: String.raw`& '<skill_dir>\scripts\session-reader.ps1' show <session_id> --output-dir '<project_tmp>'`,
+});
+console.log(JSON.stringify(result));
+```
+
+执行前将占位符替换为实际值，`<session_id>` 为要读取的会话标识。
 
 ## 命令与选项
 
-调用形式为 `& "<skill_dir>\scripts\session-reader.ps1" <命令> [位置参数] --output-dir <目录> [选项]`。
+调用形式为 `& "<skill_dir>\scripts\session-reader.ps1" <命令> [位置参数] --output-dir "<目录>" [选项]`。
 
 | 命令 | 用途与位置参数 | 格式 | 范围与子代理 |
 | --- | --- | --- | --- |
