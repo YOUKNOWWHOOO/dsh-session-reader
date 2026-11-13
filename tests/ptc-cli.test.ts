@@ -10,7 +10,7 @@ import { type FixtureEvent, writeFixtureHome } from "./fixtures.ts";
 const root = fileURLToPath(new URL("./.tmp/", import.meta.url));
 mkdirSync(root, { recursive: true });
 const temp = mkdtempSync(join(root, "ptc-cli-"));
-const script = fileURLToPath(new URL("../scripts/session-reader.ps1", import.meta.url));
+const script = fileURLToPath(new URL("../scripts/run-session-reader.ts", import.meta.url));
 after(() => rmSync(temp, { recursive: true, force: true }));
 
 type Mode = "standard" | "cordis" | "ptc" | "dsh-custom-ptc";
@@ -186,10 +186,8 @@ function fixture(mode: Mode): { home: string; id: string } {
 function runCli(home: string, args: string[], format: string) {
   const out = join(home, "output");
   return spawnSync(
-    "pwsh",
+    "node",
     [
-      "-NoProfile",
-      "-File",
       script,
       ...args,
       "--dsh-home",

@@ -388,18 +388,11 @@ function formatOptionLine(spec: OptionSpec): string {
 }
 
 /** 帮助文本里的调用入口（相对技能目录，与 `SKILL.md` 的命令块同源）。 */
-const USAGE_ENTRY = '& "<skill_dir>\\scripts\\session-reader.ps1"';
+const USAGE_ENTRY = 'node "<skill_dir>/scripts/run-session-reader.ts"';
 
-/**
- * 总帮助与子命令帮助共用的执行载体说明。
- *
- * 用法行必须写技能自带的 PowerShell 入口脚本，而不是 `node <脚本>`：官方格式库位于桌面版安装
- * 归档 `app.asar` 的虚拟路径内，只有桌面版 Electron-as-Node 能解析，PATH 中的系统 Node 解析不了；
- * 而"以 Electron-as-Node 启动本脚本"这一动作由入口脚本完成，调用方不需要自己拼环境变量。
- * 因此帮助只暴露入口脚本，并在此说明它负责的事情与 `--lib-root` 的适用范围。
- */
+/** Node.js 入口启动桌面运行时，后者负责解析官方格式库所在的归档路径。 */
 const DESKTOP_NODE_NOTE =
-  "本技能的唯一调用入口是 scripts/session-reader.ps1，它自行定位桌面版安装，以 Electron-as-Node 方式启动本脚本，并把全部参数原样转发。PATH 中的系统 Node 解析不了 app.asar 内的虚拟路径（existsSync 对归档内路径恒为 false），默认锚点下无法加载官方格式库。--lib-root 只用于开发期指向依赖闭包完整的 node_modules。";
+  "使用 Node.js 24 启动入口，入口以桌面版 Electron-as-Node 运行会话读取程序。--lib-root 可指定依赖完整的 node_modules。";
 
 /** 构建子命令帮助文本（与选项表同源）。 */
 export function buildCommandHelp(command: CommandSpec): string {

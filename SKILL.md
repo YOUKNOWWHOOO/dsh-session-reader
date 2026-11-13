@@ -7,39 +7,41 @@ description: 当需要查看、列出、检索、查看概况或校验本机 dsh
 
 ## 用途与数据边界
 
-读取、列出、检索、查看概况和校验本机 DeepSeek Harness（dsh）会话，包括子代理会话。需要 Windows、pwsh 7 或更高版本，以及已安装的桌面版 dsh。技能只读、离线，不启动 dsh、不调用模型、不读取凭据，只向指定的输出目录写文件。
+读取、列出、检索、查看概况和校验本机 DeepSeek Harness（dsh）会话，包括子代理会话。运行需要 Windows、Node.js 24 和已安装的桌面版 dsh。技能只读、离线，不启动 dsh、不调用模型、不读取凭据，只向指定的输出目录写文件。
 
 支持当前官方 `standard`、`cordis`（创造模式）、`ptc` 和本机 `dsh-custom-ptc` 预设的当前格式日志；旧日志不迁移。非文本内容只在原始事件中保留图片块和引用，不读取附件、不执行 OCR、不展示图片本体。不读取远端会话，也不提供实时事件流。
 
 ## 开始使用
 
-入口 `scripts/session-reader.ps1` 自动定位桌面安装，调用方无需设置环境变量。下面的 `<skill_dir>` 是技能目录的绝对路径，`<project_tmp>` 是项目临时目录。先定位会话，再查看导出规模和正文：
+唯一入口 `scripts/run-session-reader.ts` 自动定位桌面安装并启动会话读取程序，调用方无需设置环境变量。下面的 `<skill_dir>` 是技能目录的绝对路径，`<project_tmp>` 是项目临时目录。先定位会话，再查看导出规模和正文：
 
-```powershell
-& "<skill_dir>\scripts\session-reader.ps1" list --output-dir "<project_tmp>"
-& "<skill_dir>\scripts\session-reader.ps1" show last --output-dir "<project_tmp>" --probe
-& "<skill_dir>\scripts\session-reader.ps1" show last --output-dir "<project_tmp>"
+```text
+node "<skill_dir>/scripts/run-session-reader.ts" list --output-dir "<project_tmp>"
+node "<skill_dir>/scripts/run-session-reader.ts" show last --output-dir "<project_tmp>" --probe
+node "<skill_dir>/scripts/run-session-reader.ts" show last --output-dir "<project_tmp>"
 ```
 
-可在 PowerShell 终端、脚本或当前可用的 PowerShell 执行工具中调用入口。用户未指定选项时使用默认值，脚本路径和路径参数须按 PowerShell 规则引用。
+用户未指定选项时使用默认值。
 
-通过 JavaScript 或 TypeScript 构造命令文本时，用 `String.raw` 模板字面量保留反斜杠；其它语言按自身字符串规则保留命令原文。
+可通过当前 Harness 的 `run_code` 调用参数化进程工具：
 
-例如，在 `run_code` 中通过 `tools.pwsh` 调用：
-
-```typescript
-const result = await tools.pwsh({
-  description: "读取指定会话的默认历史",
-  command: String.raw`& '<skill_dir>\scripts\session-reader.ps1' show <session_id> --output-dir '<project_tmp>'`,
-});
-console.log(JSON.stringify(result));
+```json
+{
+  "description": "读取指定会话的默认历史",
+  "code": "return await tools.execute_process(input);",
+  "input": {
+    "description": "读取指定会话的默认历史",
+    "executable": "node",
+    "args": ["<skill_dir>/scripts/run-session-reader.ts", "show", "<session_id>", "--output-dir", "<project_tmp>"]
+  }
+}
 ```
 
-执行前将占位符替换为实际值，`<session_id>` 为要读取的会话标识。
+执行前将占位符替换为实际值，`<session_id>` 为要读取的会话标识。参数按值传递，不经过 shell。
 
 ## 命令与选项
 
-调用形式为 `& "<skill_dir>\scripts\session-reader.ps1" <命令> [位置参数] --output-dir "<目录>" [选项]`。
+调用形式为 `node "<skill_dir>/scripts/run-session-reader.ts" <命令> [位置参数] --output-dir "<目录>" [选项]`。
 
 | 命令 | 用途与位置参数 | 格式 | 范围与子代理 |
 | --- | --- | --- | --- |
@@ -85,7 +87,7 @@ console.log(JSON.stringify(result));
 - `--headers` 显示事件序号和本地时间；PTC 条目还显示调用和父调用标识。
 - `--truncate N` 按码点截断正文并加省略号，默认 0 表示不截断；头部和交接坐标不受影响。
 - `--turn <A-B|A>`、`--seq <A-B|A>` 按包含端点的区间筛选每个会话块，最小值分别为 1 和 0；同用取交集，子代理按自己的事件流计。
-- `--head N`、`--tail N` 分别取根会话时间线的前 N 条或后 N 条，0 表示不限。
+- `--head N`、`--tail N` 分别取根会话时间线的前 N 条或后 N 条，0 表示不限。每条由一个标签及其正文组成；助手正文、推理、原始工具和问答分别计条。
 - `--summary` 输出每轮内容大纲，代替时间线；大纲不含来源标注及问答条目。`--role`、`--thinking`、`--tools`、`--events`、`--headers` 同用时无效果；与 `--probe` 同用时按探测处理。
 - `--probe` 只输出头部与按同组选项完整导出的预计 UTF-8 字节数，不输出正文。
 

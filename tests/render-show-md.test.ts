@@ -17,12 +17,25 @@ import {
   assertDocumentShape,
   decodedFile,
   node,
+  RENDER_EVENTS,
   sessionEntry,
   showMd,
   showOptions,
 } from "./render-helpers.ts";
 
 describe("renderShowMd", () => {
+  it("同一助手事件的正文与推理分别参与首尾截取", () => {
+    const events = [RENDER_EVENTS[2]];
+    const head = showMd(node([], events), showOptions({ thinking: true, head: 1 })).content;
+    const tail = showMd(node([], events), showOptions({ thinking: true, tail: 1 })).content;
+    assert.equal(head.includes("**助手**：\n\n```text\n助手内容 ASSIST-TEXT\n```"), true);
+    assert.equal(head.includes("**推理**"), false);
+    assert.equal(tail.includes("**推理**：\n\n```text\n推理内容 THINK-TEXT\n```"), true);
+    assert.equal(tail.includes("**助手**"), false);
+    assert.equal(head.includes("显示 1 条时间线条目"), true);
+    assert.equal(tail.includes("显示 1 条时间线条目"), true);
+  });
+
   it("默认可见性：正文经围栏承载、推理/工具/事件隐藏并给出摘要", () => {
     const rendered = showMd(node(), showOptions());
     assertDocumentShape(rendered.content);
@@ -213,6 +226,29 @@ describe("renderShowMd", () => {
 });
 
 describe("renderShowMd 的问答条目", () => {
+  it("工具原始条目与问答条目独立截取，完整输出保持顺序和计数", () => {
+    for (const [seq, first, second] of [
+      [2, "**工具调用**", "**提问**"],
+      [3, "**工具结果**", "**回答**"],
+    ] as const) {
+      const base = { tools: true, seqRange: { from: seq, to: seq } };
+      const full = showMd(node([], askSamplePaired()), showOptions(base)).content;
+      const head = showMd(node([], askSamplePaired()), showOptions({ ...base, head: 1 })).content;
+      const tail = showMd(node([], askSamplePaired()), showOptions({ ...base, tail: 1 })).content;
+      assert.ok(full.indexOf(first) >= 0 && full.indexOf(first) < full.indexOf(second));
+      assert.equal(full.includes("显示 2 条时间线条目"), true);
+      assert.equal(head.includes(first), true);
+      assert.equal(head.includes(second), false);
+      assert.equal(tail.includes(first), false);
+      assert.equal(tail.includes(second), true);
+      for (const content of [head, tail]) {
+        assert.equal(content.includes("显示 1 条时间线条目"), true);
+        assert.equal(content.split("```text\n").length - 1, 1);
+        assert.equal(content.split("\n```\n").length - 1, 1);
+      }
+    }
+  });
+
   it("默认可见（不需要 --tools），且不计入隐藏的工具条目数", () => {
     const rendered = showMd(node([], askSamplePaired()), showOptions());
     assertDocumentShape(rendered.content);

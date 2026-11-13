@@ -255,6 +255,34 @@ export function showCases(): MatrixCase[] {
     cases.push(mcase(`show-md-range-${index}`, args, "md", null, 0));
   }
   cases.push(
+    mcase(
+      "show-md-mixed-head",
+      ["show", MAIN_ID, ...healthyBase(), "--seq", "4", "--thinking", "--head", "1"],
+      "md",
+      null,
+      0,
+    ),
+    mcase(
+      "show-md-mixed-tail",
+      ["show", MAIN_ID, ...healthyBase(), "--seq", "4", "--thinking", "--tail", "1"],
+      "md",
+      null,
+      0,
+    ),
+    mcase(
+      "show-md-ask-head",
+      ["show", ASK_PAIRED_ID, ...healthyBase(), "--seq", "2", "--tools", "--head", "1"],
+      "md",
+      null,
+      0,
+    ),
+    mcase(
+      "show-md-ask-tail",
+      ["show", ASK_PAIRED_ID, ...healthyBase(), "--seq", "3", "--tools", "--tail", "1"],
+      "md",
+      null,
+      0,
+    ),
     mcase("show-md-head-zero", ["show", MAIN_ID, ...healthyBase(), "--head", "0"], "md", null, 0),
     mcase("show-md-tail-zero", ["show", MAIN_ID, ...healthyBase(), "--tail", "0"], "md", null, 0),
     mcase(

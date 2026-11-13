@@ -135,6 +135,20 @@ before(() => {
 });
 
 describe("CLI 问答条目", () => {
+  it("--tools 下同一提问事件按展示条目截取", () => {
+    const head = showMd(PAIRED_ID, ["--tools", "--seq", "2", "--head", "1"]);
+    const tail = showMd(PAIRED_ID, ["--tools", "--seq", "2", "--tail", "1"]);
+    assert.equal(head.includes("**工具调用**"), true);
+    assert.equal(head.includes("**提问**"), false);
+    assert.equal(tail.includes("**工具调用**"), false);
+    assert.equal(tail.includes("**提问**"), true);
+    for (const content of [head, tail]) {
+      assert.equal(content.includes("显示 1 条时间线条目"), true);
+      assert.equal(content.split("```text\n").length - 1, 1);
+      assert.equal(content.split("\n```\n").length - 1, 1);
+    }
+  });
+
   it("默认参数下含 提问 与 回答，且不计入隐藏的工具条目数", () => {
     const content = showMd(PAIRED_ID);
     assert.equal(content.includes("**提问**：\n\n```text"), true);

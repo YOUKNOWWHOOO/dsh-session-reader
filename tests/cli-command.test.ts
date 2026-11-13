@@ -43,7 +43,10 @@ describe("CLI 帮助与参数校验", () => {
     ]) {
       const result = runCli(args);
       assert.equal(result.status, 0, `help 失败: ${args.join(" ")}`);
-      assert.match(result.stdout, /用法: & "<skill_dir>\\scripts\\session-reader\.ps1"/u);
+      assert.equal(
+        result.stdout.includes('用法: node "<skill_dir>/scripts/run-session-reader.ts"'),
+        true,
+      );
       assert.match(result.stdout, /Electron-as-Node/u);
     }
   });

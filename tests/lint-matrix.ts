@@ -4,7 +4,7 @@
 // 用法（Windows；桌面版 Electron-as-Node 原生执行 TypeScript）：
 //   <desktop_node> tests/lint-matrix.ts --workdir <工作目录> [--lint-config <markdownlint 配置>]
 //                             [--markdownlint-js <markdownlint-cli 入口 js>]
-//                             [--real-home <dsh 主目录>] [--skip-real]
+//                             [--real-home <dsh 主目录>]
 // 判据：脚本退出 0 当且仅当全部断言通过；md 产物 lint 必须退出 0 且 stdout/stderr 无输出。
 // lint 以参数数组直接调用 markdownlint-cli 的 JS 入口（不经 shell）；入口默认从 workdir 的
 // node_modules 链解析，解析失败时以显式错误要求 --markdownlint-js。
@@ -193,17 +193,12 @@ interface MatrixOptions {
   readonly lintConfig: string;
   readonly markdownlintJs: string | null;
   readonly realHome: string;
-  readonly skipReal: boolean;
 }
 
 function parseOptions(argv: readonly string[]): MatrixOptions | null {
   const values = new Map<string, string>();
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
-    if (token === "--skip-real") {
-      values.set(token, "true");
-      continue;
-    }
     if (
       token === "--workdir" ||
       token === "--lint-config" ||
@@ -226,7 +221,6 @@ function parseOptions(argv: readonly string[]): MatrixOptions | null {
     lintConfig: resolve(values.get("--lint-config") ?? DEFAULT_LINT_CONFIG),
     markdownlintJs: markdownlintJs === undefined ? null : resolve(markdownlintJs),
     realHome: resolve(values.get("--real-home") ?? join(homedir(), ".dsh")),
-    skipReal: values.get("--skip-real") === "true",
   };
 }
 
@@ -239,7 +233,7 @@ async function main(argv: readonly string[]): Promise<number> {
   const options = parseOptions(argv);
   if (options === null) {
     process.stderr.write(
-      "用法: <desktop_node> tests/lint-matrix.ts --workdir <目录> [--lint-config <配置>] [--markdownlint-js <入口>] [--real-home <dsh 主目录>] [--skip-real]\n",
+      "用法: <desktop_node> tests/lint-matrix.ts --workdir <目录> [--lint-config <配置>] [--markdownlint-js <入口>] [--real-home <dsh 主目录>]\n",
     );
     return 2;
   }
@@ -250,7 +244,7 @@ async function main(argv: readonly string[]): Promise<number> {
   ] as const) {
     if (!existsSync(path)) throw new Error(`${label}不存在: ${path}`);
   }
-  if (!options.skipReal && !existsSync(options.realHome)) {
+  if (!existsSync(options.realHome)) {
     throw new Error(`真实 dsh 主目录不存在: ${options.realHome}`);
   }
   const { healthyHome, brokenHome, outDir } = buildFixtureHomes(options.workdir);
@@ -280,9 +274,7 @@ async function main(argv: readonly string[]): Promise<number> {
     executeCase(ctx, item);
   }
 
-  if (!options.skipReal) {
-    await runRealCases(ctx, options);
-  }
+  await runRealCases(ctx, options);
 
   // 确定性：同一输入两次渲染（文件名除外）逐字节一致。
   // 两个命令各跑两次，因此 out 目录内会多出 4 个 md 产物；该数量由下面的常量与断言共同约束。
@@ -369,7 +361,7 @@ async function main(argv: readonly string[]): Promise<number> {
     workdir: options.workdir,
     lintConfig: options.lintConfig,
     markdownlintJs,
-    realHome: options.skipReal ? null : options.realHome,
+    realHome: options.realHome,
     counts: {
       cases: ctx.results.length,
       md: mdCount,

@@ -17,7 +17,7 @@
 
 dsh 把每一次会话记录成一组日志文件，位置在 dsh 主目录的 `sessions/` 下。一个会话占一个目录，日志是 zstd 压缩的 JSONL，每行一个事件：用户消息、助手消息、推理、工具调用与结果、系统提示词，以及轮次、模型请求、上下文压缩、审批与运行时注入等生命周期事件。子代理会话单独存放，通过父会话标识与主会话关联。
 
-dsh 自身不提供读取这些日志的命令，要查看一次会话只能手工定位目录、解压 zstd 帧、再逐行解析 JSON。本技能把这段过程收敛成五个命令（`list`、`show`、`search`、`stats`、`check`），把会话历史导出为 Markdown、JSON 与 JSONL 三种文件，供人阅读，也供程序或 agent 继续处理。
+本技能提供本机离线会话定位、导出、检索、概况与完整性检查，通过五个命令（`list`、`show`、`search`、`stats`、`check`）把会话历史导出为 Markdown、JSON 与 JSONL 文件，供人阅读，也供程序或 agent 继续处理。
 
 当前范围：
 
@@ -29,16 +29,16 @@ dsh 自身不提供读取这些日志的命令，要查看一次会话只能手�
 ## 适用环境
 
 - **平台**：Windows。技能的路径处理、产物文件名校验与文件移动语义都按 Windows 实现。
-- **执行载体**：技能自带的入口脚本 `scripts\session-reader.ps1`。它自行定位唯一的桌面版安装，以 Electron-as-Node 方式运行 `scripts/session-reader.ts`；脚本是 TypeScript（ESM），由该运行时原生类型剥离直接执行，没有构建步骤，`tsconfig.json` 只服务开发期类型检查。调用方不设置任何环境变量，也不手写桌面版安装路径。
+- **执行载体**：使用 Node.js 24 直接运行 `scripts/run-session-reader.ts`。入口自行定位唯一的桌面版安装，以 Electron-as-Node 方式运行 `scripts/session-reader.ts`。TypeScript 由运行时原生类型剥离执行，无需构建，`tsconfig.json` 用于独立类型检查。调用方不设置环境变量，也不手写桌面版安装路径。
 - **dsh 安装**：本机需有一份可用的 dsh 安装，它提供两样东西，即会话数据本身，以及随桌面版发运的官方会话格式库。
 - **会话日志格式**：支持当前官方格式及 PTC 子调用记录。来源与数据边界见 `SKILL.md` 的“用途与数据边界”。
-- **主目录**：默认取环境变量 `DSH_HOME`，未设置时取 `~/.dsh`，可用 `--dsh-home` 覆盖。该选项只决定数据来源，不改变官方格式库的位置与版本。
+- **主目录**：会话数据目录的选项与默认值见 [技能说明的通用选项](SKILL.md#通用选项)。
 
 ### 官方格式库的位置
 
 官方格式库随桌面版 dsh 一同安装，位于安装根下的 `resources\app.asar\dsh\node_modules`。安装根由入口脚本与 CLI 按结构定位，不在文档中写死目录名。
 
-该路径只有桌面版 Electron-as-Node 能读取。系统 Node 的 `existsSync` 对 `app.asar` 内路径恒为 false，因此用系统 Node 直接运行默认组合必然在加载格式库这一步失败；这种用法只适用于用 `--lib-root` 指向真实目录的开发场景。
+官方库由桌面版 Electron-as-Node 读取归档虚拟路径。系统 Node.js 24 运行启动入口，业务 CLI 则由入口启动的桌面运行时执行。
 
 技能默认以该锚点为唯一来源，不探测 npm 缓存、npx 安装树或 profile 依赖；定位失败时直接报错，不猜测也不回落。`--lib-root` 是唯一显式覆盖入口。锚点的判定要求见 `doc/开发规范.md` 的“兼容性要求”。
 
@@ -46,16 +46,16 @@ dsh 自身不提供读取这些日志的命令，要查看一次会话只能手�
 
 1. 本机已安装桌面版 DeepSeek Harness 并至少使用过一次，`~/.dsh/sessions/` 下有会话日志。
 1. 技能目录放在 `<dsh-home>/skills/session-reader/`，会话创建时它会被技能目录收录，模型可按名称加载。
-1. 调用技能自带的入口脚本 `scripts\session-reader.ps1`，调用形态为 `& "<skill_dir>\scripts\session-reader.ps1" <命令> [选项]`。入口脚本自行定位桌面版安装并启动 CLI，调用方不需要设置环境变量，也不需要填写任何安装路径。
-1. 全部命令必须显式指定 `--output-dir`，它没有默认值。惯例是指向项目临时目录。
+1. 安装 Node.js 24，以 `node "<skill_dir>/scripts/run-session-reader.ts" <命令> [选项]` 调用入口。入口自行定位桌面版安装并启动 CLI。
+1. 输出目录选项见 [技能说明的通用选项](SKILL.md#通用选项)。
 
 ## 最小可运行示例
 
-```powershell
-& "<skill_dir>\scripts\session-reader.ps1" list --output-dir .\tmp
+```text
+node "<skill_dir>/scripts/run-session-reader.ts" list --output-dir "<project_tmp>"
 ```
 
-命令把会话清单写入 `.\tmp`。命令、选项与输出契约的完整说明见 `SKILL.md`。
+命令把会话清单写入项目临时目录。命令、选项与输出契约的完整说明见 `SKILL.md`。
 
 ## 模块结构
 
@@ -64,10 +64,10 @@ SKILL.md                    技能说明，也是面向调用方的唯一契约�
 README.md                   本文件：项目定位、环境、安装运行与开发入口
 CHANGELOG.md                对外变更记录
 scripts/
-  session-reader.ps1        调用方入口：定位桌面版安装并原样转发参数
-  desktop-runtime.ps1       桌面安装定位与 Electron-as-Node 启动的单一实现
+  run-session-reader.ts     调用方入口：定位桌面版安装并原样转发参数
   session-reader.ts         CLI 入口：解析、校验、分发、写出产物
   lib/
+    desktop-runtime.ts      桌面安装定位与 Electron-as-Node 启动的单一实现
     decode.ts               官方格式库加载、事件解码与正文抽取出口
     frames.ts               物理层 zstd 帧扫描与逐帧解压
     paths.ts                官方格式库默认锚点、保留设备名与路径工具
@@ -85,29 +85,7 @@ doc/开发规范.md              开发、测试与维护的要求与验收标�
 
 ## 开发与校验链
 
-在技能目录下依次执行。开头几行从 `scripts\desktop-runtime.ps1` 取得桌面版执行载体的路径，并把 shim 需要的 `DSH_DESKTOP_NODE_EXECUTABLE` 设为同一个可执行文件；测试与门禁都经该载体运行。`npm ci` 安装开发依赖后，格式化、类型检查、静态分析与 lint 才可运行。测试与门禁需要真实官方格式库与真实会话。
-
-帮助检查调用技能自带的入口脚本 `scripts\session-reader.ps1`，与调用方实际使用的形态一致，不用桌面版 Node 直接运行 TypeScript 入口代替。PowerShell 静态分析传入的配置是 dsh 数据根下的 `preset-plugins/全局规范/配置文件模板/PSScriptAnalyzerSettings.psd1`，按绝对路径显式传入，本技能不另外维护项目级配置。
-
-```powershell
-. .\scripts\desktop-runtime.ps1
-$runtime = Get-DesktopRuntime
-$env:DSH_DESKTOP_NODE_EXECUTABLE = $runtime.ExecutablePath
-$desktopNode = $runtime.NodeCmdPath
-npm ci
-npm exec --yes=false --package=@biomejs/biome -- biome ci .
-npm exec --yes=false --package=typescript -- tsc --noEmit
-Invoke-ScriptAnalyzer -Path scripts -Recurse -Settings '<全局 PSScriptAnalyzer 基线配置文件的绝对路径>' -EnableExit
-& $desktopNode --test "tests/**/*.test.ts"
-& .\scripts\session-reader.ps1 --help
-foreach ($command in 'list', 'show', 'search', 'stats', 'check') { & .\scripts\session-reader.ps1 $command --help }
-& $desktopNode tests/lint-matrix.ts --workdir tests/.tmp/matrix --real-home $env:USERPROFILE\.dsh
-npm exec --yes=false --package=markdownlint-cli -- markdownlint --config .markdownlint.jsonc .
-```
-
-覆盖率门禁按 `doc/开发规范.md` 的“测试要求”执行，它与上面的 `--test` 命令共用 `tests/**/*.test.ts` 入口。
-
-门禁的 `--workdir` 必须指向临时位置，否则逐组合结果与合成夹具会写进技能目录。测试或门禁取不到官方格式库、真实会话时直接失败，不跳过。
+在技能目录下按 [开发规范的维护要求](doc/开发规范.md#维护要求) 依次执行校验链。测试与门禁需要真实官方格式库和真实会话。
 
 ## 文档入口
 

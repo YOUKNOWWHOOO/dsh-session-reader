@@ -298,7 +298,7 @@ function subagentCallEntry(event: EventRecord, options: ShowMdOptions): string[]
 }
 
 /**
- * 渲染一条时间线条目（标签行 ＋ 正文载体），或计入隐藏计数，或返回 null（该事件不产出条目）。
+ * 渲染事件产生的时间线条目，或计入隐藏计数。一个事件可以产生多条独立展示条目。
  *
  * 拆分动机：`--head`/`--tail` 按"呈现条目数"截取，而不是按"事件数"截取，`turn/start`、
  * `turn/end`、`session/title` 等事件不产生条目，若先按事件截取会出现"要 5 条却一条都没显示"。
@@ -313,10 +313,10 @@ function subagentCallEntry(event: EventRecord, options: ShowMdOptions): string[]
  * `已隐藏 N 条工具调用/结果`，那会让调用方以为问答条目也被藏起来了，而它其实就在下一行。
  * `--role` 只过滤对话消息，工具、事件与交接条目（含问答）不受影响。
  *
- * 默认排除的注入消息与调度回执由调用方计数并跳过（见 renderTimelineMd）：它们在此返回 null，
+ * 默认排除的注入消息与调度回执由调用方计数并跳过（见 renderTimelineMd）：它们不产出条目，
  * 若在本函数内计数，`--head`/`--tail` 的截取会让计数与"实际被跳过的事件数"脱节。
  */
-function timelineItem(
+function timelineItems(
   event: EventRecord,
   options: ShowMdOptions,
   hidden: HiddenCounts,
@@ -326,97 +326,105 @@ function timelineItem(
   handoffNotice: HandoffNoticeEntry | null,
   handoffPrompt: HandoffPromptEntry | null,
   isSubagentTask: boolean,
-): string[] | null {
+): string[][] {
   const type = eventType(event);
   const data = asRecord(event.data) ?? {};
   if (checkpoint !== null) {
     // 摘要条目的标签本身已表达来源（标准模式的压缩检查点），不再追加 `来源` 标注；
     // 它与 `**交接**` 一样不受 `--thinking`/`--tools`/`--events`/`--role` 控制。
-    return fencedItem(
-      `**${CONTEXT_CHECKPOINT_LABEL}**`,
-      event,
-      options,
-      truncateText(checkpoint.text, options.truncate),
-      false,
-    );
+    return [
+      fencedItem(
+        `**${CONTEXT_CHECKPOINT_LABEL}**`,
+        event,
+        options,
+        truncateText(checkpoint.text, options.truncate),
+        false,
+      ),
+    ];
   }
   if (handoffNotice !== null) {
     // 交接通知给出交接文件的位置与读取要求，不是用户输入，也不是交接内容本身。
-    return fencedItem(
-      `**${HANDOFF_NOTICE_LABEL}**`,
-      event,
-      options,
-      truncateText(handoffNotice.text, options.truncate),
-      false,
-    );
+    return [
+      fencedItem(
+        `**${HANDOFF_NOTICE_LABEL}**`,
+        event,
+        options,
+        truncateText(handoffNotice.text, options.truncate),
+        false,
+      ),
+    ];
   }
   if (handoffPrompt !== null) {
     // 交接维护指令是协议提示词，不是用户输入；与 `**交接**` 同一可见性。
-    return fencedItem(
-      `**${HANDOFF_PROMPT_LABEL}**`,
-      event,
-      options,
-      truncateText(handoffPrompt.text, options.truncate),
-      false,
-    );
+    return [
+      fencedItem(
+        `**${HANDOFF_PROMPT_LABEL}**`,
+        event,
+        options,
+        truncateText(handoffPrompt.text, options.truncate),
+        false,
+      ),
+    ];
   }
   if (isSubagentTask) {
     // 子代理会话的首条任务消息由父代理写入，来源字段是 user；标签表达真实来源。
     const text = userMessageText(event);
-    if (text.length === 0) return null;
-    return fencedItem(
-      `**${SUBAGENT_TASK_LABEL}**`,
-      event,
-      options,
-      truncateText(text, options.truncate),
-      false,
-    );
+    if (text.length === 0) return [];
+    return [
+      fencedItem(
+        `**${SUBAGENT_TASK_LABEL}**`,
+        event,
+        options,
+        truncateText(text, options.truncate),
+        false,
+      ),
+    ];
   }
   if (handoff !== null) {
     // 交接条目只给三行结构事实（轮次、历史替换区间、前置助手消息与交接通知的定位）。交接内容以通知
     // 所指的文件为准，交接事件与通知都不承载文件全文，因此这里不复述正文、也不据结构推断文件内容；
     // 结构行是回溯坐标，属于固定词表的元数据，不参与 `--truncate`。
-    return fencedItem(`**${HANDOFF_LABEL}**`, event, options, handoff.structure);
+    return [fencedItem(`**${HANDOFF_LABEL}**`, event, options, handoff.structure)];
   }
-  const items: string[] = [];
+  const items: string[][] = [];
   if (type === "user/message") {
-    if (options.role === "assistant") return null;
+    if (options.role === "assistant") return [];
     // 注入消息默认不呈现；`--events` 是显式恢复入口（与 `**系统消息**` 同一开关语义）。
-    if (isInjectedUserMessage(event) && !options.events) return null;
+    if (isInjectedUserMessage(event) && !options.events) return [];
     const text = userMessageText(event);
-    if (text.length === 0) return null;
-    return fencedItem("**用户**", event, options, truncateText(text, options.truncate));
+    if (text.length === 0) return [];
+    return [fencedItem("**用户**", event, options, truncateText(text, options.truncate))];
   }
   if (type === "assistant/message") {
-    if (options.role === "user") return null;
+    if (options.role === "user") return [];
     const content = asRecord(data.message)?.content;
     const text = messageTextFromBlocks(content);
     if (text.length > 0) {
-      items.push(...fencedItem("**助手**", event, options, truncateText(text, options.truncate)));
+      items.push(fencedItem("**助手**", event, options, truncateText(text, options.truncate)));
     }
     const reasoning = reasoningFromBlocks(content);
     if (reasoning.length > 0) {
       if (options.thinking) {
         items.push(
-          ...fencedItem("**推理**", event, options, truncateText(reasoning, options.truncate)),
+          fencedItem("**推理**", event, options, truncateText(reasoning, options.truncate)),
         );
       } else {
         hidden.reasoning += 1;
       }
     }
-    return items.length > 0 ? items : null;
+    return items;
   }
   if (isToolCallEvent(event)) {
     // 子代理相关工具（创建工具的 `subagent`/`subagent_fork`、发消息的 `send_message`）产出**专用条目**
     // （任务正文或消息正文），不再产出原始工具条目：同一调用只呈现一次，且呈现的是调用方要读的内容。
     // 因此该分支不受 `--tools`/`--role` 控制，与问答条目的处理同构。
     const subagentEntry = subagentCallEntry(event, options);
-    if (subagentEntry !== null) return subagentEntry;
+    if (subagentEntry !== null) return [subagentEntry];
     if (options.tools) {
       const name = readString(data, "name") ?? EMPTY_VALUE;
       const argumentsText = toolCallArgumentsText(event) ?? "";
       items.push(
-        ...fencedItem(
+        fencedItem(
           `**工具调用**（${inlineValue(name)}）`,
           event,
           options,
@@ -434,7 +442,7 @@ function timelineItem(
       // 统一由 toolResultIsError 实现，保证各输出路径的错误态一致。
       const isError = toolResultIsError(event);
       items.push(
-        ...fencedItem(
+        fencedItem(
           `**工具结果**${isError ? "（错误）" : ""}`,
           event,
           options,
@@ -447,29 +455,33 @@ function timelineItem(
   } else if (type === "system/message") {
     if (!options.events) {
       hidden.events += 1;
-      return null;
+      return [];
     }
-    return fencedItem(
-      "**系统消息**",
-      event,
-      options,
-      truncateText(textFromBlocks(asRecord(data.message)?.content), options.truncate),
-    );
+    return [
+      fencedItem(
+        "**系统消息**",
+        event,
+        options,
+        truncateText(textFromBlocks(asRecord(data.message)?.content), options.truncate),
+      ),
+    ];
   } else {
     if (!options.events) {
       hidden.events += 1;
-      return null;
+      return [];
     }
     // 事件载荷的截断口径与其它文本一致：由 `--truncate` 单独决定，`0` 即不截断。
     const payload = truncateText(eventDataJson(event), options.truncate);
-    return [`${labelLine("**事件**", event, options)}${inlineValue(type)} ${inlineValue(payload)}`];
+    return [
+      [`${labelLine("**事件**", event, options)}${inlineValue(type)} ${inlineValue(payload)}`],
+    ];
   }
   if (ask !== null) {
     items.push(
-      ...fencedItem(`**${ask.label}**`, event, options, truncateText(ask.text, options.truncate)),
+      fencedItem(`**${ask.label}**`, event, options, truncateText(ask.text, options.truncate)),
     );
   }
-  return items.length > 0 ? items : null;
+  return items;
 }
 
 /**
@@ -492,8 +504,8 @@ function askEntriesByEvent(analysis: AskUserAnalysis): ReadonlyMap<EventRecord, 
  * 孤立标签行或无标签围栏块，且说明行的计数与实物不符（`shownItems` 因此按条目计数）。
  * `head` 与 `tail` 互斥由 CLI 校验保证，此处按 head 优先处理，不做静默合并。
  *
- * 注入消息与调度回执的计数在本函数内完成，而不是在 `timelineItem` 内：两者都"不产出条目"，
- * 计数必须覆盖**全部**被跳过的事件；若放进 `timelineItem`，`--head`/`--tail` 截断之后的
+ * 注入消息与调度回执的计数在本函数内完成，而不是在 `timelineItems` 内：两者都"不产出条目"，
+ * 计数必须覆盖**全部**被跳过的事件；若放进 `timelineItems`，`--head`/`--tail` 截断之后的
  * 循环次数会变少，计数随之偏小，摘要行就会与实际排除量矛盾。
  */
 function renderTimelineMd(
@@ -520,18 +532,19 @@ function renderTimelineMd(
       hidden.receipts += 1;
       continue;
     }
-    const item = timelineItem(
-      event,
-      options,
-      hidden,
-      askEntries.get(event) ?? null,
-      handoffEntries.get(event) ?? null,
-      context.checkpoints.get(event) ?? null,
-      context.handoffNotices.get(event) ?? null,
-      context.handoffPrompts.get(event) ?? null,
-      context.subagentTask === event,
+    items.push(
+      ...timelineItems(
+        event,
+        options,
+        hidden,
+        askEntries.get(event) ?? null,
+        handoffEntries.get(event) ?? null,
+        context.checkpoints.get(event) ?? null,
+        context.handoffNotices.get(event) ?? null,
+        context.handoffPrompts.get(event) ?? null,
+        context.subagentTask === event,
+      ),
     );
-    if (item !== null) items.push(item);
   }
   let shown = items;
   if (limitItems && options.head > 0) {

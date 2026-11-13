@@ -205,7 +205,10 @@ describe("parseCommandLine", () => {
 
   it("帮助文本与选项表同源", () => {
     const listHelp = buildCommandHelp(COMMANDS[0]);
-    assert.match(listHelp, /用法: & "<skill_dir>\\scripts\\session-reader\.ps1" list/u);
+    assert.equal(
+      listHelp.includes('用法: node "<skill_dir>/scripts/run-session-reader.ts" list'),
+      true,
+    );
     assert.match(listHelp, /--output-dir/u);
     assert.match(listHelp, /选项终止符/u);
     // 帮助必须如实说明两个选项的真实生效范围：`--full` 只作用于 md（与 json 同用时被接受但无效果），
@@ -213,7 +216,10 @@ describe("parseCommandLine", () => {
     assert.match(listHelp, /仅对 md 生效，与 --format json 同用时被接受但无效果/u);
     assert.match(listHelp, /官方格式库解析锚点（显式覆盖）/u);
     const general = buildGeneralHelp();
-    assert.match(general, /用法: & "<skill_dir>\\scripts\\session-reader\.ps1" <命令> \[选项\]/u);
+    assert.equal(
+      general.includes('用法: node "<skill_dir>/scripts/run-session-reader.ts" <命令> [选项]'),
+      true,
+    );
     for (const command of COMMANDS) assert.equal(general.includes(command.name), true);
     assert.match(general, /选项终止符/u);
     for (const text of [listHelp, general]) assert.match(text, /Electron-as-Node/u);

@@ -241,6 +241,20 @@ export function checkMarkdownStructure(
   }
   if (fence !== null) fail("围栏未闭合");
   if (headingCount !== 2) fail(`H1 数量异常（期望 1，实际 ${headingCount - 1}）`);
+  const expectedLabels: Record<string, string> = {
+    "show-md-mixed-head": "助手",
+    "show-md-mixed-tail": "推理",
+    "show-md-ask-head": "工具调用",
+    "show-md-ask-tail": "回答",
+  };
+  const expectedLabel = expectedLabels[caseId];
+  if (expectedLabel !== undefined) {
+    const labels = body.filter((line) => LABEL_LINE.test(line));
+    if (labels.length !== 1 || !labels[0].startsWith(`**${expectedLabel}**`)) {
+      fail(`截取条目不符合预期：${expectedLabel}`);
+    }
+    if (!content.includes("显示 1 条时间线条目")) fail("截取条目计数不符合预期");
+  }
 }
 
 // ------------------------- JSON / JSONL 回归 -------------------------

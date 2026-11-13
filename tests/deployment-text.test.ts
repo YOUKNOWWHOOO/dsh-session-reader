@@ -13,7 +13,7 @@ import {
 } from "../scripts/lib/deployment-text.ts";
 
 const INJECTION_OPEN = '<dsh-injection kind="time-context" src="time-context" id="abc">';
-const RESULT_OPEN = '<dsh-result tool="pwsh" call="call-1">';
+const RESULT_OPEN = '<dsh-result tool="execute_process" call="call-1">';
 const MESSAGE_TS = "2026-10-29T22:59:57+08:00";
 const MESSAGE_OPEN = `<dsh-message role="user" id="abcdef12" ts="${MESSAGE_TS}">`;
 const ASSISTANT_OPEN = `<dsh-message role="assistant" id="abcdef12" ts="${MESSAGE_TS}">`;
