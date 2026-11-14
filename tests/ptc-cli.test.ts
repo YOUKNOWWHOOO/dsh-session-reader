@@ -118,7 +118,11 @@ function fixture(mode: Mode): { home: string; id: string } {
         step: 1,
         callId,
         name: "run_code",
-        arguments: JSON.stringify({ code, description: "fixture" }),
+        arguments: JSON.stringify(
+          mode === "dsh-custom-ptc"
+            ? { code, description: "fixture", input: {} }
+            : { code, description: "fixture" },
+        ),
       },
       "append",
     );
