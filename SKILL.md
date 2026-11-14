@@ -30,7 +30,6 @@ node "<skill_dir>/scripts/run-session-reader.ts" show last --output-dir "<projec
   "description": "读取指定会话的默认历史",
   "code": "return await tools.execute_process(input);",
   "input": {
-    "description": "读取指定会话的默认历史",
     "executable": "node",
     "args": ["<skill_dir>/scripts/run-session-reader.ts", "show", "<session_id>", "--output-dir", "<project_tmp>"]
   }
