@@ -3,7 +3,9 @@ import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 
 const npmCliPath = join(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
-const result = spawnSync(process.execPath, [npmCliPath, ...process.argv.slice(2)], { stdio: "inherit" });
+const result = spawnSync(process.execPath, [npmCliPath, ...process.argv.slice(2)], {
+  stdio: "inherit",
+});
 
 if (result.error) {
   console.error(result.error.message);
