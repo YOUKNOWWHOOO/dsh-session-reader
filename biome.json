@@ -12,6 +12,19 @@
       "preset": "recommended"
     }
   },
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "yaml": {
+    "formatter": {
+      "enabled": false
+    },
+    "linter": {
+      "enabled": false
+    }
+  },
   "files": {
     "includes": ["**", "!tests/.tmp", "!tmp"]
   },
