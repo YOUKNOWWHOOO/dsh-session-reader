@@ -35,19 +35,17 @@ export interface SourceAttribution {
  *
  * 词表的来源分三层，均取自本机安装的官方包（下列文件为实测位置；不写行号，行号会随官方包升级漂移）。
  *
- * 其一，`MessageSourceMap` 本身。**桌面安装不发运任何 `.d.ts`**：`app.asar` 内的
- * `@deepseek-ai` 作用域按文件名后缀统计，`.d.ts` 为 0，类型文本以各包 `lib\typert.host.js`
- * 里的 `declaration` 字符串承载。因此本词表的类型依据只能取该字段，不能引用任何 `.d.ts`
- * 路径。`dsh-llm\lib\typert.host.js` 的 `MessageSourceMap` 声明共 23 个键：
- * `user`、`model`、`tool`、`system-prompt`、`model-selection`、`runtime-context`、
- * `working-directory`、`user-approval`、`ptc-mode`、`tool-registry`、`user-rpc`、
- * `agent-message`、`subagent-settled`、`skill-invocation`、`compact-checkpoint`、
- * `cordis-host-runner`、`team-message`、`user-question-reply`、`goal`、`plan-mode`、
- * `schedule`、`session-reference`、`webhook`。同一份 23 键声明在 12 个包里逐字重复
- * （`dsh-agent-preset-registry`、`dsh-api-session-controller`、`dsh-api-terminal-controller`、
- * `dsh-client-file-upload`、`dsh-commands`、`dsh-cordis-host-runner`、`dsh-goal`、`dsh-llm`、
- * `dsh-permission-presets`、`dsh-session-reference`、`dsh-subagent`、`dsh-user-questions`），
- * 12 份并集仍是这 23 个键，说明它是随构建摊平的同一份聚合声明，不是各包分别增补。
+ * 其一，`MessageSourceMap` 本身。**桌面安装不发运 `.d.ts`**：`app.asar` 内的
+ * `@deepseek-ai` 作用域没有这类文件，类型文本以各包 `lib\typert.host.js` 里的
+ * `declaration` 字符串承载。因此本词表的类型依据只能取该字段，不能引用任何 `.d.ts`
+ * 路径。`dsh-llm\lib\typert.host.js` 的 `MessageSourceMap` 声明按顺序包含下列键：
+ * `user`、`model`、`tool`、`system-prompt`、`model-selection`、`tool-registry`、
+ * `action-cards`、`runtime-context`、`user-rpc`、`working-directory`、`user-approval`、
+ * `agent-message`、`subagent-settled`、`skill-invocation`、`ptc-mode`、
+ * `compact-checkpoint`、`cordis-host-runner`、`user-question-reply`、`team-message`、
+ * `goal`、`plan-mode`、`schedule`、`session-reference`、`webhook`。同一份声明在多个
+ * 官方包里逐字重复，各份的键名与顺序完全一致，说明它是随构建摊平的同一份聚合声明，
+ * 不是各包分别增补。本技能只把其中一部分列为裸写取值，其余键仍走载体分支。
  *
  * 其二，**不在**上述声明里、但属官方承认合法取值的：`plugin`（历史取值，只出现在迁移适配器
  * 与持久化 worker 的取值白名单里）、`skill-catalog`（`dsh-tool-skill` 等包使用）、
@@ -63,7 +61,7 @@ export interface SourceAttribution {
  * 原样呈现，这正是设计意图。
  */
 const KNOWN_KINDS: readonly string[] = [
-  // 官方 `MessageSourceMap` 声明里的取值（该声明共 23 键，见上方注释）。
+  // 官方 `MessageSourceMap` 声明里的取值（本技能只裸写其中一部分，完整键名见上方注释）。
   "user",
   "model",
   "tool",
