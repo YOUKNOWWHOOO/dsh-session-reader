@@ -160,7 +160,10 @@ export const RENDER_EVENTS: Record<string, unknown>[] = [
   { type: "turn/end", seq: 8, time: 18, data: { turn: 1 } },
 ];
 
-export function decodedFile(events: Record<string, unknown>[] = RENDER_EVENTS): DecodedSessionFile {
+export function decodedFile(
+  events: Record<string, unknown>[] = RENDER_EVENTS,
+  decodedOverrides: Partial<DecodedSessionFile["decoded"]> = {},
+): DecodedSessionFile {
   return {
     decoded: {
       header: HEADER,
@@ -170,6 +173,7 @@ export function decodedFile(events: Record<string, unknown>[] = RENDER_EVENTS): 
       lineCount: events.length + 1,
       eventLineCount: events.length,
       parsedEventCount: events.length,
+      ...decodedOverrides,
     },
     frames: 3,
     tornStart: undefined,
@@ -208,10 +212,11 @@ export function sessionEntry(): SessionEntry {
 export function node(
   children: SessionNode[] = [],
   events?: Record<string, unknown>[],
+  decodedOverrides: Partial<DecodedSessionFile["decoded"]> = {},
 ): SessionNode {
   return {
     entry: sessionEntry(),
-    file: events === undefined ? decodedFile() : decodedFile(events),
+    file: decodedFile(events, decodedOverrides),
     children,
   };
 }
@@ -219,6 +224,7 @@ export function node(
 export function showOptions(overrides: Partial<ShowMdOptions> = {}): ShowMdOptions {
   return {
     summary: false,
+    includeAgentComm: false,
     role: null,
     thinking: false,
     tools: false,

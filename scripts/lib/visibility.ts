@@ -1,8 +1,6 @@
-// 用途：默认参数下的"哪些事件进入产物"判定的唯一真值源，框架与插件自动注入的消息、框架事件、
-// 工具调度回执一律不进默认产物；只有携带真实交流内容的消息才进。
-// 主要入口：isInjectedUserMessage（注入消息判定）、isVisibleEvent（默认可见性判定）、
-// isSubagentCreationTool（子代理创建工具名判定）、collectSubagentReplyCallIds（子代理调用回执的
-// 识别集合）、countExcludedInjections（排除计数）。
+// 用途：默认参数下"哪些事件进入产物"的唯一真值源。默认排除三类：框架与插件注入、子代理调度回执、
+// 结构化代理通信。通信开关控制第三类；开关关闭时 `--tools` 不恢复通信，打开时发送结果仍由 `--tools` 控制。
+// 主要入口：buildDefaultViewFilter、defaultExclusionOf、projectAssistantContent 与排除计数。
 // 设计约束：
 // 1. 判据只能是日志字段（`user/message` 的 `data.source.kind`、事件 type、普通工具与 PTC 子调用的
 //    名称和配对标识），禁止任何文本匹配。理由：同一注入换个文案就会漏；`<dsh-injection …>` 由多种注入
@@ -18,12 +16,17 @@ import {
   eventType,
   isToolCallEvent,
   isToolResultEvent,
+  messageTextFromBlocks,
   readString,
+  reasoningFromBlocks,
+  type ToolCallBlock,
+  textFromBlocks,
+  toolCallsFromBlocks,
   toolEventCallId,
 } from "./decode.ts";
 
 /**
- * 默认保留的 `user/message` 来源种类。
+ * 不作为一般注入排除的 `user/message` 来源种类；代理来源另受通信开关控制。
  *
  * 每一条的存在理由都是实测或官方契约的数据形态，不是推测：
  * - `user`：用户本人的输入。
@@ -53,8 +56,7 @@ import {
  *   `user-approval`（审批策略与请求）、`cordis-host-runner`。
  * - 目录与指令注入：`skill-catalog`、`skill-invocation`、`agent-instructions`（工作区指令文件）。
  * - 外部工具与钩子：`hooks-claude-code`、`hooks-codex`、`dsh-session-title-llm`。
- * - 基础成员与历史取值：`plugin`、`model`、`tool`、`system-prompt`、`session-reference`、
- *   `team-message`、`coordinator`、`subagent-report`。
+ * - 基础成员与历史取值：`plugin`、`model`、`tool`、`system-prompt`、`session-reference`。
  *
  * 判据是 `kind` 字段而非来源声明的成员名：官方声明里的成员 `user-rpc`（浏览器端用户输入）
  * 其 `kind` 值就是 `'user'`，因此已被保留名单覆盖，无需单列。
@@ -77,8 +79,22 @@ export const KEPT_USER_MESSAGE_KINDS: readonly string[] = [
  */
 const SUBAGENT_CREATION_TOOL_NAMES: readonly string[] = ["subagent", "subagent_fork"];
 
-/** 主代理主动发消息给已存在子代理的工具名。 */
+/** 向已有代理发消息的工具名，方向不限。 */
 export const SEND_MESSAGE_TOOL_NAME = "send_message";
+
+/** 代理间通信的用户消息来源。 */
+const AGENT_SOURCE_KINDS = new Set([
+  "agent-message",
+  "subagent-settled",
+  "team-message",
+  "coordinator",
+  "subagent-report",
+]);
+
+/** 通信工具包含创建任务和向已有代理发送消息。 */
+export function isAgentCommunicationTool(name: string | undefined): boolean {
+  return isSubagentCreationTool(name) || name === SEND_MESSAGE_TOOL_NAME;
+}
 
 /**
  * 该工具名是否为子代理创建工具。
@@ -115,25 +131,6 @@ export function isInjectedUserMessage(event: EventRecord): boolean {
 }
 
 /**
- * 子代理创建调用的配对标识集合：普通调用取 `callId`，PTC 子调用取 `subCallId`。
- * 配对结果是调度回执，不是子代理的回答。
- *
- * 回执判定必须与专用条目的识别同源（同用 `isSubagentCreationTool`）：`subagent_fork` 的回执
- * 若漏在这里，它会被当作子代理的回答显示出来。
- */
-export function collectSubagentReplyCallIds(events: readonly EventRecord[]): ReadonlySet<string> {
-  const callIds = new Set<string>();
-  for (const event of events) {
-    if (!isToolCallEvent(event)) continue;
-    const data = asRecord(event.data);
-    if (data === undefined || !isSubagentCreationTool(readString(data, "name"))) continue;
-    const callId = toolEventCallId(event);
-    if (callId !== undefined && callId.length > 0) callIds.add(callId);
-  }
-  return callIds;
-}
-
-/**
  * 该普通工具结果或 PTC 子调用结果是否为子代理调度回执。
  *
  * 普通结果以 `message.toolCallId` 与创建调用的 `callId` 配对，PTC 结果以 `subCallId` 配对。
@@ -153,37 +150,106 @@ export interface InjectionsExcluded {
   readonly subagentReceipts: number;
 }
 
-/**
- * 该事件在默认参数下是否可见。
- *
- * 默认可见性只决定"不给任何显式开关时"的呈现；框架事件（`system/message`、`permission/preset`、
- * `subagent/catalog`、`step/start` 等）的隐藏仍由既有的 `--events` 分支负责，本函数不对它们
- * 重复判定，两处都判定会让同一事件出现"两个真值源"，一旦不一致就无从解释。
- *
- * @param event 已解码的逻辑事件。
- * @param replyCallIds 由 `collectSubagentReplyCallIds` 得到的回执识别集合。
- * @returns 注入消息与调度回执为 false，其余事件为 true。
- */
-export function isVisibleEvent(event: EventRecord, replyCallIds: ReadonlySet<string>): boolean {
-  if (isInjectedUserMessage(event)) return false;
-  return !isSubagentReceipt(event, replyCallIds);
+/** 每个会话独立构造的结构化可见性与调用配对。 */
+export interface DefaultViewFilter {
+  readonly replyCallIds: ReadonlySet<string>;
+  readonly agentCallIds: ReadonlyMap<string, "task" | "send">;
+  readonly subagentTaskEvent: EventRecord | null;
+  readonly isSubagentSession: boolean;
+  readonly includeAgentComm: boolean;
 }
 
-/**
- * 统计一批事件中被默认排除的注入与回执数量，供产物摘要行逐项声明。
- *
- * 必须给出计数的理由：调用方看不到被排除的内容，若连"排除了多少条"都没有，就无法判断产物
- * 是否经过过滤，也无法在需要时改用 `--events` 取回。
- */
-export function countExcludedInjections(
+/** 在范围筛选前建立调用配对，结果可以位于所选区间内而调用位于区间外。 */
+export function buildDefaultViewFilter(
   events: readonly EventRecord[],
-  replyCallIds: ReadonlySet<string>,
-): InjectionsExcluded {
+  subagentTaskEvent: EventRecord | null,
+  isSubagentSession: boolean,
+  includeAgentComm: boolean,
+): DefaultViewFilter {
+  const agentCallIds = new Map<string, "task" | "send">();
+  const replyCallIds = new Set<string>();
+  for (const event of events) {
+    if (!isToolCallEvent(event)) continue;
+    const name = readString(asRecord(event.data) ?? {}, "name");
+    const id = toolEventCallId(event);
+    if (!isAgentCommunicationTool(name) || id === undefined || id.length === 0) continue;
+    const kind = isSubagentCreationTool(name) ? "task" : "send";
+    agentCallIds.set(id, kind);
+    if (kind === "task") replyCallIds.add(id);
+  }
+  return { replyCallIds, agentCallIds, subagentTaskEvent, isSubagentSession, includeAgentComm };
+}
+
+/** 事件级排除原因；助手正文在块级投影中过滤，调度回执保留独立类别。 */
+export function defaultExclusionOf(
+  event: EventRecord,
+  filter: DefaultViewFilter,
+): "agent" | "injection" | "receipt" | null {
+  const type = eventType(event);
+  if (isSubagentReceipt(event, filter.replyCallIds)) return "receipt";
+  const kind = type === "user/message" ? userMessageSourceKind(event) : null;
+  const sourceIsAgent = kind !== null && AGENT_SOURCE_KINDS.has(kind);
+  if (!filter.includeAgentComm) {
+    const callId = isToolResultEvent(event) ? toolEventCallId(event) : undefined;
+    if (
+      event === filter.subagentTaskEvent ||
+      sourceIsAgent ||
+      type === "agent/inbox/spliced" ||
+      (isToolCallEvent(event) &&
+        isAgentCommunicationTool(readString(asRecord(event.data) ?? {}, "name"))) ||
+      (callId !== undefined && filter.agentCallIds.get(callId) === "send")
+    )
+      return "agent";
+  }
+  if (!sourceIsAgent && isInjectedUserMessage(event)) return "injection";
+  return null;
+}
+
+/** 默认事件可见性，供结构化输出与检索共用。 */
+export function isVisibleEvent(event: EventRecord, filter: DefaultViewFilter): boolean {
+  return defaultExclusionOf(event, filter) === null;
+}
+
+/** 助手消息的共享投影，过滤文本与工具块时保留独立的推理内容。 */
+export function projectAssistantContent(
+  message: Record<string, unknown>,
+  filter: DefaultViewFilter,
+): { text: string; reasoning: string; toolCalls: ToolCallBlock[]; hasVisibleBlock: boolean } {
+  const content = message.content;
+  const text =
+    filter.isSubagentSession && !filter.includeAgentComm ? "" : messageTextFromBlocks(content);
+  const reasoning = reasoningFromBlocks(content);
+  const toolCalls = toolCallsFromBlocks(content).filter(
+    (call) => filter.includeAgentComm || !isAgentCommunicationTool(call.name),
+  );
+  return {
+    text,
+    reasoning,
+    toolCalls,
+    hasVisibleBlock: text.length > 0 || reasoning.length > 0 || toolCalls.length > 0,
+  };
+}
+
+/** 按事件记录计数；助手的多个文本块只计一次。 */
+export function countExcludedFromDefaultView(
+  events: readonly EventRecord[],
+  filter: DefaultViewFilter,
+): InjectionsExcluded & { readonly agentMessages: number } {
   let userMessages = 0;
   let subagentReceipts = 0;
+  let agentMessages = 0;
   for (const event of events) {
-    if (isInjectedUserMessage(event)) userMessages += 1;
-    else if (isSubagentReceipt(event, replyCallIds)) subagentReceipts += 1;
+    const reason = defaultExclusionOf(event, filter);
+    if (reason === "injection") userMessages += 1;
+    else if (reason === "receipt") subagentReceipts += 1;
+    else if (reason === "agent") agentMessages += 1;
+    else if (
+      !filter.includeAgentComm &&
+      filter.isSubagentSession &&
+      eventType(event) === "assistant/message" &&
+      textFromBlocks(asRecord(asRecord(event.data)?.message)?.content).length > 0
+    )
+      agentMessages += 1;
   }
-  return { userMessages, subagentReceipts };
+  return { userMessages, subagentReceipts, agentMessages };
 }

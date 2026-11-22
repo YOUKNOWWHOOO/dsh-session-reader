@@ -40,7 +40,12 @@ describe("render 边界与分支", () => {
     assert.equal(md.content.includes("助手内容 ASSIST-TEXT"), true);
     assert.equal(md.content.includes("用户内容 USER-TEXT"), false);
     const document = JSON.parse(
-      renderShowJson(parent, { summary: false, subagents: true, unattributable: [] }).content,
+      renderShowJson(parent, {
+        summary: false,
+        includeAgentComm: false,
+        subagents: true,
+        unattributable: [],
+      }).content,
     ) as {
       subagents: Array<Record<string, unknown>>;
     };
@@ -138,6 +143,7 @@ describe("render 边界与分支", () => {
       scope: "text",
       totalIsExact: true,
       excludedInjections: { userMessages: 0, subagentReceipts: 0 },
+      excludedAgentMessages: 0,
       coverage: coverage({ includedCount: 1 }),
       scan: scanSummary(),
       distribution: [],
@@ -181,6 +187,7 @@ describe("render 边界与分支", () => {
       scope: "all",
       totalIsExact: true,
       excludedInjections: { userMessages: 0, subagentReceipts: 0 },
+      excludedAgentMessages: 0,
       coverage: coverage({ includedCount: 3, excluded: [{ id: "x-09", reason: "解码失败" }] }),
       scan: scanSummary({
         logsDecoded: 3,
@@ -241,6 +248,7 @@ describe("render 边界与分支", () => {
       scope: "text",
       totalIsExact: true,
       excludedInjections: { userMessages: 0, subagentReceipts: 0 },
+      excludedAgentMessages: 0,
       coverage: coverage(),
       scan: scanSummary(),
       distribution: [],
@@ -507,8 +515,12 @@ describe("render 边界与分支", () => {
     assert.equal(outline.includes("ASSIST-TEXT"), true);
 
     const document = JSON.parse(
-      renderShowJson(node([], events), { summary: false, subagents: false, unattributable: [] })
-        .content,
+      renderShowJson(node([], events), {
+        summary: false,
+        includeAgentComm: false,
+        subagents: false,
+        unattributable: [],
+      }).content,
     ) as {
       messages: { text: string }[];
       turns: { prompt: string | null; response: string | null }[];

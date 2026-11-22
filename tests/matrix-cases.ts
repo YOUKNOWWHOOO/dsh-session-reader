@@ -51,6 +51,7 @@ const SHOW_SWITCHES = [
   "--events",
   "--subagents",
   "--headers",
+  "--include-agent-comm",
 ] as const;
 const SHOW_TARGETS = [MAIN_ID, CHILD_ID, "adv-main", "last"] as const;
 const SPECIAL_IDS = [
@@ -194,18 +195,18 @@ export function listCases(): MatrixCase[] {
   return cases;
 }
 
-/** show 组合：6 开关 64 全交叉 × 角色 × 截断 + 特殊会话 + 范围穷尽 + 探测/错误路径。 */
+/** show 组合：7 开关 128 全交叉 × 角色 × 截断 + 特殊会话 + 范围穷尽 + 探测/错误路径。 */
 export function showCases(): MatrixCase[] {
   const cases: MatrixCase[] = [];
   const roles = [null, "user", "assistant"] as const;
   const truncates = [0, 1, 50, 2000] as const;
-  // 全笛卡尔：6 开关 64 组合 × 角色 3 × 截断 4 = 768（排列目标 × 角色 × 截断以分散目标覆盖）。
-  for (let switchIndex = 0; switchIndex < 64; switchIndex += 1) {
+  // 全笛卡尔：7 开关 128 组合 × 角色 3 × 截断 4 = 1536（排列目标 × 角色 × 截断以分散目标覆盖）。
+  for (let switchIndex = 0; switchIndex < 128; switchIndex += 1) {
     for (let roleIndex = 0; roleIndex < roles.length; roleIndex += 1) {
       for (let truncateIndex = 0; truncateIndex < truncates.length; truncateIndex += 1) {
         const target = SHOW_TARGETS[(switchIndex + roleIndex + truncateIndex) % 4];
         const args = ["show", target, ...healthyBase()];
-        for (let bit = 0; bit < 6; bit += 1) {
+        for (let bit = 0; bit < 7; bit += 1) {
           if (((switchIndex >> bit) & 1) === 1) args.push(SHOW_SWITCHES[bit]);
         }
         const role = roles[roleIndex];

@@ -33,10 +33,8 @@ import {
   hasToolCalls,
   isToolCallEvent,
   isToolResultEvent,
-  messageTextFromBlocks,
   readNumber,
   readString,
-  reasoningFromBlocks,
   textFromBlocks,
   toolCallArgumentsText,
   toolResultIsError,
@@ -63,9 +61,11 @@ import { coverageSections } from "./render-md.ts";
 import { showProbeSummary, showSummary } from "./render-summary.ts";
 import type { SessionNode } from "./store-types.ts";
 import {
-  collectSubagentReplyCallIds,
-  isInjectedUserMessage,
-  isSubagentReceipt,
+  buildDefaultViewFilter,
+  countExcludedFromDefaultView,
+  type DefaultViewFilter,
+  defaultExclusionOf,
+  projectAssistantContent,
 } from "./visibility.ts";
 
 // ------------------------- show -------------------------
@@ -78,6 +78,7 @@ interface HiddenCounts {
   injections: number;
   /** 被默认排除的子代理调度回执（`started subagent <id>`）。 */
   receipts: number;
+  agentMessages: number;
 }
 
 /**
@@ -313,7 +314,7 @@ function subagentCallEntry(event: EventRecord, options: ShowMdOptions): string[]
  * `已隐藏 N 条工具调用/结果`，那会让调用方以为问答条目也被藏起来了，而它其实就在下一行。
  * `--role` 只过滤对话消息，工具、事件与交接条目（含问答）不受影响。
  *
- * 默认排除的注入消息与调度回执由调用方计数并跳过（见 renderTimelineMd）：它们不产出条目，
+ * 默认排除的框架与插件注入、子代理调度回执、结构化代理通信由调用方计数并跳过（见 renderTimelineMd）：它们不产出条目，
  * 若在本函数内计数，`--head`/`--tail` 的截取会让计数与"实际被跳过的事件数"脱节。
  */
 function timelineItems(
@@ -326,6 +327,7 @@ function timelineItems(
   handoffNotice: HandoffNoticeEntry | null,
   handoffPrompt: HandoffPromptEntry | null,
   isSubagentTask: boolean,
+  filter: DefaultViewFilter,
 ): string[][] {
   const type = eventType(event);
   const data = asRecord(event.data) ?? {};
@@ -389,20 +391,18 @@ function timelineItems(
   const items: string[][] = [];
   if (type === "user/message") {
     if (options.role === "assistant") return [];
-    // 注入消息默认不呈现；`--events` 是显式恢复入口（与 `**系统消息**` 同一开关语义）。
-    if (isInjectedUserMessage(event) && !options.events) return [];
     const text = userMessageText(event);
     if (text.length === 0) return [];
     return [fencedItem("**用户**", event, options, truncateText(text, options.truncate))];
   }
   if (type === "assistant/message") {
     if (options.role === "user") return [];
-    const content = asRecord(data.message)?.content;
-    const text = messageTextFromBlocks(content);
+    const projection = projectAssistantContent(asRecord(data.message) ?? {}, filter);
+    const text = projection.text;
     if (text.length > 0) {
       items.push(fencedItem("**助手**", event, options, truncateText(text, options.truncate)));
     }
-    const reasoning = reasoningFromBlocks(content);
+    const reasoning = projection.reasoning;
     if (reasoning.length > 0) {
       if (options.thinking) {
         items.push(
@@ -417,7 +417,7 @@ function timelineItems(
   if (isToolCallEvent(event)) {
     // 子代理相关工具（创建工具的 `subagent`/`subagent_fork`、发消息的 `send_message`）产出**专用条目**
     // （任务正文或消息正文），不再产出原始工具条目：同一调用只呈现一次，且呈现的是调用方要读的内容。
-    // 因此该分支不受 `--tools`/`--role` 控制，与问答条目的处理同构。
+    // 因此该分支不受 `--tools`/`--role` 控制，与问答条目的处理同构；只有通信开关打开时才会到达，关闭时事件级排除已先跳过。
     const subagentEntry = subagentCallEntry(event, options);
     if (subagentEntry !== null) return [subagentEntry];
     if (options.tools) {
@@ -504,7 +504,7 @@ function askEntriesByEvent(analysis: AskUserAnalysis): ReadonlyMap<EventRecord, 
  * 孤立标签行或无标签围栏块，且说明行的计数与实物不符（`shownItems` 因此按条目计数）。
  * `head` 与 `tail` 互斥由 CLI 校验保证，此处按 head 优先处理，不做静默合并。
  *
- * 注入消息与调度回执的计数在本函数内完成，而不是在 `timelineItems` 内：两者都"不产出条目"，
+ * 框架与插件注入、子代理调度回执、结构化代理通信的计数在本函数内完成，而不是在 `timelineItems` 内：三者都"不产出条目"，
  * 计数必须覆盖**全部**被跳过的事件；若放进 `timelineItems`，`--head`/`--tail` 截断之后的
  * 循环次数会变少，计数随之偏小，摘要行就会与实际排除量矛盾。
  */
@@ -515,20 +515,29 @@ function renderTimelineMd(
   askEntries: ReadonlyMap<EventRecord, AskUserEntry>,
   handoffEntries: ReadonlyMap<EventRecord, HandoffEntry>,
   context: ContextAnalysis,
-  subagentCallIds: ReadonlySet<string>,
+  filter: DefaultViewFilter,
 ): { sections: string[]; hidden: HiddenCounts; shownItems: number } {
-  const hidden: HiddenCounts = { reasoning: 0, tools: 0, events: 0, injections: 0, receipts: 0 };
+  const hidden: HiddenCounts = {
+    reasoning: 0,
+    tools: 0,
+    events: 0,
+    injections: 0,
+    receipts: 0,
+    agentMessages: countExcludedFromDefaultView(events, filter).agentMessages,
+  };
   const items: string[][] = [];
   for (const event of events) {
     // 计数与呈现必须用同一判据，否则摘要行会与实物矛盾：
     // - 注入消息：默认排除，`--events` 恢复（与 `system/message` 的显示开关同一入口）；
     // - 调度回执：默认不呈现（它不是子代理的回答），`--tools` 下作为工具结果显示，
     //   使调用方能区分"调度往返"与"真正的工具结果"。
-    if (!options.events && isInjectedUserMessage(event)) {
+    const reason = defaultExclusionOf(event, filter);
+    if (reason === "agent") continue;
+    if (!options.events && reason === "injection") {
       hidden.injections += 1;
       continue;
     }
-    if (!options.tools && isSubagentReceipt(event, subagentCallIds)) {
+    if (!options.tools && reason === "receipt") {
       hidden.receipts += 1;
       continue;
     }
@@ -543,6 +552,7 @@ function renderTimelineMd(
         context.handoffNotices.get(event) ?? null,
         context.handoffPrompts.get(event) ?? null,
         context.subagentTask === event,
+        filter,
       ),
     );
   }
@@ -565,6 +575,8 @@ function hiddenSummaryMd(hidden: HiddenCounts, options: ShowMdOptions): string {
   if (hidden.receipts > 0) {
     parts.push(`已排除 ${hidden.receipts} 条子代理调度回执（--tools 显示）`);
   }
+  if (hidden.agentMessages > 0)
+    parts.push(`已排除 ${hidden.agentMessages} 条与其它 agent 的通信（--include-agent-comm 显示）`);
   if (hidden.events > 0) parts.push(`已隐藏 ${hidden.events} 条生命周期事件（--events 显示）`);
   if (options.role !== null) parts.push(`已按 --role ${options.role} 过滤对话消息`);
   if (options.truncate > 0) parts.push(`文本已截断为 ${options.truncate} 字符`);
@@ -582,8 +594,9 @@ function outlineSections(
   node: SessionNode,
   options: ShowMdOptions,
   context: ContextAnalysis,
+  filter: DefaultViewFilter,
 ): string[] {
-  const turns = computeTurns(node.file, checkpointSeqsOf(context));
+  const turns = computeTurns(node.file, checkpointSeqsOf(context), filter);
   if (turns.length === 0) return ["无"];
   return turns.map((turn) => {
     const prompt =
@@ -652,21 +665,27 @@ function renderNodeSections(
       node.file.decoded.header,
       node.file.decoded.events,
       handoff,
+      node.file.decoded.inheritedEventCount,
     );
   }
   const sections: string[] = [nodeKvBlock(node, probe)];
+  const filter = buildDefaultViewFilter(
+    node.file.decoded.events,
+    context.subagentTask,
+    readString(node.file.decoded.header, "origin") === "subagent",
+    options.includeAgentComm,
+  );
   if (options.probe) {
     // 探测模式下不输出任何会话正文：产物只回答"有多大、有多少条"。
   } else if (options.summary) {
     sections.push(`${"#".repeat(level)} 轮次大纲`);
-    sections.push(...outlineSections(node, options, context));
+    sections.push(...outlineSections(node, options, context, filter));
   } else {
     sections.push(`${"#".repeat(level)} 时间线`);
     const ranged = selectEvents(node.file.decoded.events, options);
     // 回执识别集合按**整会话**事件算出，而不是按 `--turn`/`--seq` 筛选后的事件：配对关系是
     // 会话级事实，只按筛选后的子集计算会让筛选区间外的 `subagent` 调用失去配对，
     // 其回执随之被当成普通工具结果显示出来（同一事件因筛选条件不同而可见性不同）。
-    const subagentCallIds = collectSubagentReplyCallIds(node.file.decoded.events);
     const timeline = renderTimelineMd(
       options,
       ranged,
@@ -674,7 +693,7 @@ function renderNodeSections(
       askEntries,
       handoffEntries,
       context,
-      subagentCallIds,
+      filter,
     );
     sections.push(...timeline.sections);
     const filterText = filterSummaryMd(

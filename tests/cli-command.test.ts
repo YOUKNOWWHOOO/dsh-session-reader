@@ -408,6 +408,29 @@ describe("CLI show", () => {
     assert.equal(readFileSync(fullPath).length, estimate);
   });
 
+  it("--probe --include-agent-comm 的预计字节数等于同开关完整导出", () => {
+    const probed = runCli([
+      "show",
+      "session-fixture-main-01",
+      ...baseArgs(HEALTHY_HOME),
+      "--probe",
+      "--include-agent-comm",
+    ]);
+    assert.equal(probed.status, 0);
+    const probedContent = readFileSync(readContract(probed.stdout).path, "utf8");
+    const estimate = Number(/- 预计字节数：(\d+)（/u.exec(probedContent)?.[1] ?? "-1");
+    assert.equal(estimate > 0, true);
+
+    const full = runCli([
+      "show",
+      "session-fixture-main-01",
+      ...baseArgs(HEALTHY_HOME),
+      "--include-agent-comm",
+    ]);
+    assert.equal(full.status, 0);
+    assert.equal(readFileSync(readContract(full.stdout).path).length, estimate);
+  });
+
   it("--probe 与 --subagents 同用即拒绝（退出 2，附替代写法）", () => {
     const result = runCli([
       "show",

@@ -11,7 +11,6 @@
 
 import { analyzeContextCheckpoints, checkpointSeqsOf } from "./context-checkpoint.ts";
 import {
-  asArray,
   asRecord,
   eventSeq,
   eventTime,
@@ -19,10 +18,8 @@ import {
   hasToolCalls,
   isToolCallEvent,
   isToolResultEvent,
-  messageTextFromBlocks,
   readNumber,
   readString,
-  reasoningFromBlocks,
   textFromBlocks,
   toolCallArgumentsText,
   toolEventCallId,
@@ -51,7 +48,12 @@ import type {
   SessionNode,
   StatsOutcome,
 } from "./store-types.ts";
-import { collectSubagentReplyCallIds, isVisibleEvent } from "./visibility.ts";
+import {
+  buildDefaultViewFilter,
+  type DefaultViewFilter,
+  isVisibleEvent,
+  projectAssistantContent,
+} from "./visibility.ts";
 
 // ------------------------- list -------------------------
 
@@ -86,16 +88,18 @@ export function renderListJson(outcome: ListOutcome): RenderedOutput {
 /**
  * `messages` 的构造：与默认参数提取的可见性完全一致。
  *
- * 排除的两类与 `show` 的 md 时间线、`search` 的 `text` 档同源（判定统一取自 `visibility.ts`）：
- * 框架与插件注入的消息、子代理调度回执。排除而非降级呈现：调用方要完整消息历史时用
+ * 排除的三类与 `show` 的 md 时间线、`search` 的 `text` 档同源（判定统一取自 `visibility.ts`）：
+ * 框架与插件注入的消息、子代理调度回执、结构化代理通信；第三类由通信开关控制。排除而非降级呈现：调用方要完整消息历史时用
  * `--format jsonl`（逐事件穷尽），它是唯一不被可见性过滤的导出形态。
  *
  */
-function buildMessageEntries(file: DecodedSessionFile): Record<string, unknown>[] {
+function buildMessageEntries(
+  file: DecodedSessionFile,
+  filter: DefaultViewFilter,
+): Record<string, unknown>[] {
   const entries: Record<string, unknown>[] = [];
-  const replyCallIds = collectSubagentReplyCallIds(file.decoded.events);
   for (const event of file.decoded.events) {
-    if (!isVisibleEvent(event, replyCallIds)) continue;
+    if (!isVisibleEvent(event, filter)) continue;
     const seq = eventSeq(event);
     const type = eventType(event);
     const data = asRecord(event.data) ?? {};
@@ -112,14 +116,20 @@ function buildMessageEntries(file: DecodedSessionFile): Record<string, unknown>[
       });
     } else if (type === "assistant/message") {
       const message = asRecord(data.message) ?? {};
+      const projection = projectAssistantContent(message, filter);
+      if (!projection.hasVisibleBlock) continue;
       entries.push({
         seq: seq ?? null,
         time: eventTime(event) ?? null,
         type,
         role: "assistant",
-        text: messageTextFromBlocks(message.content),
-        reasoning: reasoningFromBlocks(message.content),
-        toolCalls: readToolCallBlocks(message.content),
+        text: projection.text,
+        reasoning: projection.reasoning,
+        toolCalls: projection.toolCalls.map((call) => ({
+          id: call.id ?? null,
+          name: call.name ?? null,
+          arguments: call.arguments ?? null,
+        })),
       });
     } else if (isToolCallEvent(event)) {
       entries.push({
@@ -167,28 +177,24 @@ function buildMessageEntries(file: DecodedSessionFile): Record<string, unknown>[
   return entries;
 }
 
-function readToolCallBlocks(content: unknown): Record<string, unknown>[] {
-  const blocks = asArray(content) ?? [];
-  const calls: Record<string, unknown>[] = [];
-  for (const block of blocks) {
-    const record = asRecord(block);
-    if (record === undefined || readString(record, "type") !== "tool-call") continue;
-    calls.push({
-      id: readString(record, "id") ?? null,
-      name: readString(record, "name") ?? null,
-      arguments: readString(record, "arguments") ?? null,
-    });
-  }
-  return calls;
-}
-
-function nodeToJson(node: SessionNode, includeMessages: boolean): Record<string, unknown> {
+function nodeToJson(
+  node: SessionNode,
+  includeMessages: boolean,
+  includeAgentComm: boolean,
+): Record<string, unknown> {
   const header = node.file.decoded.header;
   const handoff = analyzeHandoffEvents(node.file.decoded.events);
   const context = analyzeContextCheckpoints(
     node.file.decoded.header,
     node.file.decoded.events,
     handoff,
+    node.file.decoded.inheritedEventCount,
+  );
+  const filter = buildDefaultViewFilter(
+    node.file.decoded.events,
+    context.subagentTask,
+    readString(header, "origin") === "subagent",
+    includeAgentComm,
   );
   return {
     session: {
@@ -215,14 +221,14 @@ function nodeToJson(node: SessionNode, includeMessages: boolean): Record<string,
       hasToolCalls: hasToolCalls(node.file.decoded.events),
       anomalies: node.file.decoded.anomalies.map((anomaly) => anomaly.detail),
     },
-    turns: computeTurns(node.file, checkpointSeqsOf(context)).map((turn) => ({
+    turns: computeTurns(node.file, checkpointSeqsOf(context), filter).map((turn) => ({
       turn: turn.turn,
       seq: turn.seq,
       prompt: turn.prompt,
       response: turn.response,
     })),
-    messages: includeMessages ? buildMessageEntries(node.file) : [],
-    subagents: node.children.map((child) => nodeToJson(child, includeMessages)),
+    messages: includeMessages ? buildMessageEntries(node.file, filter) : [],
+    subagents: node.children.map((child) => nodeToJson(child, includeMessages, includeAgentComm)),
   };
 }
 
@@ -236,13 +242,14 @@ export function renderShowJson(
   node: SessionNode,
   options: {
     readonly summary: boolean;
+    readonly includeAgentComm: boolean;
     readonly subagents: boolean;
     readonly unattributable: readonly CoverageSkip[];
   },
 ): RenderedOutput {
   const nodes = countNodes(node);
   const document = {
-    ...nodeToJson(node, !options.summary),
+    ...nodeToJson(node, !options.summary, options.includeAgentComm),
     // 与 md 同源同口径：作用域是本目标及其子树，可归属的排除项恒为空。
     coverage: {
       scannedCount: nodes,
@@ -287,6 +294,7 @@ export function renderSearchJson(outcome: SearchOutcome): RenderedOutput {
     scope: outcome.scope,
     totalIsExact: outcome.totalIsExact,
     excludedInjections: outcome.excludedInjections,
+    excludedAgentMessages: outcome.excludedAgentMessages,
     coverage: outcome.coverage,
     scan: outcome.scan,
     distribution: outcome.distribution,

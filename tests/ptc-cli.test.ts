@@ -315,10 +315,12 @@ describe("正式 CLI 的四种预设记录", () => {
     it(`呈现和检索 ${mode} 的工具记录`, () => {
       const { home, id } = fixture(mode);
       const md = cli(home, ["show", id], "md");
-      assert.match(md, /子代理任务/);
-      assert.match(md, /TASKMARK/);
-      assert.match(md, /发往子代理/);
-      assert.match(md, /MESSAGEMARK/);
+      assert.doesNotMatch(md, /TASKMARK|MESSAGEMARK/);
+      const included = cli(home, ["show", id, "--include-agent-comm"], "md");
+      assert.match(included, /子代理任务/);
+      assert.match(included, /TASKMARK/);
+      assert.match(included, /发往代理/);
+      assert.match(included, /MESSAGEMARK/);
       if (mode !== "dsh-custom-ptc") {
         assert.match(md, /提问/);
         assert.match(md, /QUESTIONMARK/);
@@ -333,13 +335,21 @@ describe("正式 CLI 的四种预设记录", () => {
         assert.match(detailed, /MCPMARK/);
         assert.match(detailed, /CREATIONMARK/);
       }
-      for (const word of mode === "dsh-custom-ptc"
-        ? ["TASKMARK", "MESSAGEMARK"]
-        : ["TASKMARK", "MESSAGEMARK", "QUESTIONMARK", "ANSWERMARK"]) {
+      for (const word of mode === "dsh-custom-ptc" ? [] : ["QUESTIONMARK", "ANSWERMARK"]) {
         const found = JSON.parse(
           cli(home, ["search", word, "--session", id, "--scope", "text"], "json"),
         );
         assert.ok(found.total > 0, word);
+      }
+      for (const word of ["TASKMARK", "MESSAGEMARK"]) {
+        const hidden = JSON.parse(
+          cli(home, ["search", word, "--session", id, "--scope", "text"], "json"),
+        );
+        assert.equal(hidden.total, 0);
+        const exhaustive = JSON.parse(
+          cli(home, ["search", word, "--session", id, "--scope", "all"], "json"),
+        );
+        assert.ok(exhaustive.total > 0);
       }
       const found = JSON.parse(
         cli(home, ["search", "RESULTMARK", "--session", id, "--scope", "tools"], "json"),

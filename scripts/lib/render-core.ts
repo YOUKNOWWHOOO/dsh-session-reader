@@ -23,7 +23,6 @@ import {
   asRecord,
   eventSeq,
   eventType,
-  messageTextFromBlocks,
   readNumber,
   readString,
   userMessageText,
@@ -37,7 +36,7 @@ import type {
   ModelView,
   SessionNode,
 } from "./store-types.ts";
-import { collectSubagentReplyCallIds, isVisibleEvent } from "./visibility.ts";
+import { type DefaultViewFilter, isVisibleEvent, projectAssistantContent } from "./visibility.ts";
 
 /** 元数据不可用的显示文案（跨渲染器共用；取值即对外契约，不得改写）。 */
 export const METADATA_UNAVAILABLE_TEXT = "元数据不可用";
@@ -51,9 +50,10 @@ export interface RenderedOutput {
   readonly summary: string;
 }
 
-/** show 呈现选项（与 CLI 约束一致：呈现类开关仅 md）。 */
+/** show Markdown 呈现选项，通信开关也适用于 JSON。 */
 export interface ShowMdOptions {
   readonly summary: boolean;
+  readonly includeAgentComm: boolean;
   readonly role: "user" | "assistant" | null;
   readonly thinking: boolean;
   readonly tools: boolean;
@@ -204,17 +204,17 @@ interface TurnSummary {
  * prompt 来源必须是**默认可见**的 `user/message` 事件：轮次大纲与默认时间线共用同一可见性判定
  * （`visibility.ts`），否则框架注入的消息会被当成用户提问写进大纲，而时间线里根本看不到它
  * （实测：某会话首轮 prompt 落到了 `user-approval` 的"审批策略已变更"通知上）。
- * response 取自 `assistant/message`，该类型不在注入过滤范围内，无需判定。
+ * response 取共享助手投影，子会话的通信正文在关闭通信时被排除。
  *
  * `skipPromptSeqs` 由合成上下文消息分析提供：标准压缩检查点、交接通知与交接维护指令不是用户提问，
  * 轮次大纲不得把它们的正文当成 prompt；跳过它们后，该轮的下一条真实用户消息（若有）成为 prompt。
  */
 export function computeTurns(
   file: DecodedSessionFile,
-  skipPromptSeqs: ReadonlySet<number> = new Set(),
+  skipPromptSeqs: ReadonlySet<number>,
+  filter: DefaultViewFilter,
 ): TurnSummary[] {
   const turns: TurnSummary[] = [];
-  const replyCallIds = collectSubagentReplyCallIds(file.decoded.events);
   let current: {
     turn: number;
     seq: number;
@@ -234,12 +234,12 @@ export function computeTurns(
       current !== null &&
       current.prompt === null &&
       (seq === undefined || !skipPromptSeqs.has(seq)) &&
-      isVisibleEvent(event, replyCallIds)
+      isVisibleEvent(event, filter)
     ) {
       const text = userMessageText(event);
       if (text.length > 0) current.prompt = text;
     } else if (type === "assistant/message" && current !== null) {
-      const text = messageTextFromBlocks(asRecord(data.message)?.content);
+      const text = projectAssistantContent(asRecord(data.message) ?? {}, filter).text;
       if (text.length > 0) current.response = text;
     }
   }

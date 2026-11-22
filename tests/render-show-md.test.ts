@@ -24,6 +24,110 @@ import {
 } from "./render-helpers.ts";
 
 describe("renderShowMd", () => {
+  it("收件箱事件由通信开关与事件开关共同控制", () => {
+    const events = [
+      {
+        type: "agent/inbox/spliced",
+        seq: 1,
+        data: { inserted: [{ content: [{ type: "text", text: "INBOX-MARK" }] }] },
+      },
+    ];
+    for (const includeAgentComm of [false, true]) {
+      for (const eventsVisible of [false, true]) {
+        const content = showMd(
+          node([], events),
+          showOptions({ includeAgentComm, events: eventsVisible }),
+        ).content;
+        assert.equal(content.includes("INBOX-MARK"), includeAgentComm && eventsVisible);
+        assert.equal(content.includes("已排除 1 条与其它 agent 的通信"), !includeAgentComm);
+      }
+    }
+  });
+
+  it("通信开关与 tools/summary 组合下的探测字节数与完整输出一致", () => {
+    const events = [
+      {
+        type: "user/message",
+        seq: 1,
+        data: { source: { kind: "agent-message" }, content: [{ type: "text", text: "通信正文" }] },
+      },
+    ];
+    for (const includeAgentComm of [false, true]) {
+      for (const tools of [false, true]) {
+        for (const summary of [false, true]) {
+          const options = showOptions({ includeAgentComm, tools, summary });
+          const full = showMd(node([], events), options).content;
+          const probe = showMd(node([], events), { ...options, probe: true }).content;
+          assert.ok(probe.includes(`预计字节数：${Buffer.byteLength(full, "utf8")}`));
+        }
+      }
+    }
+  });
+
+  it("范围筛选只统计范围内被排除的通信消息", () => {
+    const events = [
+      {
+        type: "user/message",
+        seq: 1,
+        data: { source: { kind: "agent-message" }, content: [{ type: "text", text: "outside" }] },
+      },
+      {
+        type: "user/message",
+        seq: 2,
+        data: { source: { kind: "agent-message" }, content: [{ type: "text", text: "inside" }] },
+      },
+    ];
+    const rendered = showMd(
+      node([], events),
+      showOptions({ seqRange: { from: 2, to: 2 } }),
+    ).content;
+    assert.equal(rendered.includes("inside"), false);
+    assert.equal(rendered.includes("outside"), false);
+    assert.equal(rendered.includes("已排除 1 条与其它 agent 的通信"), true);
+    assert.equal(rendered.includes("已排除 2 条与其它 agent 的通信"), false);
+  });
+
+  it("父子孙节点按各自 header 与事件过滤，fork 不继承父节点任务身份", () => {
+    const task = (text: string) => ({
+      type: "user/message",
+      seq: 1,
+      data: { source: { kind: "user" }, content: [{ type: "text", text }] },
+    });
+    const assistant = (text: string) => ({
+      type: "assistant/message",
+      seq: 2,
+      data: { message: { content: [{ type: "text", text }] } },
+    });
+    const childNode = (
+      name: string,
+      origin: string | undefined,
+      children: SessionNode[],
+    ): SessionNode => {
+      const base = node(children, [task(`${name}-task`), assistant(`${name}-reply`)]);
+      return {
+        ...base,
+        file: {
+          ...base.file,
+          decoded: { ...base.file.decoded, header: { ...base.file.decoded.header, origin } },
+        },
+      };
+    };
+    const grandchild = childNode("grand", "subagent", []);
+    const fork = childNode("fork", undefined, [grandchild]);
+    const child = childNode("child", "subagent", [fork]);
+    const root = childNode("root", undefined, [child]);
+    const hidden = showMd(root, showOptions({ subagents: true })).content;
+    for (const text of ["root-task", "root-reply", "fork-task", "fork-reply"])
+      assert.ok(hidden.includes(text));
+    for (const text of ["child-task", "child-reply", "grand-task", "grand-reply"])
+      assert.equal(hidden.includes(text), false);
+    assert.equal(hidden.split("已排除 2 条与其它 agent 的通信").length - 1, 2);
+    const included = showMd(root, showOptions({ subagents: true, includeAgentComm: true })).content;
+    for (const text of ["child-task", "child-reply", "grand-task", "grand-reply"])
+      assert.ok(included.includes(text));
+    assert.equal(included.includes("与其它 agent 的通信（--include-agent-comm 显示）"), false);
+  });
+
   it("同一助手事件的正文与推理分别参与首尾截取", () => {
     const events = [RENDER_EVENTS[2]];
     const head = showMd(node([], events), showOptions({ thinking: true, head: 1 })).content;
@@ -437,6 +541,7 @@ describe("renderShowMd 的工具结果错误态", () => {
     const document = JSON.parse(
       renderShowJson(node([], events), {
         summary: false,
+        includeAgentComm: false,
         subagents: false,
         unattributable: [],
       }).content,

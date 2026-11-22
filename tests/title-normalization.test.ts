@@ -119,7 +119,12 @@ describe("show 呈现", () => {
 
   it("json 的 session.title 为 null", () => {
     const document = JSON.parse(
-      renderShowJson(showNode(), { summary: false, subagents: false, unattributable: [] }).content,
+      renderShowJson(showNode(), {
+        summary: false,
+        includeAgentComm: false,
+        subagents: false,
+        unattributable: [],
+      }).content,
     ) as { session: Record<string, unknown> };
     assert.equal(document.session.title, null);
   });
@@ -180,6 +185,7 @@ describe("stats 单会话与每会话命中分布", () => {
       scope: "text",
       totalIsExact: true,
       excludedInjections: { userMessages: 0, subagentReceipts: 0 },
+      excludedAgentMessages: 0,
       coverage: coverage({ includedCount: 1 }),
       scan: scanSummary(),
       distribution,

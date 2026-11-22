@@ -134,7 +134,10 @@ function showText(overrides: Parameters<typeof showOptions>[0] = {}): string {
  * 因此标注能力需要显式显示被排除项才能观察到。
  */
 function showTextWithInjections(overrides: Parameters<typeof showOptions>[0] = {}): string {
-  return showMd(node([], EVENTS), showOptions({ events: true, ...overrides })).content;
+  return showMd(
+    node([], EVENTS),
+    showOptions({ events: true, includeAgentComm: true, ...overrides }),
+  ).content;
 }
 
 describe("md 标签行的来源标注", () => {
@@ -200,7 +203,10 @@ describe("md 标签行的来源标注", () => {
       },
     ];
     // 这些来源（空 kind、plugin、team-message）都被默认可见性排除，需 `--events` 才能观察标注。
-    const content = showMd(node([], events), showOptions({ events: true })).content;
+    const content = showMd(
+      node([], events),
+      showOptions({ events: true, includeAgentComm: true }),
+    ).content;
     // 空串是无信息量的值：kind 空串等同于缺失，plugin 空串等同于没有该字段，都不产出空载体。
     assert.equal(content.includes("**用户**（来源 未标注）："), true);
     assert.equal(content.includes("**用户**（来源 plugin）："), true);
@@ -224,7 +230,7 @@ describe("md 标签行的来源标注", () => {
   });
 
   it("--headers 时括号内顺序为 seq → 本地时间 → 来源", () => {
-    const content = showText({ headers: true });
+    const content = showText({ headers: true, includeAgentComm: true });
     assert.match(
       content,
       new RegExp(`^\\*\\*用户\\*\\*（seq 2；[^；]+；来源 agent-message \`${SENDER}\`）：$`, "mu"),
@@ -243,6 +249,7 @@ describe("json 归属对象", () => {
   it("show json 的 messages[].source 为对象且字段完整", () => {
     const rendered = renderShowJson(node([], EVENTS), {
       summary: false,
+      includeAgentComm: true,
       subagents: false,
       unattributable: [],
     });
@@ -315,6 +322,7 @@ describe("json 归属对象", () => {
       scope: "text",
       totalIsExact: true,
       excludedInjections: { userMessages: 0, subagentReceipts: 0 },
+      excludedAgentMessages: 0,
       coverage: { scannedCount: 1, includedCount: 1, excluded: [] },
       scan: {
         logsDecoded: 1,
@@ -370,6 +378,7 @@ describe("检索命中行的来源标注", () => {
       scope: "text",
       totalIsExact: true,
       excludedInjections: { userMessages: 0, subagentReceipts: 0 },
+      excludedAgentMessages: 0,
       coverage: { scannedCount: 1, includedCount: 1, excluded: [] },
       scan: {
         logsDecoded: 1,
@@ -436,7 +445,7 @@ describe("store 层来源挂载", () => {
       contextOf(home),
       "needle",
       { origin: "all" },
-      { scope: "text", caseSensitive: false, context: 60, limit: 0 },
+      { scope: "all", caseSensitive: false, context: 60, limit: 0 },
     );
     assert.equal(outcome.success, true);
     if (!outcome.success) return;

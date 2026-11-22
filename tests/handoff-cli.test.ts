@@ -408,10 +408,10 @@ describe("交接条目的默认呈现", () => {
   it("非 handoff 型 developer/message 不进交接条目，且计入隐藏的生命周期事件", () => {
     const { content } = showMd();
     assert.equal(content.includes("tool-registry"), false);
-    // 夹具里默认不可见的事件恰为四条：turn/start、turn/end、agent/inbox/spliced，
-    // 以及 tool-registry 型的 developer/message（后者不得因新增交接条目而被顺手呈现）。
+    // 交接型 developer/message 由专用交接条目承载；剩余未呈现的 turn/start、turn/end
+    // 与 tool-registry 型 developer/message 共三条生命周期事件，agent/inbox/spliced 属通信。
     // 摘要行是产物内文本，不是 stdout 的命令级摘要。
-    assert.equal(content.includes("摘要：已隐藏 4 条生命周期事件"), true);
+    assert.equal(content.includes("已隐藏 3 条生命周期事件"), true);
   });
 
   it("--tools 不改变交接条目，也不解除生命周期事件隐藏", () => {

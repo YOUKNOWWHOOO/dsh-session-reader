@@ -199,16 +199,10 @@ export function renderListMd(
 
 /** 检索范围的覆盖面描述（使"0 命中"不被误读为"不存在"：只有 all 档才覆盖任意事件记录）。 */
 const SCOPE_COVERAGE_TEXT: Record<SearchOutcome["scope"], string> = {
-  // 三档都必须把"已排除什么"写进描述：`text` 与 `show` 默认参数同口径（框架注入与调度回执已排除），
-  // `tools` 另排除调度回执，只有 `all` 是穷尽档。描述与检索单元必须一致，否则调用方会按错误的
-  // 覆盖面读 0 命中，把"被默认排除"读成"不存在"。
-  //
-  // `text` 档必须把合成条目与子代理工具正文逐项写进描述：它们与用户/助手正文、提问/回答一样建检索
-  // 单元，只写"用户/助手正文与提问/回答"会让调用方以为这些内容不在默认档的命中集内，从而把"命中"
-  // 读成"来自别的档"、把"0 命中"读成"不存在"。子代理任务在这里指创建工具的任务正文，与会话首条
-  // 任务消息同名，两者都在默认档内，因此不得把该名称限定为其中之一。
-  text: "用户与助手正文、提问与回答、上下文摘要、交接通知、交接指令、子代理任务与发往子代理的可读正文（subagent/subagent_fork 的任务正文与 send_message 的消息正文均覆盖；不含框架注入与子代理调度回执）",
-  tools: "另含原始工具参数与结果（不含框架注入与子代理调度回执）",
+  // text 与 tools 都排除框架注入、调度回执及代理通信；all 覆盖完整事件载荷。
+  // 显式描述各档边界，避免把过滤造成的零命中误读为内容不存在。
+  text: "用户与助手正文、提问与回答、上下文摘要、交接通知、交接指令（不含框架注入、子代理调度回执与代理通信）",
+  tools: "另含原始工具参数与结果（不含框架注入、子代理调度回执与代理通信）",
   all: "穷尽（另含推理/系统/压缩/命令/标题请求/web 请求/交付物/待办/代理信箱与每条事件载荷）",
 };
 
@@ -244,6 +238,11 @@ export function renderSearchMd(outcome: SearchOutcome): RenderedOutput {
   if (excluded.userMessages > 0 || excluded.subagentReceipts > 0) {
     sections.push(
       `已排除 ${excluded.userMessages} 条框架注入与 ${excluded.subagentReceipts} 条子代理调度回执（--scope all 可检索）`,
+    );
+  }
+  if (outcome.excludedAgentMessages > 0) {
+    sections.push(
+      `已排除 ${outcome.excludedAgentMessages} 条与其它 agent 的通信（--scope all 可检索）`,
     );
   }
   sections.push(...coverageSections(outcome.coverage));

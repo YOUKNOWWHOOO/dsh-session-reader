@@ -71,7 +71,7 @@ node "<skill_dir>/scripts/run-session-reader.ts" show last --output-dir "<projec
 - `--limit N` 用于 `list` 和 `search`，默认 100，0 表示不限；不改变命中总数与覆盖声明。
 - `--sort <time|created|title|size>` 仅用于 `list`，默认 `time`；标题升序，其余降序，并列按会话 id 排序。其它取值报参数无效。
 - `--full` 仅用于 `list`，以逐会话块代替精简表格。
-- `--scope <text|tools|all>` 仅用于 `search`，默认 `text`，范围见下表。
+- `--scope <text|tools|all>` 仅用于 `search`，默认 `text`；`text` 与 `tools` 排除结构化代理通信，`all` 检索完整事件载荷，范围见下表。
 - `--case-sensitive` 仅用于 `search`，使检索区分大小写；默认不区分。
 - `--context N` 仅用于 `search`，默认在命中两侧各取 60 个码点；被裁剪的一侧显示省略号。
 - `--session <目标>`、`--exclude-session <目标>` 仅用于 `search`，分别选择和排除目标及其子代理子树；同时使用时取交集。
@@ -81,18 +81,19 @@ node "<skill_dir>/scripts/run-session-reader.ts" show last --output-dir "<projec
 以下选项用于 `show`。
 
 - `--role <user|assistant>` 只过滤对话消息，工具与事件不受影响。
-- `--thinking` 显示推理；`--tools` 显示工具调用、结果和子代理调度回执；`--events` 显示生命周期事件、系统消息及默认排除的注入消息。这些内容默认隐藏。
-- `--subagents` 连带导出子代理会话。
+- `--thinking` 显示推理；`--tools` 显示工具调用、结果和子代理调度回执；`--events` 显示生命周期事件、系统消息及默认排除的注入消息。这些内容默认隐藏。通信开关关闭时，原始通信调用与发送结果不因 `--tools` 出现；打开时发送结果按 `--tools` 显示，原始调用不重复输出。
+- `--include-agent-comm` 是默认关闭的无值开关，仅用于 `show` 的 md 与 json，显式包含父会话和子代理会话中双向的结构化通信，具体范围见“阅读与检索”。`--events` 与 `--tools` 不能恢复开关关闭时排除的通信；收件箱事件在开关打开时仍由 `--events` 决定是否展示。
+- `--subagents` 连带导出子代理会话；是否包含通信由 `--include-agent-comm` 分别控制。子代理自身会话的助手文本块受该开关控制，推理保留；fork 子代理同样处理。fork 子代理（类型为子代理的会话）从父会话继承的种子历史属于该子会话，其助手文本块同样受该开关控制，真实用户消息照常显示。
 - `--headers` 显示事件序号和本地时间；PTC 条目还显示调用和父调用标识。
 - `--truncate N` 按码点截断正文并加省略号，默认 0 表示不截断；头部和交接坐标不受影响。
 - `--turn <A-B|A>`、`--seq <A-B|A>` 按包含端点的区间筛选每个会话块，最小值分别为 1 和 0；同用取交集，子代理按自己的事件流计。
 - `--head N`、`--tail N` 分别取根会话时间线的前 N 条或后 N 条，0 表示不限。每条由一个标签及其正文组成；助手正文、推理、原始工具和问答分别计条。
-- `--summary` 输出每轮内容大纲，代替时间线；大纲不含来源标注及问答条目。`--role`、`--thinking`、`--tools`、`--events`、`--headers` 同用时无效果；与 `--probe` 同用时按探测处理。
+- `--summary` 输出每轮内容大纲，代替时间线；大纲不含来源标注及问答条目。`--include-agent-comm` 影响 prompt 与 response 的选择；`--role`、`--thinking`、`--tools`、`--events`、`--headers` 同用时无效果；与 `--probe` 同用时按探测处理。
 - `--probe` 只输出头部与按同组选项完整导出的预计 UTF-8 字节数，不输出正文。
 
 ### 组合限制
 
-`--role`、`--thinking`、`--tools`、`--events`、`--headers`、`--truncate`、`--turn`、`--seq`、`--head`、`--tail` 和 `--probe` 仅适用于 md。jsonl 不可与 `--summary` 或 `--subagents` 同用。
+`--role`、`--thinking`、`--tools`、`--events`、`--headers`、`--truncate`、`--turn`、`--seq`、`--head`、`--tail` 和 `--probe` 仅适用于 md。`--include-agent-comm` 控制内容范围，适用于 md 与 json；jsonl 不可与 `--summary`、`--subagents` 或 `--include-agent-comm` 同用，违者退出 2。
 
 `--head` 与 `--tail` 互斥；`--summary` 与 `--turn`、`--seq`、`--head`、`--tail` 互斥；`--probe` 与 `--subagents` 互斥。指定 `stats` 目标时不可使用会话过滤选项。`list --full --format json` 被接受，但 `--full` 不改变 JSON 输出。
 
@@ -100,17 +101,23 @@ node "<skill_dir>/scripts/run-session-reader.ts" show last --output-dir "<projec
 
 ## 阅读与检索
 
-默认时间线显示用户和助手正文、提问与回答、子代理任务和发往子代理的消息，以及上下文摘要、交接指令、交接通知和交接坐标。提问被取消或中止时没有回答条目。自定义 PTC 停用了提问工具；已有问答记录仍可读取。直接工具与 PTC 子调用采用相同的展示和检索语义，`mcp_call`、`creation_call` 的子结果可用 `--tools` 查看。
+默认时间线显示用户和助手正文、提问与回答，以及上下文摘要、交接指令、交接通知和交接坐标；子代理助手正文的例外见下文。提问被取消或中止时没有回答条目。自定义 PTC 停用了提问工具；已有问答记录仍可读取。直接工具与 PTC 子调用采用相同的展示和检索语义，`mcp_call`、`creation_call` 的子结果可用 `--tools` 查看。
+
+默认排除结构化通信，包括 `subagent`、`subagent_fork` 任务调用，`send_message` 调用及配对结果，来源为 `agent-message`、`subagent-settled`、`team-message`、`coordinator`、`subagent-report` 的用户消息，子代理会话首条任务、子代理助手消息的文本块和 `agent/inbox/spliced` 事件。通信开关关闭时，子代理会话的助手消息排除文本块，保留推理与普通工具调用；助手消息的 `toolCalls` 数组另按工具名排除通信调用块（`subagent`、`subagent_fork`、`send_message`）；文本、推理与工具调用全空时不输出该消息。发送调用不区分方向，呈现标签为 `发往代理`。创建回执仍按子代理调度回执处理。
+
+`show` 的 md 和 json 可用 `--include-agent-comm` 包含通信；收件箱事件还需要 `--events`。`show --format jsonl` 逐事件导出目标节点，`search --scope all` 检索完整事件载荷。过滤只针对结构化记录，`run_code` 外层参数、正文引用和摘要复述等通用载荷中的副本不受过滤。本参数不是隐私隔离或脱敏工具。
+
+md 时间线摘要在排除数量非零时显示 `已排除 N 条与其它 agent 的通信（--include-agent-comm 显示）`；轮次大纲不新增计数行。计数按每个节点的事件记录，任务调用、发送调用及其结果、来源消息、首条任务和收件箱事件各计一次；子代理助手消息即使过滤多个文本块也只计一次，父、子和收件箱副本分别计数。开关打开时计数为 0。
 
 交接通知只给交接文件路径与读取要求；技能不读取外部交接文件。用户角色不一定代表人类输入，应查看来源标注或 JSON 的 `source`。子代理块以路径编号表示层级，例如 `1.2` 是第一个子代理的第二个子代理。
 
 | 检索范围 | 内容 |
 | --- | --- |
-| `text` | 默认交流正文，以及上述问答、子代理和上下文条目的可读文本 |
-| `tools` | 包含 `text`，并增加工具参数与结果，包括问答原始载荷 |
-| `all` | 包含上述内容及完整事件载荷，包括默认隐藏的记录 |
+| `text` | 默认交流正文，以及问答和上下文条目的可读文本；排除结构化代理通信 |
+| `tools` | 包含 `text`，并增加工具参数与结果，包括问答原始载荷；排除结构化代理通信 |
+| `all` | 包含上述内容及完整事件载荷，包括代理通信和默认隐藏的记录 |
 
-`text` 与 `tools` 排除框架注入和子代理创建回执；`all` 可检索这些记录。
+`text` 与 `tools` 还排除框架注入和子代理创建回执；`all` 可检索这些记录。`search` 不接受 `--include-agent-comm`。检索 md 在通信排除数非零时显示 `已排除 N 条与其它 agent 的通信（--scope all 可检索）`。
 
 `all` 按 JSON 记录形态检索，字符可能被转义；零命中不能单独证明原文不存在。先检查覆盖声明中的排除项和每会话命中分布，再考虑排除当前会话及其子树。命中总数按检索单元计，不等于文本出现次数。
 
@@ -126,15 +133,15 @@ node "<skill_dir>/scripts/run-session-reader.ts" show last --output-dir "<projec
 | --- | --- |
 | `list` | `sessions`、`coverage` |
 | `show` | `session`、`meta`、`turns`、`messages`、`subagents`、`coverage`；`meta.hasToolCalls` 表示是否包含工具调用 |
-| `search` | `matches`、`total`、`truncated`、`scope`、`totalIsExact`、`excludedInjections`、`coverage`、`scan`、`distribution` |
+| `search` | `matches`、`total`、`truncated`、`scope`、`totalIsExact`、`excludedInjections`、`excludedAgentMessages`、`coverage`、`scan`、`distribution`；`all` 时 `excludedAgentMessages` 为 0 |
 | `stats` | `kind`、会话概况、`coverage`、`scan`；以 `hasToolCalls` 表示工具是否存在 |
 | `check` | `sessions`、`anomalyCount`、`coverage` |
 
 `coverage` 显示扫描、纳入和逐项排除的会话，应查看排除原因而不只看数量；`scan` 显示实际解码与读取的范围及失败信息。`show` 子树中归属未知的会话单列，`--probe` 不提供 `coverage`。
 
-`show` 的 `messages` 保留真实事件 `type`。PTC 调用和结果分别使用 `tool/ptc-dispatch-start`、`tool/ptc-dispatch`，包含 `callId`、`rootCallId`、`parentCallId`、`name`、`arguments`；结果另含 `isError` 和 `text`，参数为规范 JSON 文本。`turns` 与助手消息的 `toolCalls` 是内容数组；`--summary` 时 `messages` 为空数组。
+`show` 的 `messages` 保留真实事件 `type`，结构化通信按开关过滤；助手消息的 `toolCalls` 数组按块过滤通信调用。PTC 调用和结果分别使用 `tool/ptc-dispatch-start`、`tool/ptc-dispatch`，包含 `callId`、`rootCallId`、`parentCallId`、`name`、`arguments`；结果另含 `isError` 和 `text`，参数为规范 JSON 文本。`turns` 与助手消息的 `toolCalls` 是内容数组；`--summary` 时 `messages` 为空数组。`show` JSON 不新增通信计数字段，收件箱事件需用 JSONL 取回。
 
-JSONL 首行为会话头，其后逐行保存原始事件，不包含子代理子树。Markdown 空值显示 `-`，JSON 空值为 `null`；Markdown 时间使用本地时区，JSON 时间为毫秒数。
+JSONL 首行为会话头，其后逐行保存目标节点的完整事件，不递归子代理；读取子代理须单独指定其目标。Markdown 空值显示 `-`，JSON 空值为 `null`；Markdown 时间使用本地时区，JSON 时间为毫秒数。
 
 ## 错误与限制
 

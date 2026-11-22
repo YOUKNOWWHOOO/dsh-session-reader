@@ -33,7 +33,6 @@ import {
   eventType,
   isToolCallEvent,
   isToolResultEvent,
-  messageTextFromBlocks,
   readString,
   reasoningFromBlocks,
   textFromBlocks,
@@ -63,9 +62,11 @@ import type {
   StoreError,
 } from "./store-types.ts";
 import {
-  collectSubagentReplyCallIds,
-  countExcludedInjections,
+  buildDefaultViewFilter,
+  countExcludedFromDefaultView,
+  type DefaultViewFilter,
   isVisibleEvent,
+  projectAssistantContent,
 } from "./visibility.ts";
 
 interface SearchUnit {
@@ -94,19 +95,15 @@ function messageContent(event: EventRecord): unknown {
  * 收集单个事件的可检索文本单元。
  *
  * 三档语义（单调包含）：
- * - `text`：用户/助手正文、`ask` 给出的提问/回答可读文本，以及子代理相关工具调用的可读正文
- *   （创建工具的 `prompt`、`send_message` 的 `message`）；与 `show` 默认参数**同一可见性**
- *   （框架注入的消息与子代理调度回执都不进本档）；
- * - `tools`：另含工具调用参数与工具结果（含问答的原始载荷；子代理调度回执不进本档）；子代理相关
- *   调用的原始实参同样在此档，不因已有专用正文而被替代；
+ * - `text`：用户/助手正文和 `ask` 的提问/回答可读文本，排除注入、调度回执及代理通信；
+ * - `tools`：另含工具调用参数与工具结果，仍排除代理通信与调度回执；
  * - `all`：另含推理、系统消息、压缩摘要、命令、标题请求、web 检索请求、交付物、待办、代理信箱，
  *   **以及整条事件记录的完整 JSON 载荷**（label 取事件类型）。`all` 是穷尽档，不做可见性过滤：
  *   它是"检索 0 命中 ⇒ 不存在"这一推断成立的前提，也是取回被默认排除内容的入口。
  *
  * `ask` 必须由调用方从 `ask-user.ts` 的分析结果里按事件取回，而不是在这里自行解析载荷：
  * 检索单元与 md 条目必须是同一份抽取的产物，否则调用方会读到"呈现里有、检索里没有"这类不一致
- * （或反过来）。三档都包含问答可读文本与子代理调用正文，是 `text ⊆ tools ⊆ all` 这一单调包含
- * 关系的要求。
+ * （或反过来）。三档都包含问答可读文本，代理通信只进入 `all`。
  *
  * `all` 档的穷尽性是"检索 0 命中 ⇒ 不存在"这一推断成立的前提：按类型枚举字段必然有遗漏
  * （`assistant/attempt` 与 `llm/retry` 的 `data.failure` 内嵌上游错误体，只按类型枚举的档位检索不到它们），
@@ -115,20 +112,20 @@ function messageContent(event: EventRecord): unknown {
  * 返回的每个单元都带上所属事件的来源归属（仅 `user/message` 事件非 null）：命中行的 `user` 标签
  * 会把子代理中继与插件注入显示成用户消息，来源归属是调用方区分它们的唯一依据。
  *
- * @param replyCallIds 会话内子代理创建调用的 `callId` 集合，用于识别调度回执（与 `visibility.ts` 同源）。
+ * @param filter 会话级过滤器，包含调用配对与通信开关。
  */
 function collectSearchUnits(
   event: EventRecord,
   scope: "text" | "tools" | "all",
   ask: AskUserEntry | null,
-  replyCallIds: ReadonlySet<string>,
+  filter: DefaultViewFilter,
   context: ContextAnalysis,
 ): SearchUnit[] {
   const type = eventType(event);
-  // 可见性与 show 默认参数同源：注入消息与调度回执在 `text`/`tools` 两档都不进检索单元，
+  // 可见性与 show 默认参数同源：框架注入、子代理调度回执与结构化代理通信在 `text`/`tools` 两档都不进检索单元，
   // 否则"默认检索不到"会与"默认提取里有"互相矛盾，调用方会把被排除读成不存在。
   // `all` 是穷尽档，不做过滤，它同时是取回被排除内容的唯一检索入口。
-  if (scope !== "all" && !isVisibleEvent(event, replyCallIds)) return [];
+  if (scope !== "all" && !isVisibleEvent(event, filter)) return [];
   const units: TextUnit[] = [];
   if (type === "user/message") {
     const checkpoint = context.checkpoints.get(event);
@@ -146,12 +143,13 @@ function collectSearchUnits(
       if (text.length > 0) units.push({ label, text });
     }
   } else if (type === "assistant/message") {
-    const text = messageTextFromBlocks(messageContent(event));
+    const text = projectAssistantContent(
+      asRecord(asRecord(event.data)?.message) ?? {},
+      filter,
+    ).text;
     if (text.length > 0) units.push({ label: "assistant", text });
   } else if (isToolCallEvent(event)) {
-    // 子代理相关调用（创建工具的 `prompt`、`send_message` 的 `message`）在三档都建可读正文单元，
-    // 与 show 的专用条目同源：否则会出现"呈现里有、检索里没有"的不一致。三档都含它，是
-    // `text ⊆ tools ⊆ all` 这一单调包含关系的要求。
+    // 通信调用仅 all 档到达此处，可读正文与 show 的专用条目同源。
     const subagentCall = extractSubagentCallContent(event);
     if (subagentCall !== null) {
       units.push({ label: subagentCall.label, text: subagentCall.text });
@@ -377,6 +375,7 @@ export function runSearch(
   let totalHits = 0;
   let excludedUserMessages = 0;
   let excludedSubagentReceipts = 0;
+  let excludedAgentMessages = 0;
   const excludedSessions: { id: string; reason: string }[] = [];
   const distribution: SessionHitCount[] = [];
   let scan = emptyScanSummary();
@@ -406,15 +405,22 @@ export function runSearch(
       file.data.decoded.header,
       file.data.decoded.events,
       handoff,
+      file.data.decoded.inheritedEventCount,
     );
     // 回执识别集合按整会话事件算出：配对关系是会话级事实，按筛选后的事件子集计算会漏掉配对。
-    const replyCallIds = collectSubagentReplyCallIds(file.data.decoded.events);
+    const filter = buildDefaultViewFilter(
+      file.data.decoded.events,
+      context.subagentTask,
+      readString(file.data.decoded.header, "origin") === "subagent",
+      options.scope === "all",
+    );
     // 排除量按**本次作用域**累加，供产物声明"默认检索看不到多少条"：调用方据此判断 0 命中
     // 是"不存在"还是"被默认排除"，以及是否需要改用 --scope all 取回。
     if (options.scope !== "all") {
-      const excluded = countExcludedInjections(file.data.decoded.events, replyCallIds);
+      const excluded = countExcludedFromDefaultView(file.data.decoded.events, filter);
       excludedUserMessages += excluded.userMessages;
       excludedSubagentReceipts += excluded.subagentReceipts;
+      excludedAgentMessages += excluded.agentMessages;
     }
     let sessionHits = 0;
     for (const event of file.data.decoded.events) {
@@ -422,7 +428,7 @@ export function runSearch(
         event,
         options.scope,
         askEntries.get(event) ?? null,
-        replyCallIds,
+        filter,
         context,
       )) {
         // 不区分大小写时在折叠副本上匹配，再用位置映射折回原文码点；区分大小写时直接用原文下标。
@@ -487,6 +493,7 @@ export function runSearch(
       truncated: totalHits > shown,
       scope: options.scope,
       totalIsExact: true,
+      excludedAgentMessages,
       excludedInjections: {
         userMessages: excludedUserMessages,
         subagentReceipts: excludedSubagentReceipts,

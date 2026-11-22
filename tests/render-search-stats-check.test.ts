@@ -31,6 +31,7 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
       scope: "all",
       totalIsExact: true,
       excludedInjections: { userMessages: 0, subagentReceipts: 0 },
+      excludedAgentMessages: 0,
       coverage: coverage({ includedCount: 2 }),
       scan: scanSummary(),
       distribution: [],
@@ -59,10 +60,10 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
     assert.equal(rendered.summary, md.summary);
   });
 
-  it("检索范围文案逐项列出 text 档的四类合成条目、三类子代理交互正文与默认排除", () => {
+  it("检索范围文案逐项列出 text 档的三类合成条目与默认排除", () => {
     // 覆盖面描述是调用方判断"0 命中能否当作不存在"的唯一依据：漏写某一类单元会让调用方
-    // 把该类的命中读成不属于本档、把该类的 0 命中读成不存在。因此这里逐项锁定四类合成条目
-    // 与 subagent/subagent_fork/send_message 的可读正文，防止文案再次漂移回只列部分载体。
+    // 把该类的命中读成不属于本档、把该类的 0 命中读成不存在。因此这里逐项锁定三类合成条目
+    // 与代理通信排除，防止文案再次漂移回只列部分载体。
     const outcome: SearchOutcome = {
       hits: [],
       totalHits: 0,
@@ -70,6 +71,7 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
       scope: "text",
       totalIsExact: true,
       excludedInjections: { userMessages: 0, subagentReceipts: 0 },
+      excludedAgentMessages: 0,
       coverage: coverage({ includedCount: 1 }),
       scan: scanSummary(),
       distribution: [],
@@ -77,14 +79,14 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
     const content = renderSearchMd(outcome).content;
     assert.equal(
       content.includes(
-        "检索范围：text（用户与助手正文、提问与回答、上下文摘要、交接通知、交接指令、子代理任务与发往子代理的可读正文（subagent/subagent_fork 的任务正文与 send_message 的消息正文均覆盖；不含框架注入与子代理调度回执））；命中总数 0 为精确值",
+        "检索范围：text（用户与助手正文、提问与回答、上下文摘要、交接通知、交接指令（不含框架注入、子代理调度回执与代理通信））；命中总数 0 为精确值",
       ),
       true,
     );
-    for (const label of ["上下文摘要", "交接通知", "交接指令", "子代理任务"]) {
+    for (const label of ["上下文摘要", "交接通知", "交接指令"]) {
       assert.equal(content.includes(label), true, label);
     }
-    assert.equal(content.includes("不含框架注入与子代理调度回执"), true);
+    assert.equal(content.includes("不含框架注入、子代理调度回执与代理通信"), true);
   });
 
   it("search 未截断时无截断标注，且排除项逐条列出", () => {
@@ -95,6 +97,7 @@ describe("renderSearchMd / renderStatsMd / renderCheckMd", () => {
       scope: "text",
       totalIsExact: true,
       excludedInjections: { userMessages: 0, subagentReceipts: 0 },
+      excludedAgentMessages: 0,
       coverage: coverage({
         includedCount: 1,
         excluded: [{ id: "session-bad-09", reason: "解码失败" }],

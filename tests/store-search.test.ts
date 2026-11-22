@@ -330,14 +330,14 @@ describe("runSearch 的合成上下文消息检索单元", () => {
     });
   });
 
-  it("text 档：三类合成消息各有独立单元名", () => {
+  it("text 档：通信任务正文默认排除，其他合成消息各有独立单元名", () => {
     assert.deepEqual(
       search("PROMPT-MARK", "text").hits.map((hit) => hit.label),
       ["交接指令"],
     );
     assert.deepEqual(
       search("TASK-MARK", "text").hits.map((hit) => hit.label),
-      ["子代理任务"],
+      [],
     );
     assert.deepEqual(
       search("CHECKPOINT-MARK", "text").hits.map((hit) => hit.label),

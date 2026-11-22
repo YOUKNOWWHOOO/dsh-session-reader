@@ -1,9 +1,9 @@
 // 用途：合成上下文消息的判定与正文抽取，标准模式的官方压缩检查点、交接投递的压缩通知、交接维护指令、
-// 子代理会话的首条任务消息，以及子代理创建与发往子代理两类工具调用的正文。它们都不是人类用户输入，
+// 子代理会话的首条任务消息，以及创建子代理与向代理发消息的工具调用正文。它们都不是人类用户输入，
 // 分别渲染为 `**上下文摘要**`、`**交接通知**`、`**交接指令**`、`**子代理任务**` 与
-// `**发往子代理**`，而不是伪装成 `**用户**` 正文。
+// `**发往代理**`，而不是伪装成 `**用户**` 正文。
 // 主要入口：`analyzeContextCheckpoints`（按事件身份索引的合成条目）、`extractSubagentCallContent`
-// （子代理创建与发往子代理两类工具调用的可读正文，md 条目与检索单元的同一真值源）。
+// （创建子代理与向代理发消息的可读正文，md 条目与检索单元的同一真值源）。
 // 关键依赖：decode.ts（事件读取基元与 `userMessageText`）、handoff.ts（交接通知与维护指令）、
 // visibility.ts（子代理创建工具名的唯一判据）。
 // 设计约束：
@@ -13,12 +13,12 @@
 // 2. 交接：交接后投递的 `context-compacted` 通知单独渲染为 `**交接通知**`；交接内容以该通知所指的
 //    文件为准，通知与交接事件都不承载文件全文，本技能不自动读取该文件。助手事件因此按普通消息呈现、
 //    不做任何抑制。维护指令由 handoff.ts 按来源与注入标记判定。
-// 3. 子代理任务判据：会话 header 的 `origin` 为 `subagent`，且首条 `source.kind === "user"` 的消息
-//    不带 `rpcId`。带 `rpcId` 的是客户端提交的真实用户输入，不标为任务。
+// 3. 子代理任务判据：会话 header 的 `origin` 为 `subagent`，且在本会话自有事件范围内，首条
+//    `source.kind === "user"` 的消息不带 `rpcId`。种子会话的 inheritedEventCount 个事件是继承历史，
+//    其中带 `rpcId` 的用户消息不能阻止自有首条任务消息被识别。自有候选带 `rpcId` 时不标为任务。
 // 4. 子代理工具调用的正文只从调用实参取：创建工具（`subagent`/`subagent_fork`）取 `prompt`，
 //    `send_message` 取 `message`。工具名判据在 visibility.ts，本模块不维护工具名字面量。
-// 5. 这些合成条目的可见性不随 `--thinking`/`--tools`/`--events`/`--role` 改变（它们是上下文结构，
-//    不是对话双方之一），也不计入任何隐藏计数；仍受 `--turn`/`--seq` 与 `--head`/`--tail` 影响。
+// 5. 子代理任务和通信调用默认被排除，显式开启通信后才呈现；其它合成条目不受呈现开关控制。
 //    通知与维护指令的来源 `handoff` 已加入 visibility.ts 的保留名单，因此专门条目不会
 //    在进入渲染前被当作普通注入丢弃。
 
@@ -48,12 +48,12 @@ export const HANDOFF_PROMPT_LABEL = "交接指令";
 export const SUBAGENT_TASK_LABEL = "子代理任务";
 
 /**
- * `**发往子代理**` 标签取值（`send_message` 工具调用的消息正文）。
+ * `**发往代理**` 标签取值（`send_message` 工具调用的消息正文）。
  *
  * 与 `SUBAGENT_TASK_LABEL` 一起构成工具调用正文仅有的两个标签，取值由
  * `extractSubagentCallContent` 的返回类型引用，不在此之外另写一份字符串联合。
  */
-const SEND_TO_SUBAGENT_LABEL = "发往子代理";
+const SEND_TO_AGENT_LABEL = "发往代理";
 
 /** 标准模式官方压缩检查点的来源种类。 */
 export const COMPACT_CHECKPOINT_KIND = "compact-checkpoint";
@@ -85,8 +85,8 @@ export interface HandoffNoticeEntry {
  * 检索层直接用这两个字段建检索单元。这样同一份抽取同时服务 md 与 search，不需要各自解析实参。
  */
 export interface SubagentCallContent {
-  /** 工具调用的标签取值，只有两个来源（见 `SUBAGENT_TASK_LABEL` 与 `SEND_TO_SUBAGENT_LABEL`）。 */
-  readonly label: typeof SUBAGENT_TASK_LABEL | typeof SEND_TO_SUBAGENT_LABEL;
+  /** 工具调用的标签取值，只有两个来源（见 `SUBAGENT_TASK_LABEL` 与 `SEND_TO_AGENT_LABEL`）。 */
+  readonly label: typeof SUBAGENT_TASK_LABEL | typeof SEND_TO_AGENT_LABEL;
   /** 展示括号里的附加信息（创建工具取 `description`，`send_message` 取 `agent_id`）；缺失时为 null。 */
   readonly annotation: string | null;
   /** 交流正文（创建工具取 `prompt`，`send_message` 取 `message`）。 */
@@ -115,19 +115,22 @@ function sourceKindOf(event: EventRecord): string | null {
 /**
  * 子代理会话的首条任务消息。
  *
- * 判据只取字段：header 的 `origin` 为 `subagent`，首条 `source.kind === "user"` 的消息不带 `rpcId`。
- * 带 `rpcId` 的是客户端提交的真实输入，遇到即停止判定（不再向后寻找），避免把后续真实消息标成任务。
+ * 判据只取字段：header 的 `origin` 为 `subagent`，并且只在 `inheritedEventCount` 之后的自有事件中查找
+ * 首条 `source.kind === "user"` 的消息。继承历史是 events 数组的前缀，不按事件 seq 推断边界。
+ * 自有首个候选带 `rpcId` 时立即停止判定，避免把后续真实消息标成任务。
  *
  * @param header 会话日志的逻辑 header。
  * @param events 会话的已解码逻辑事件。
+ * @param inheritedEventCount 继承历史在 events 数组中的前缀长度。
  * @returns 任务消息；主会话、无候选或首个候选带 `rpcId` 时返回 null。
  */
 function subagentTaskOf(
   header: Record<string, unknown>,
   events: readonly EventRecord[],
+  inheritedEventCount: number,
 ): EventRecord | null {
   if (readString(header, "origin") !== "subagent") return null;
-  for (const event of events) {
+  for (const event of events.slice(inheritedEventCount)) {
     if (eventType(event) !== "user/message") continue;
     if (sourceKindOf(event) !== "user") continue;
     const source = asRecord(asRecord(event.data)?.source) ?? {};
@@ -143,12 +146,14 @@ function subagentTaskOf(
  * @param header 会话日志的逻辑 header（用于判定子代理任务）。
  * @param events 会话的已解码逻辑事件。
  * @param handoff 同一批事件的交接分析结果（提供交接通知与维护指令）。
+ * @param inheritedEventCount 继承历史在 events 数组中的前缀长度。
  * @returns 摘要条目、交接通知、维护指令与子代理任务。
  */
 export function analyzeContextCheckpoints(
   header: Record<string, unknown>,
   events: readonly EventRecord[],
   handoff: HandoffAnalysis,
+  inheritedEventCount: number,
 ): ContextAnalysis {
   const checkpoints = new Map<EventRecord, ContextCheckpoint>();
   for (const event of events) {
@@ -168,7 +173,7 @@ export function analyzeContextCheckpoints(
     checkpoints,
     handoffNotices,
     handoffPrompts,
-    subagentTask: subagentTaskOf(header, events),
+    subagentTask: subagentTaskOf(header, events, inheritedEventCount),
   };
 }
 
@@ -250,7 +255,7 @@ export function extractSubagentCallContent(event: EventRecord): SubagentCallCont
   const message = readString(parsed, "message") ?? "";
   if (message.length === 0) return null;
   return {
-    label: SEND_TO_SUBAGENT_LABEL,
+    label: SEND_TO_AGENT_LABEL,
     annotation: readString(parsed, "agent_id") ?? null,
     text: message,
   };

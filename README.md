@@ -75,7 +75,7 @@ scripts/
     context-checkpoint.ts   合成上下文消息的判定与正文抽取
     ask-user.ts             问答的可读文本抽取
     handoff.ts              交接的结构事实抽取
-    visibility.ts           默认参数下的可见性白名单
+    visibility.ts           默认可见性与排除原因
     message-source.ts       来源归属与来源标注
     store-*.ts              会话发现、投影缓存元数据、列表、检索、会话概况、校验
     render-*.ts             md、json、jsonl 渲染与命令级摘要

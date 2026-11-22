@@ -14,6 +14,7 @@ import {
 import type { EventRecord } from "../scripts/lib/decode.ts";
 import { analyzeHandoffEvents, HANDOFF_LABEL } from "../scripts/lib/handoff.ts";
 import { computeTurns } from "../scripts/lib/render-core.ts";
+import { buildDefaultViewFilter } from "../scripts/lib/visibility.ts";
 import { decodedFile, node, showMd, showOptions } from "./render-helpers.ts";
 
 const BODY = "助手回复 BODY-MARK";
@@ -114,8 +115,12 @@ describe("标准模式的官方压缩检查点", () => {
       ev("turn/end", 3, { turn: 1 }),
     ];
     const handoff = analyzeHandoffEvents(events);
-    const context = analyzeContextCheckpoints({}, events, handoff);
-    const turns = computeTurns(decodedFile(events), checkpointSeqsOf(context));
+    const context = analyzeContextCheckpoints({}, events, handoff, 0);
+    const turns = computeTurns(
+      decodedFile(events),
+      checkpointSeqsOf(context),
+      buildDefaultViewFilter(events, context.subagentTask, false, false),
+    );
     assert.equal(turns[0]?.prompt, null);
   });
 });
@@ -130,7 +135,7 @@ describe("旧自定义交接形态不再识别", () => {
       ev("turn/end", 4, { turn: 1 }),
     ];
     const analysis = analyzeHandoffEvents(events);
-    const context = analyzeContextCheckpoints({}, events, analysis);
+    const context = analyzeContextCheckpoints({}, events, analysis, 0);
     // 旧摘要投递与助手副本抑制已删除，不保留空集合或兼容别名。
     assert.equal(Object.hasOwn(analysis, "deliveries"), false);
     assert.equal(Object.hasOwn(context, "suppressedAssistantSeqs"), false);
@@ -173,7 +178,7 @@ describe("子代理会话的首条任务消息", () => {
         },
       },
     };
-    const content = showMd(subagentNode, showOptions()).content;
+    const content = showMd(subagentNode, showOptions({ includeAgentComm: true })).content;
     assert.equal(content.includes(`**${SUBAGENT_TASK_LABEL}**：`), true);
     assert.equal(content.includes("TASK-MARK"), true);
   });
@@ -184,12 +189,50 @@ describe("子代理会话的首条任务消息", () => {
       content: [{ type: "text", text: "真实用户输入" }],
       source: { kind: "user", rpcId: "rpc-1" },
     });
+    const inheritedEventCount = 0;
     const analysis = analyzeContextCheckpoints(
       { origin: "subagent", delegationDepth: 1 },
       [message],
       analyzeHandoffEvents([message]),
+      inheritedEventCount,
     );
     assert.equal(analysis.subagentTask, null);
+  });
+
+  it("种子前缀里的无 rpcId 用户消息不影响自有任务识别", () => {
+    const inheritedEvents = [
+      ev("turn/start", 0, { turn: 1 }),
+      userMessage(1, "继承用户消息 WITHOUT-RPC-INHERITED"),
+      assistantMessage(2, "继承助手回复 WITHOUT-RPC-INHERITED"),
+    ];
+    const task = userMessage(3, "自有任务 WITHOUT-RPC-TASK");
+    const events = [...inheritedEvents, task];
+    const inheritedEventCount = 3;
+    const analysis = analyzeContextCheckpoints(
+      { origin: "subagent", delegationDepth: 1 },
+      events,
+      analyzeHandoffEvents(events),
+      inheritedEventCount,
+    );
+    assert.equal(analysis.subagentTask, task);
+  });
+
+  it("种子历史中的 rpcId 不得阻止自有首条任务消息被识别", () => {
+    const inheritedMessage = ev("user/message", 0, {
+      role: "user",
+      content: [{ type: "text", text: "继承历史中的用户输入" }],
+      source: { kind: "user", rpcId: "rpc-inherited" },
+    });
+    const task = userMessage(1, "自有子代理任务 TASK-AFTER-INHERITED");
+    const events = [inheritedMessage, task, assistantMessage(2, "回答")];
+    const inheritedEventCount = 1;
+    const analysis = analyzeContextCheckpoints(
+      { origin: "subagent", delegationDepth: 1 },
+      events,
+      analyzeHandoffEvents(events),
+      inheritedEventCount,
+    );
+    assert.equal(analysis.subagentTask, task);
   });
 });
 
@@ -254,14 +297,18 @@ describe("文件式交接的压缩通知", () => {
   it("通知与维护指令都不进入轮次大纲的 prompt", () => {
     const events = noticeEvents();
     const analysis = analyzeHandoffEvents(events);
-    const context = analyzeContextCheckpoints({}, events, analysis);
+    const context = analyzeContextCheckpoints({}, events, analysis, 0);
     const notice = events[5] as EventRecord;
     const instruction = events[1] as EventRecord;
     assert.equal(context.handoffNotices.has(notice), true);
     assert.equal(context.handoffNotices.get(notice)?.text, NOTICE);
     assert.equal(context.handoffPrompts.has(instruction), true);
     assert.equal(context.handoffPrompts.get(instruction)?.text, INSTRUCTION);
-    const turns = computeTurns(decodedFile(events), checkpointSeqsOf(context));
+    const turns = computeTurns(
+      decodedFile(events),
+      checkpointSeqsOf(context),
+      buildDefaultViewFilter(events, context.subagentTask, false, false),
+    );
     assert.equal(turns[0]?.prompt, CONTINUE);
   });
 

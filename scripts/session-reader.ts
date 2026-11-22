@@ -222,10 +222,14 @@ export const COMMANDS: readonly CommandSpec[] = [
       },
       { name: "--thinking", kind: "switch", description: "显示推理内容（仅 md；默认隐藏）" },
       {
+        name: "--include-agent-comm",
+        kind: "switch",
+        description: "包含与其它 agent 的通信（默认排除；md、json 可用；jsonl 禁止）",
+      },
+      {
         name: "--tools",
         kind: "switch",
-        description:
-          "显示工具调用与结果（仅 md；默认隐藏）；提问与回答、子代理任务与发往子代理、交接的条目恒显示，不受本开关控制",
+        description: "显示工具调用与结果（仅 md；默认隐藏）；通信仍由 --include-agent-comm 控制",
       },
       {
         name: "--events",
@@ -291,7 +295,7 @@ export const COMMANDS: readonly CommandSpec[] = [
         valueKind: "enum",
         values: SCOPE_VALUES,
         description:
-          "检索范围（text=用户与助手正文、提问与回答、上下文摘要/交接通知/交接指令/子代理任务与发往子代理的可读正文（子代理任务含 subagent/subagent_fork 的任务正文，发往子代理为 send_message 的消息正文），与默认提取同口径；tools=另含原始工具参数与结果；all=另含推理/系统/压缩/命令/标题请求/web 请求/交付物/待办/代理信箱与每条事件载荷，是取回被默认排除内容的入口）",
+          "检索范围（text=对话与上下文正文；tools=另含工具参数与结果；两者排除代理通信；all=包含完整事件载荷）",
         defaultText: "text",
       },
       { name: "--case-sensitive", kind: "switch", description: "区分大小写（默认不区分）" },
@@ -687,7 +691,7 @@ export function validateCommandOptions(parsed: ParsedCommand): RunFailure | null
       detail: `呈现类开关 ${presentPresentation.join("、")} 仅 md 可用；去掉 ${presentPresentation.join("、")}，或把 --format 改为 md`,
     };
   }
-  const scopeSwitches = ["--summary", "--subagents"];
+  const scopeSwitches = ["--summary", "--subagents", "--include-agent-comm"];
   const presentScope = scopeSwitches.filter((name) => parsed.options.has(name));
   if (format === "jsonl" && presentScope.length > 0) {
     return {
@@ -811,6 +815,7 @@ function renderShow(
   if (format === "json") {
     const rendered = renderShowJson(node.data, {
       summary: summaryFlag,
+      includeAgentComm: optionSwitch(parsed, "--include-agent-comm"),
       subagents: includeSubagents,
       unattributable,
     });
@@ -819,6 +824,7 @@ function renderShow(
   const roleValue = optionValue(parsed, "--role");
   const showOptions: ShowMdOptions = {
     summary: summaryFlag,
+    includeAgentComm: optionSwitch(parsed, "--include-agent-comm"),
     role: roleValue === "user" || roleValue === "assistant" ? roleValue : null,
     thinking: optionSwitch(parsed, "--thinking"),
     tools: optionSwitch(parsed, "--tools"),

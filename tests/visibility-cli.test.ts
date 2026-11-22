@@ -1,12 +1,12 @@
 // 测试：默认参数下的注入过滤端到端行为，show 默认视图、`--events` 恢复、`--tools` 与注入过滤的
-// 相互独立、子代理任务与发往子代理条目的呈现、调度回执隐藏、排除计数、search 默认档同口径。
+// 相互独立、子代理任务与发往代理条目的呈现、调度回执隐藏、排除计数、search 默认档同口径。
 // 依据：默认参数只保留携带真实交流内容的消息（判定真值源 scripts\lib\visibility.ts）。
 // 说明：本文件用合成 DSH_HOME 与真实官方格式库跑 CLI，断言的是"产物里有什么、没有什么"。
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { before, describe, it } from "node:test";
+import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { asArray, asRecord, readNumber, readString } from "../scripts/lib/decode.ts";
 import { defaultLibRoot } from "../scripts/lib/paths.ts";
@@ -331,10 +331,24 @@ function searchMd(keyword: string, extra: readonly string[] = []): string {
 interface SearchDocument {
   readonly labels: string[];
   readonly total: number;
+  readonly excludedAgentMessages: number;
 }
 
-function searchJson(keyword: string, scope: "text" | "tools" | "all" = "text"): SearchDocument {
-  const result = runCli(["search", keyword, ...baseArgs(), "--scope", scope, "--format", "json"]);
+function searchJson(
+  keyword: string,
+  scope: "text" | "tools" | "all" = "text",
+  extra: readonly string[] = [],
+): SearchDocument {
+  const result = runCli([
+    "search",
+    keyword,
+    ...baseArgs(),
+    "--scope",
+    scope,
+    "--format",
+    "json",
+    ...extra,
+  ]);
   assert.equal(result.status, 0, `search --format json 失败: ${result.stderr}`);
   const lines = result.stdout.split("\n").filter((line) => line.length > 0);
   const pathMatch = /^完整输出已保存到: (.+)$/u.exec(lines[0]);
@@ -360,7 +374,10 @@ function searchJson(keyword: string, scope: "text" | "tools" | "all" = "text"): 
     if (label === undefined) throw new Error("检索命中项缺少字符串 label");
     labels.push(label);
   }
-  return { labels, total };
+  const excludedAgentMessages = readNumber(document, "excludedAgentMessages");
+  assert.notEqual(excludedAgentMessages, undefined);
+  if (excludedAgentMessages === undefined) throw new Error("检索 JSON 缺少通信排除数");
+  return { labels, total, excludedAgentMessages };
 }
 
 before(() => {
@@ -393,12 +410,15 @@ before(() => {
   });
 });
 
+after(() => rmSync(TEMP_ROOT, { recursive: true, force: true }));
+
 describe("默认参数的注入过滤", () => {
-  it("默认视图保留用户与助手正文、子代理结算，排除四类注入", () => {
+  it("默认视图保留用户与助手正文，排除代理通信和四类注入", () => {
     const { content } = showMd();
     assert.equal(content.includes("USER-MARK"), true);
     assert.equal(content.includes("ASSIST-MARK"), true);
-    assert.equal(content.includes("SETTLED-MARK"), true);
+    assert.equal(content.includes("SETTLED-MARK"), false);
+    assert.equal(content.includes("已排除 5 条与其它 agent 的通信"), true);
     for (const marker of ["CATALOG-MARK", "JOB-MARK", "MODEL-MARK", "This snapshot"]) {
       assert.equal(content.includes(marker), false, `${marker} 不应出现在默认视图`);
     }
@@ -412,15 +432,44 @@ describe("默认参数的注入过滤", () => {
       assert.equal(content.includes(marker), true, `${marker} 应在 --events 下出现`);
     }
     assert.equal(content.includes("已排除 4 条框架注入"), false);
+    assert.equal(content.includes("SETTLED-MARK"), false);
   });
 
-  it("两个创建工具的任务正文与发往子代理的正文默认呈现，调度回执默认不呈现", () => {
-    const { content } = showMd();
+  it("通信计数不受 role、events、tools 和 head 影响", () => {
+    for (const extra of [
+      ["--role", "user"],
+      ["--role", "assistant"],
+      ["--events", "--tools"],
+      ["--head", "1"],
+    ]) {
+      const content = showMd(extra).content;
+      assert.ok(content.includes("已排除 5 条与其它 agent 的通信"));
+      assert.equal(content.includes("SETTLED-MARK"), false);
+      assert.equal(content.includes("DELIVERED-MARK"), false);
+    }
+  });
+
+  it("--turn 与 --seq 范围精确计数，--head 不改变区间计数", () => {
+    const turn = showMd(["--turn", "1"]).content;
+    assert.equal(turn.includes("已排除 5 条与其它 agent 的通信"), true);
+
+    // seq 6-10 包含 settled、subagent、fork 及其两条创建回执，通信事件为 3 条，回执为 2 条。
+    const ranged = showMd(["--seq", "6-10"]).content;
+    assert.equal(ranged.includes("已排除 3 条与其它 agent 的通信"), true);
+    assert.equal(ranged.includes("已排除 2 条子代理调度回执"), true);
+
+    const rangedHead = showMd(["--seq", "6-10", "--head", "1"]).content;
+    assert.equal(rangedHead.includes("已排除 3 条与其它 agent 的通信"), true);
+    assert.equal(rangedHead.includes("已排除 2 条子代理调度回执"), true);
+  });
+
+  it("显式开启后呈现两个创建工具的任务和发往代理的消息", () => {
+    const { content } = showMd(["--include-agent-comm"]);
     assert.equal(content.includes("**子代理任务**（`审计测试术语`）："), true);
     assert.equal(content.includes(PROMPT), true);
     assert.equal(content.includes(`**子代理任务**（\`${FORK_DESCRIPTION}\`）：`), true);
     assert.equal(content.includes(FORK_PROMPT), true);
-    assert.equal(content.includes("**发往子代理**（"), true);
+    assert.equal(content.includes("**发往代理**（"), true);
     assert.equal(content.includes(SEND_MESSAGE), true);
     assert.equal(content.includes(RECEIPT), false);
     assert.equal(content.includes(FORK_RECEIPT), false);
@@ -428,27 +477,37 @@ describe("默认参数的注入过滤", () => {
     assert.equal(content.includes(PROVIDER_ARG), false);
   });
 
-  it("--tools 不解除注入过滤，也不改变两个创建工具的专用条目", () => {
+  it("--tools 不恢复通信，创建回执仍按工具结果展示", () => {
     const { content } = showMd(["--tools"]);
     assert.equal(content.includes("CATALOG-MARK"), false);
     assert.equal(content.includes("JOB-MARK"), false);
-    assert.equal(content.includes("**子代理任务**（`审计测试术语`）："), true);
-    assert.equal(content.includes(`**子代理任务**（\`${FORK_DESCRIPTION}\`）：`), true);
+    assert.equal(content.includes(PROMPT), false);
+    assert.equal(content.includes(FORK_PROMPT), false);
+    assert.equal(content.includes(SEND_MESSAGE), false);
     assert.equal(content.includes(RECEIPT), true, "--tools 下回执作为原始工具结果可见");
     assert.equal(content.includes(FORK_RECEIPT), true, "--tools 下回执作为原始工具结果可见");
-    // `send_message` 的结果不是创建回执，按普通工具结果呈现。
-    assert.equal(content.includes("DELIVERED-MARK"), true);
+    assert.equal(content.includes("DELIVERED-MARK"), false);
     // 同一调用不重复呈现：专用条目取代原始工具条目。
     assert.equal(content.includes("**工具调用**（`subagent`）"), false);
     assert.equal(content.includes("**工具调用**（`subagent_fork`）"), false);
     assert.equal(content.includes("**工具调用**（`send_message`）"), false);
   });
 
+  it("通信开关与 --tools 同时打开时发送结果可见", () => {
+    const { content } = showMd(["--include-agent-comm", "--tools"]);
+    assert.equal(content.includes("DELIVERED-MARK"), true);
+    assert.equal(content.includes(RECEIPT), true);
+    assert.equal(content.includes(FORK_RECEIPT), true);
+  });
+
   it("--subagents 的子代理块沿用同一可见性", () => {
     const { content } = showMd(["--subagents"]);
-    assert.equal(content.includes("CHILD-TASK-MARK"), true);
-    assert.equal(content.includes("CHILD-REPLY-MARK"), true);
+    assert.equal(content.includes("CHILD-TASK-MARK"), false);
+    assert.equal(content.includes("CHILD-REPLY-MARK"), false);
     assert.equal(content.includes("CHILD-SNAPSHOT-MARK"), false);
+    const included = showMd(["--subagents", "--include-agent-comm"]).content;
+    assert.equal(included.includes("CHILD-TASK-MARK"), true);
+    assert.equal(included.includes("CHILD-REPLY-MARK"), true);
   });
 
   it("search 默认档与默认提取同口径：注入不可命中，--scope all 可取回", () => {
@@ -474,32 +533,43 @@ describe("默认参数的注入过滤", () => {
     assert.equal(receipt.includes("命中总数：0"), true, "回执在默认档不可命中");
   });
 
-  it("search 默认档以专用标签检索两个创建工具与发往子代理的正文", () => {
+  it("search text 与 tools 排除通信，all 保留通信标签", () => {
     const subagent = searchJson(PROMPT);
-    assert.deepEqual(subagent.labels, ["子代理任务"]);
-    assert.equal(subagent.total, 1);
+    assert.deepEqual(subagent.labels, []);
+    assert.equal(subagent.total, 0);
     const fork = searchJson(FORK_PROMPT);
-    assert.deepEqual(fork.labels, ["子代理任务"]);
-    assert.equal(fork.total, 1);
+    assert.deepEqual(fork.labels, []);
+    assert.equal(fork.total, 0);
     const send = searchJson(SEND_MESSAGE);
-    assert.deepEqual(send.labels, ["发往子代理"]);
-    assert.equal(send.total, 1);
-    // 调度参数不进默认档，只在 tools 档随原始参数可检索；只有 `subagent` 实参带该字段。
+    assert.deepEqual(send.labels, []);
+    assert.equal(send.total, 0);
+    assert.ok(searchJson(SEND_MESSAGE, "all").labels.includes("发往代理"));
     assert.equal(searchJson(PROVIDER_ARG).total, 0);
-    assert.equal(searchJson(PROVIDER_ARG, "tools").total, 1);
+    assert.equal(searchJson(PROVIDER_ARG, "tools").total, 0);
+    assert.ok(searchJson(PROVIDER_ARG, "all").total > 0);
+  });
+
+  it("search 排除数按会话记录计数，与限制条数无关，all 为零", () => {
+    for (const scope of ["text", "tools"] as const) {
+      assert.equal(searchJson("USER-MARK", scope).excludedAgentMessages, 7);
+      assert.equal(searchJson("USER-MARK", scope, ["--limit", "1"]).excludedAgentMessages, 7);
+    }
+    assert.equal(searchJson("USER-MARK", "all").excludedAgentMessages, 0);
+    assert.ok(
+      searchMd("USER-MARK").includes("已排除 7 条与其它 agent 的通信（--scope all 可检索）"),
+    );
   });
 
   it("search 的 tools 与 all 档在专用正文之外保留原始参数与整条事件载荷", () => {
     const tools = searchJson(PROMPT, "tools");
-    assert.equal(tools.total, 2);
-    assert.deepEqual(new Set(tools.labels), new Set(["子代理任务", "tool/call"]));
+    assert.equal(tools.total, 0);
     const all = searchJson(PROMPT, "all");
     // 专用正文单元 + tool/call 原始参数单元 + 整条事件载荷单元。
     assert.equal(all.total, 3);
     assert.equal(all.labels.includes("子代理任务"), true);
     assert.equal(all.labels.includes("tool/call"), true);
     // send_message 的正文在 tools/all 档同样保留原始参数，计数按检索单元累计。
-    assert.equal(searchJson(SEND_MESSAGE, "tools").total, 2);
+    assert.equal(searchJson(SEND_MESSAGE, "tools").total, 0);
     assert.equal(searchJson(SEND_MESSAGE, "all").total, 3);
   });
 
@@ -515,7 +585,7 @@ describe("默认参数的注入过滤", () => {
     };
     const texts = document.messages.map((entry) => entry.text).join("\n");
     assert.equal(texts.includes("USER-MARK"), true);
-    assert.equal(texts.includes("SETTLED-MARK"), true);
+    assert.equal(texts.includes("SETTLED-MARK"), false);
     assert.equal(texts.includes("CATALOG-MARK"), false);
     assert.equal(texts.includes("JOB-MARK"), false);
     assert.equal(texts.includes(RECEIPT), false);
@@ -601,6 +671,103 @@ describe("默认参数的注入过滤", () => {
     assert.equal(document.turns[0]?.prompt?.includes("OUTLINE-PROMPT-MARK"), true);
     assert.equal(document.turns[0]?.prompt?.includes("OUTLINE-SNAPSHOT-MARK"), false);
   });
+
+  it("--summary 的通信开关同步控制 md 与 json turns", () => {
+    const COMM_OUTLINE_ID = "session-visibility-outline-comm-04";
+    const home = join(TEMP_ROOT, "outline-comm", "outline-comm-dsh");
+    const events: FixtureEvent[] = [
+      ev("turn/start", 0, 10, { turn: 1 }),
+      ev(
+        "user/message",
+        1,
+        11,
+        {
+          role: "user",
+          content: [{ type: "text", text: "通信提问 OUTLINE-COMM-PROMPT-MARK" }],
+          source: { kind: "agent-message" },
+        },
+        { surfaceOp: "append" },
+      ),
+      ev(
+        "assistant/message",
+        2,
+        12,
+        {
+          turn: 1,
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "通信回答 OUTLINE-COMM-RESPONSE-MARK" }],
+          },
+        },
+        { surfaceOp: "append" },
+      ),
+      ev("turn/end", 3, 13, { turn: 1 }),
+    ];
+    writeFixtureHome(home, {
+      sessions: [
+        {
+          id: COMM_OUTLINE_ID,
+          projectDir: PROJECT_DIR,
+          createdAt: 1000,
+          events,
+          origin: "subagent",
+          title: "通信轮次大纲夹具",
+          turns: 1,
+          steps: 1,
+          lastPromptAt: 2000,
+        },
+      ],
+    });
+    const args = ["--dsh-home", home, "--lib-root", REQUIRED_LIB_ROOT, "--output-dir", OUT_DIR];
+    const readOutput = (stdout: string): string => {
+      const path = /^完整输出已保存到: (.+)$/u.exec(
+        stdout.split("\n").filter((line) => line.length > 0)[0],
+      )?.[1];
+      assert.notEqual(path, undefined);
+      return readFileSync(path ?? "", "utf8");
+    };
+
+    const hiddenMd = runCli(["show", COMM_OUTLINE_ID, ...args, "--summary"]);
+    assert.equal(hiddenMd.status, 0, `默认摘要失败: ${hiddenMd.stderr}`);
+    const hiddenMdContent = readOutput(hiddenMd.stdout);
+    assert.equal(hiddenMdContent.includes("OUTLINE-COMM-PROMPT-MARK"), false);
+    assert.equal(hiddenMdContent.includes("OUTLINE-COMM-RESPONSE-MARK"), false);
+
+    const includedMd = runCli([
+      "show",
+      COMM_OUTLINE_ID,
+      ...args,
+      "--summary",
+      "--include-agent-comm",
+    ]);
+    assert.equal(includedMd.status, 0, `通信摘要失败: ${includedMd.stderr}`);
+    const includedMdContent = readOutput(includedMd.stdout);
+    assert.equal(includedMdContent.includes("OUTLINE-COMM-PROMPT-MARK"), true);
+    assert.equal(includedMdContent.includes("OUTLINE-COMM-RESPONSE-MARK"), true);
+
+    const hiddenJson = runCli(["show", COMM_OUTLINE_ID, ...args, "--summary", "--format", "json"]);
+    assert.equal(hiddenJson.status, 0, `默认 JSON 摘要失败: ${hiddenJson.stderr}`);
+    const hiddenDocument = JSON.parse(readOutput(hiddenJson.stdout)) as {
+      turns: { prompt: string | null; response: string | null }[];
+    };
+    assert.deepEqual(hiddenDocument.turns[0], { turn: 1, seq: 0, prompt: null, response: null });
+
+    const includedJson = runCli([
+      "show",
+      COMM_OUTLINE_ID,
+      ...args,
+      "--summary",
+      "--include-agent-comm",
+      "--format",
+      "json",
+    ]);
+    assert.equal(includedJson.status, 0, `通信 JSON 摘要失败: ${includedJson.stderr}`);
+    const includedDocument = JSON.parse(readOutput(includedJson.stdout)) as {
+      turns: { prompt: string | null; response: string | null }[];
+    };
+    assert.equal(includedDocument.turns[0]?.prompt?.includes("OUTLINE-COMM-PROMPT-MARK"), true);
+    assert.equal(includedDocument.turns[0]?.response?.includes("OUTLINE-COMM-RESPONSE-MARK"), true);
+  });
 });
 
 describe("内层引用的消息标记（subagent-settled 形态）", () => {
@@ -675,7 +842,7 @@ describe("内层引用的消息标记（subagent-settled 形态）", () => {
   }
 
   it("show 的 md 不含内层标记行，引用正文与收尾回复都在", () => {
-    const result = runCli(["show", NESTED_ID, ...args()]);
+    const result = runCli(["show", NESTED_ID, ...args(), "--include-agent-comm"]);
     assert.equal(result.status, 0, `show 失败: ${result.stderr}`);
     const content = readOutput(result.stdout);
     assert.equal(content.includes(SETTLED_BODY), true);
@@ -685,7 +852,14 @@ describe("内层引用的消息标记（subagent-settled 形态）", () => {
   });
 
   it("show --format json 的 text 字段同样清理", () => {
-    const result = runCli(["show", NESTED_ID, ...args(), "--format", "json"]);
+    const result = runCli([
+      "show",
+      NESTED_ID,
+      ...args(),
+      "--format",
+      "json",
+      "--include-agent-comm",
+    ]);
     assert.equal(result.status, 0, `show json 失败: ${result.stderr}`);
     const document = JSON.parse(readOutput(result.stdout)) as {
       messages: Array<{ text: string }>;
@@ -697,13 +871,11 @@ describe("内层引用的消息标记（subagent-settled 形态）", () => {
     assert.equal(texts.includes("<\\/dsh-message>"), false);
   });
 
-  it("search 的 text 档产物不含内层标记行", () => {
-    const result = runCli(["search", "QUOTED-MARK", ...args()]);
+  it("search 的 all 档保留被过滤的通信", () => {
+    const result = runCli(["search", "QUOTED-MARK", ...args(), "--scope", "all"]);
     assert.equal(result.status, 0, `search 失败: ${result.stderr}`);
     const content = readOutput(result.stdout);
     assert.equal(content.includes("QUOTED-MARK"), true);
-    assert.equal(content.includes("命中总数：1"), true);
-    assert.equal(content.includes("<dsh-message"), false);
-    assert.equal(content.includes("<\\/dsh-message>"), false);
+    assert.equal(content.includes("命中总数：0"), false);
   });
 });

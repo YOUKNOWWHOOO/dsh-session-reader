@@ -258,6 +258,8 @@ export interface SearchOutcome {
     readonly userMessages: number;
     readonly subagentReceipts: number;
   };
+  /** 默认排除的通信事件记录数，all 档为零。 */
+  readonly excludedAgentMessages: number;
   /**
    * 命中总数是否为精确值。类型为字面量 `true`：证据链 ① 检索阶段对纳入会话不做任何提前终止
    * （`totalHits` 全量计数，`--limit` 只限制 `hits` 数组的收集）；② `scope=all` 时每个事件的

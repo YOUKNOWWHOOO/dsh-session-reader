@@ -223,9 +223,27 @@ describe("parseCommandLine", () => {
     for (const command of COMMANDS) assert.equal(general.includes(command.name), true);
     assert.match(general, /选项终止符/u);
     for (const text of [listHelp, general]) assert.match(text, /Electron-as-Node/u);
-    // `--scope text` 的覆盖面必须列出四类合成条目：漏写会让调用方误判默认档的命中集。
+    // `--scope text` 的覆盖面必须列出三类合成条目并声明排除代理通信：漏写会让调用方误判默认档的命中集。
     const searchHelp = buildCommandHelp(COMMANDS[2]);
-    assert.match(searchHelp, /上下文摘要\/交接通知\/交接指令\/子代理任务/u);
+    assert.match(searchHelp, /两者排除代理通信/u);
+    assert.match(buildCommandHelp(COMMANDS[1]), /--include-agent-comm/u);
+  });
+
+  it("通信开关仅供 show 的 md 和 json 使用", () => {
+    for (const format of ["md", "json", "jsonl"]) {
+      const parsed = parseCommandLine(["show", "abc", "--format", format, "--include-agent-comm"]);
+      assert.equal(parsed.kind, "parsed");
+      if (parsed.kind === "parsed")
+        assert.equal(validateCommandOptions(parsed.value) === null, format !== "jsonl");
+    }
+    for (const command of ["search", "list", "stats", "check"]) {
+      assert.equal(parseCommandLine([command, "--include-agent-comm"]).kind, "error");
+    }
+    assert.equal(parseCommandLine(["show", "abc", "--include-agent-comm=true"]).kind, "error");
+    assert.equal(
+      parseCommandLine(["show", "abc", "--include-agent-comm", "--include-agent-comm"]).kind,
+      "error",
+    );
   });
 
   it("validateCommandOptions：show 组合约束与 stats 范围过滤约束", () => {
