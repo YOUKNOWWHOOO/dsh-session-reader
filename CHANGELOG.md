@@ -6,7 +6,9 @@
 
 ## [Unreleased]
 
-> 当前主线 0.4.0-dev，目标版本 0.4.0；未发布变更持续登记在本段。
+> 当前主线 0.5.0-dev，目标版本 0.5.0；未发布变更持续登记在本段。
+
+## [0.4.0] - 2026-11-23
 
 ### Added
 
@@ -157,7 +159,8 @@
 - 文件操作限定在只读会话与投影缓存、只写 `--output-dir` 指定目录的范围。
 - 不修改 dsh 数据，不建立任何形式的缓存。
 
-[Unreleased]: https://github.com/YOUKNOWWHOOO/dsh-session-reader/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/YOUKNOWWHOOO/dsh-session-reader/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/YOUKNOWWHOOO/dsh-session-reader/releases/tag/v0.4.0
 [0.3.0]: https://github.com/YOUKNOWWHOOO/dsh-session-reader/releases/tag/v0.3.0
 [0.2.0]: https://github.com/YOUKNOWWHOOO/dsh-session-reader/releases/tag/v0.2.0
 [0.1.0]: https://github.com/YOUKNOWWHOOO/dsh-session-reader/releases/tag/v0.1.0

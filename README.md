@@ -7,11 +7,11 @@
 | 字段 | 当前值 |
 | --- | --- |
 | 当前阶段 | Active Development |
-| 已发布版本 | 0.3.0 |
-| 当前主线 | 0.4.0-dev（未发布，变更见 `CHANGELOG.md` 的 `Unreleased` 段） |
+| 已发布版本 | 0.4.0 |
+| 当前主线 | 0.5.0-dev（未发布，变更见 `CHANGELOG.md` 的 `Unreleased` 段） |
 | 对外稳定性 | CLI 与输出契约仍可能调整 |
 
-`package.json` 的 `version` 记录已发布版本 0.3.0。当前主线尚未发布，因此该字段不随 `Unreleased` 的累积内容改动。
+`package.json` 的 `version` 记录已发布版本 0.4.0。当前主线尚未发布，因此该字段不随 `Unreleased` 的累积内容改动。
 
 ## 项目定位与范围
 
